@@ -1,6 +1,6 @@
 import pytest
 
-from sdr_rx.capture import DeviceConfig, SoapySDRDevice, parse_device_config
+from sdr_rx.capture import DeviceConfig, SoapySDRDevice, enumerate_devices, parse_device_config
 
 
 def test_parses_single_device():
@@ -46,3 +46,8 @@ def test_rejects_duplicate_serial():
 def test_soapysdr_device_reports_missing_bindings_clearly():
     with pytest.raises(RuntimeError, match="SoapySDR"):
         SoapySDRDevice(serial="00000001")
+
+
+def test_enumerate_devices_reports_missing_bindings_clearly():
+    with pytest.raises(RuntimeError, match="SoapySDR"):
+        enumerate_devices()

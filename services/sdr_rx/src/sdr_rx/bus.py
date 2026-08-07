@@ -1,9 +1,13 @@
 """ZMQ PUB publisher for channelizer output (design doc §3, "Output contract").
 
 Multipart frames: `[topic][json header][pcm]`. One PUB socket serves every
-channel and stream; consumers subscribe by topic prefix (`same.` for
-multimon-ng-rate audio, `stt.` for STT/live-audio-rate audio, or a specific
-`same.WX5` / `stt.WX5` for one channel).
+site, channel, and stream; consumers subscribe by topic prefix (`same.` for
+multimon-ng-rate audio, `stt.` for STT/live-audio-rate audio, `same.site-a.`
+for one site, or a specific `same.site-a.WX5` for one channel at one site).
+Site is part of the topic -- not just the channel name -- because a second
+dongle is a second transmitter site covering the same seven channel names
+(§3, "Multi-dongle"); without it, two sites' WX5 audio would collide on the
+same topic.
 
 PUB/SUB drops at the high-water mark once a subscriber's queue fills. That's
 correct for `live-audio` (skipping samples under load beats lagging behind
@@ -45,10 +49,11 @@ class Publisher:
     def close(self) -> None:
         self._socket.close(linger=0)
 
-    def publish(self, topic: str, channel: str, sample_rate_hz: int, pcm: np.ndarray) -> None:
-        """Send one chunk of s16le mono PCM for `channel` on `topic` (TOPIC_SAME/TOPIC_STT)."""
+    def publish(self, topic: str, site: str, channel: str, sample_rate_hz: int, pcm: np.ndarray) -> None:
+        """Send one chunk of s16le mono PCM for `site`/`channel` on `topic` (TOPIC_SAME/TOPIC_STT)."""
         pcm = np.ascontiguousarray(pcm, dtype=np.int16)
         header = {
+            "site": site,
             "channel": channel,
             "sample_rate_hz": sample_rate_hz,
             "dtype": "s16le",
@@ -59,7 +64,7 @@ class Publisher:
         self._seq += 1
         self._socket.send_multipart(
             [
-                f"{topic}.{channel}".encode(),
+                f"{topic}.{site}.{channel}".encode(),
                 json.dumps(header).encode(),
                 pcm.tobytes(),
             ]

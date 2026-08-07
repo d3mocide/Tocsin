@@ -16,7 +16,7 @@ import threading
 from pathlib import Path
 
 from .bus import Publisher
-from .capture import SoapySDRDevice, parse_device_config
+from .capture import SoapySDRDevice, enumerate_devices, parse_device_config
 from .channels import nwr_bins
 from .health import HealthTracker
 from .pipeline import DevicePipeline
@@ -33,6 +33,20 @@ def main() -> None:
     except ConflictingKernelModuleError as exc:
         print(f"sdr-rx: {exc}", file=sys.stderr)
         sys.exit(1)
+
+    if os.environ.get("SDR_RX_LIST_DEVICES"):
+        try:
+            found = enumerate_devices()
+        except RuntimeError as exc:
+            print(f"sdr-rx: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not found:
+            print("sdr-rx: no rtlsdr devices found")
+            return
+        print("sdr-rx: found devices (use the serial in SDR_RX_DEVICES='site:serial,...'):")
+        for kwargs in found:
+            print(f"  serial={kwargs.get('serial', '?')} label={kwargs.get('label', '?')}")
+        return
 
     devices = parse_device_config(os.environ.get("SDR_RX_DEVICES", ""))
     if not devices:

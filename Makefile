@@ -1,4 +1,4 @@
-.PHONY: up-offgrid up-hybrid down bench-channelizer fetch-models test
+.PHONY: up-offgrid up-hybrid down bench-channelizer sdr-devices fetch-models test
 
 # TOCSIN_MODE selects the compose profile; see docs/design/master-prompt.md §1, §8.
 up-offgrid:
@@ -15,6 +15,15 @@ down:
 bench-channelizer:
 	cd services/sdr_rx && uv sync && uv run python bench_channelizer.py
 
+# List rtlsdr device serials SoapySDR can see, for setting SDR_RX_DEVICES
+# (services/sdr_rx/README.md "Configuration") without guessing. Runs inside
+# the sdr-rx image so it sees the same SoapySDR install the real service
+# will use; requires the dongle plugged in and the host prerequisites in
+# that README already done (module blacklist, udev rule).
+sdr-devices:
+	docker compose build sdr-rx
+	docker compose run --rm -e SDR_RX_LIST_DEVICES=1 sdr-rx
+
 # Pre-stage STT model weights into a mounted volume while network is still
 # available -- offgrid means pre-staged, never download-on-first-boot
 # (docs/design/master-prompt.md §8). Not yet implemented: stt_worker (milestone 4)
@@ -27,3 +36,5 @@ fetch-models:
 # Run the test suite for every service that has one.
 test:
 	cd services/sdr_rx && uv sync && uv run pytest
+	cd services/same_decoder && uv sync && uv run pytest
+	cd services/live_audio && uv sync && uv run pytest

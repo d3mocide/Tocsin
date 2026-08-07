@@ -25,11 +25,12 @@ def test_publish_sends_topic_header_and_pcm():
     sub.setsockopt(zmq.SUBSCRIBE, b"")
 
     pcm = np.array([1, -1, 2, -2], dtype=np.int16)
-    frames = _recv_with_retry(sub, lambda: pub.publish(TOPIC_SAME, "WX5", 22050, pcm))
+    frames = _recv_with_retry(sub, lambda: pub.publish(TOPIC_SAME, "site-a", "WX5", 22050, pcm))
 
     topic, header_bytes, payload = frames
-    assert topic == b"same.WX5"
+    assert topic == b"same.site-a.WX5"
     header = json.loads(header_bytes)
+    assert header["site"] == "site-a"
     assert header["channel"] == "WX5"
     assert header["sample_rate_hz"] == 22050
     assert header["dtype"] == "s16le"
@@ -49,8 +50,8 @@ def test_sequence_number_increments_across_publishes():
     sub.setsockopt(zmq.SUBSCRIBE, b"")
 
     pcm = np.array([0], dtype=np.int16)
-    first = _recv_with_retry(sub, lambda: pub.publish(TOPIC_STT, "WX1", 16000, pcm))
-    second = _recv_with_retry(sub, lambda: pub.publish(TOPIC_STT, "WX1", 16000, pcm))
+    first = _recv_with_retry(sub, lambda: pub.publish(TOPIC_STT, "site-a", "WX1", 16000, pcm))
+    second = _recv_with_retry(sub, lambda: pub.publish(TOPIC_STT, "site-a", "WX1", 16000, pcm))
 
     assert json.loads(first[1])["seq"] == 0
     assert json.loads(second[1])["seq"] == 1
@@ -68,8 +69,24 @@ def test_different_channels_get_distinct_topics():
     sub.setsockopt(zmq.SUBSCRIBE, b"")
 
     pcm = np.array([0], dtype=np.int16)
-    frames = _recv_with_retry(sub, lambda: pub.publish(TOPIC_SAME, "WX3", 22050, pcm))
-    assert frames[0] == b"same.WX3"
+    frames = _recv_with_retry(sub, lambda: pub.publish(TOPIC_SAME, "site-a", "WX3", 22050, pcm))
+    assert frames[0] == b"same.site-a.WX3"
+
+    pub.close()
+    sub.close()
+    ctx.term()
+
+
+def test_different_sites_get_distinct_topics_for_the_same_channel():
+    ctx = zmq.Context()
+    pub = Publisher("inproc://test-bus-4", context=ctx)
+    sub = ctx.socket(zmq.SUB)
+    sub.connect("inproc://test-bus-4")
+    sub.setsockopt(zmq.SUBSCRIBE, b"")
+
+    pcm = np.array([0], dtype=np.int16)
+    frames = _recv_with_retry(sub, lambda: pub.publish(TOPIC_SAME, "site-b", "WX5", 22050, pcm))
+    assert frames[0] == b"same.site-b.WX5"
 
     pub.close()
     sub.close()

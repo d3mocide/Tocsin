@@ -50,7 +50,7 @@ audibly and the health RMS signal (master prompt §3) shows a live carrier, not 
 
 **Status:** everything not requiring physical hardware is done (channelizer, ZMQ publish,
 ring buffer, health signal, host-prerequisite check, multi-dongle addressing, pipeline
-wiring); live-hardware verification and SoapySDR/USB packaging remain (see
+wiring, SoapySDR/USB Docker packaging); only live-hardware verification remains (see
 `docs/design/tracking.md`).
 
 ---
@@ -69,6 +69,12 @@ real warning to test against.
 
 **Depends on:** Phase 1 (needs real, correctly-demodulated audio to decode).
 
+**Status:** implemented and unit tested ahead of Phase 1's live-hardware proof, at the
+user's explicit request (see `docs/design/tracking.md`'s build-order note) — parser, tier
+lookup, dedup, the multimon-ng subprocess wrapper, and the ZMQ subscriber all have unit
+coverage, but the exit criteria above (a recorded RWT capture, or real multimon-ng output)
+isn't met yet and can't be until real audio is flowing.
+
 ---
 
 ## Phase 3 — Live audio (milestone 3)
@@ -82,6 +88,11 @@ real warning to test against.
 tool.
 
 **Depends on:** Phase 1.
+
+**Status:** implemented and unit tested ahead of Phase 1's live-hardware proof, same caveat
+as Phase 2 above. Resolved the Icecast-vs-MediaMTX open item in favor of Icecast (see
+`services/live_audio/README.md`). The exit criteria above (audible in an actual browser)
+isn't met yet — needs real ffmpeg/Icecast/RF end to end.
 
 ---
 
@@ -180,7 +191,8 @@ These aren't a phase; they're standing verification items from master prompt §1
 resolved opportunistically as the relevant phase is built, not deferred to the end:
 
 - Confirm local transmitter frequencies against the live waterfall (Phase 1).
-- Icecast vs. MediaMTX decision (Phase 3).
+- ~~Icecast vs. MediaMTX decision (Phase 3).~~ Resolved: Icecast (see Phase 3 above and
+  `services/live_audio/README.md`).
 - Evaluate NWWS-OI as a lower-latency third source (Phase 5, hybrid mode only).
 - Confirm `data/same_to_cap.yaml` against the current NWS event code list (Phase 5, and
   periodically after — NWS revises this list).

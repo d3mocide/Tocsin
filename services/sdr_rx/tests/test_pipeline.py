@@ -12,8 +12,8 @@ class FakePublisher:
     def __init__(self):
         self.calls = []
 
-    def publish(self, topic, channel, sample_rate_hz, pcm):
-        self.calls.append((topic, channel, sample_rate_hz, np.asarray(pcm)))
+    def publish(self, topic, site, channel, sample_rate_hz, pcm):
+        self.calls.append((topic, site, channel, sample_rate_hz, np.asarray(pcm)))
 
 
 def _ring_buffers(tmp_path):
@@ -30,7 +30,10 @@ def test_process_publishes_both_streams_for_every_nwr_channel(tmp_path):
     tone = np.exp(1j * 2 * np.pi * 12_500.0 * t)  # WX5 (k=0) bin center
     pipeline.process(tone)
 
-    channels_published = {call[1] for call in publisher.calls}
+    sites_published = {call[1] for call in publisher.calls}
+    assert sites_published == {"site-a"}
+
+    channels_published = {call[2] for call in publisher.calls}
     assert channels_published == {b.channel for b in nwr_bins()}
 
     topics_published = {call[0] for call in publisher.calls}

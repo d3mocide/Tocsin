@@ -1,0 +1,60 @@
+<!--
+  Minimal Icecast config for live-audio (design doc §3 Phase 3). Same
+  posture as deploy/mosquitto/mosquitto.conf: personal/emergency use
+  (docs/design/master-prompt.md §11, non-goals -- no public rebroadcast),
+  not meant to be exposed beyond the local network as shipped.
+
+  source-password/admin-password below are Icecast's traditional
+  placeholder ("hackme") -- change both before exposing this port past
+  localhost, and update ICECAST_SOURCE_PASSWORD for services/live_audio to
+  match (see that service's README).
+-->
+<icecast>
+    <location>Tocsin</location>
+    <admin>admin@localhost</admin>
+
+    <limits>
+        <clients>50</clients>
+        <sources>8</sources>
+        <queue-size>524288</queue-size>
+        <client-timeout>30</client-timeout>
+        <header-timeout>15</header-timeout>
+        <source-timeout>10</source-timeout>
+        <burst-on-connect>1</burst-on-connect>
+        <burst-size>65536</burst-size>
+    </limits>
+
+    <authentication>
+        <source-password>hackme</source-password>
+        <relay-password>hackme</relay-password>
+        <admin-user>admin</admin-user>
+        <admin-password>hackme</admin-password>
+    </authentication>
+
+    <hostname>localhost</hostname>
+
+    <listen-socket>
+        <port>8000</port>
+        <bind-address>0.0.0.0</bind-address>
+    </listen-socket>
+
+    <fileserve>1</fileserve>
+
+    <paths>
+        <logdir>/var/log/icecast2</logdir>
+        <webroot>/usr/share/icecast2/web</webroot>
+        <adminroot>/usr/share/icecast2/admin</adminroot>
+        <alias source="/" destination="/status.xsl"/>
+    </paths>
+
+    <logging>
+        <accesslog>access.log</accesslog>
+        <errorlog>error.log</errorlog>
+        <loglevel>3</loglevel>
+        <logsize>10000</logsize>
+    </logging>
+
+    <security>
+        <chroot>0</chroot>
+    </security>
+</icecast>

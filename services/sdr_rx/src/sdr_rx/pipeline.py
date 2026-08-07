@@ -27,7 +27,7 @@ class SampleSource(Protocol):
 
 
 class ChannelPublisher(Protocol):
-    def publish(self, topic: str, channel: str, sample_rate_hz: int, pcm: np.ndarray) -> None: ...
+    def publish(self, topic: str, site: str, channel: str, sample_rate_hz: int, pcm: np.ndarray) -> None: ...
 
 
 class _ChannelState:
@@ -76,8 +76,8 @@ class DevicePipeline:
                 continue
             state.ring_buffer.write(audio)
             self._health.sample(b.channel, audio)
-            self._publisher.publish(TOPIC_SAME, b.channel, 22050, to_s16le(to_multimon_rate(audio)))
-            self._publisher.publish(TOPIC_STT, b.channel, 16000, to_s16le(to_stt_rate(audio)))
+            self._publisher.publish(TOPIC_SAME, self.site, b.channel, 22050, to_s16le(to_multimon_rate(audio)))
+            self._publisher.publish(TOPIC_STT, self.site, b.channel, 16000, to_s16le(to_stt_rate(audio)))
 
     def run_forever(self, source: SampleSource, stop: Callable[[], bool] | None = None) -> None:
         while stop is None or not stop():

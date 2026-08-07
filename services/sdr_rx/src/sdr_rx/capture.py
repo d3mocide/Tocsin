@@ -60,6 +60,21 @@ def parse_device_config(spec: str) -> list[DeviceConfig]:
     return configs
 
 
+def enumerate_devices() -> list[dict[str, str]]:
+    """List every rtlsdr device SoapySDR can currently see, so a serial can
+    be discovered for `SDR_RX_DEVICES` without guessing (§3: addressed by
+    serial, never index)."""
+    try:
+        import SoapySDR
+    except ImportError as exc:
+        raise RuntimeError(
+            "SoapySDR python bindings are not installed. Device enumeration only runs on "
+            "target hardware with soapysdr-module-rtlsdr installed -- see "
+            "services/sdr_rx/README.md."
+        ) from exc
+    return [dict(result) for result in SoapySDR.Device.enumerate({"driver": "rtlsdr"})]
+
+
 class SoapySDRDevice:
     """One open RTL-SDR device stream, addressed by serial number.
 
