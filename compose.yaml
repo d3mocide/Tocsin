@@ -1,10 +1,10 @@
-# Tocsin -- one compose file, two profiles (docs/design-spec.md §1, §9).
+# Tocsin -- one compose file, two profiles (docs/design/master-prompt.md §1, §9).
 #
 #   TOCSIN_MODE=offgrid docker compose --profile offgrid up
 #   TOCSIN_MODE=hybrid  docker compose --profile hybrid up
 #
 # Only services with a working implementation are defined below. Everything
-# past milestone 1 (docs/design-spec.md §10) is commented out with a pointer
+# past milestone 1 (docs/design/master-prompt.md §10) is commented out with a pointer
 # to its milestone -- uncomment as each is built and proven, per the build
 # order. Docker was not available to build/run this file in the sandbox this
 # was authored in; verify `docker compose config` and a real `up` on a
@@ -50,7 +50,7 @@ services:
     # ahead of live-hardware verification.
     profiles: [offgrid, hybrid]
 
-  # same-decoder:            # milestone 2 (docs/design-spec.md §10, §4)
+  # same-decoder:            # milestone 2 (docs/design/master-prompt.md §10, §4)
   #   build: ./services/same_decoder
   #   profiles: [offgrid, hybrid]
 
@@ -66,7 +66,7 @@ services:
   #   build: ./services/stt_worker
   #   profiles: [offgrid, hybrid]
 
-  # nws-poller:                # milestone 5 -- hybrid only (docs/design-spec.md §8)
+  # nws-poller:                # milestone 5 -- hybrid only (docs/design/master-prompt.md §8)
   #   build: ./services/nws_poller
   #   profiles: [hybrid]
 

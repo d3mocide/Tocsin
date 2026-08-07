@@ -7,9 +7,10 @@ voice message, independently polls the NWS CAP API, fuses both sources into a si
 provenance-preserving alert feed, and dispatches alerts over Meshtastic and MQTT.
 
 **The system must remain fully functional with no internet connection.** Network-dependent
-components add quality, never capability. See `docs/design-spec.md` for the full design
+components add quality, never capability. See `docs/design/master-prompt.md` for the full design
 document -- this README summarizes it; the design doc is the source of truth for anything
-not covered here.
+not covered here. For the phase-by-phase build plan and current status, see
+`docs/design/roadmap.md` and `docs/design/tracking.md`.
 
 ## Deployment modes
 
@@ -54,17 +55,23 @@ tocsin/
 │   ├── same_to_cap.yaml         # SAME event code ↔ CAP event name
 │   └── fips.csv                 # FIPS → county name, for templating
 └── docs/
+    └── design/
+        ├── master-prompt.md     # the original design spec -- source of truth
+        ├── roadmap.md           # phase-by-phase build plan
+        └── tracking.md          # living status against the roadmap
 ```
 
 ## Build order
 
-Each milestone is independently verifiable; do not proceed until the prior one is proven.
+Each phase is independently verifiable; do not proceed until the prior one is proven. See
+`docs/design/roadmap.md` for what each phase actually involves and `docs/design/tracking.md`
+for current status -- this list is just the summary:
 
-1. **Channelizer standalone.** Synthetic-signal unit tests first, then live capture on
-   target hardware. **Status: implemented** (`services/sdr_rx`) -- 48-bin odd-stacked
-   polyphase channelizer, DC blocker, FM discriminator, and output resampling, all with
-   unit tests. SoapySDR device capture and ZMQ publishing are not yet wired up; that's the
-   live-capture half of this milestone and needs real RTL-SDR hardware to verify.
+0. Bootstrap (repo scaffolding, compose profiles, checked-in reference data). **Done.**
+1. Channelizer (`services/sdr_rx`). **In progress** -- synthetic-signal unit tests done
+   (48-bin odd-stacked polyphase channelizer, DC blocker, FM discriminator, output
+   resampling); SoapySDR capture, ZMQ publishing, and live-hardware verification not
+   started.
 2. SAME decode end to end (channelizer → multimon-ng → parsed structured event).
 3. Live audio (Icecast/MediaMTX from the ZMQ stream).
 4. Segment capture + local STT (ring buffer, trim, transcribe, hallucination guards).
@@ -73,8 +80,8 @@ Each milestone is independently verifiable; do not proceed until the prior one i
 7. Dispatcher stage 2 + remote STT (enrichment with all guards and breakers).
 8. API + web UI.
 
-Milestones 2-8 are scaffolded as empty service directories only; see each service's
-`README.md` for status.
+Phases past the channelizer are scaffolded as empty service directories only; see each
+service's `README.md` for status.
 
 ## Non-goals
 

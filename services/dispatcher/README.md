@@ -1,6 +1,6 @@
 # dispatcher
 
-Not yet implemented -- milestones 6-7 (`docs/design-spec.md` §10, §7).
+Not yet implemented -- milestones 6-7 (`docs/design/master-prompt.md` §10, §7).
 
 Two-stage emission: stage 1 fires at T+0 straight from the SAME header
 (deterministic, zero dependencies), stage 2 enriches Tier A alerts with an

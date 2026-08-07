@@ -1,6 +1,6 @@
 # fusion
 
-Not yet implemented -- milestone 5 (`docs/design-spec.md` §10, §5).
+Not yet implemented -- milestone 5 (`docs/design/master-prompt.md` §10, §5).
 
 Correlates SAME/NWR events with NWS CAP alerts using the mapping in
 `data/same_to_cap.yaml`, without hard-merging the two sources -- one

@@ -1,6 +1,6 @@
 # data/
 
-Checked-in reference data, not code -- see `docs/design-spec.md` §9 and §12.
+Checked-in reference data, not code -- see `docs/design/master-prompt.md` §9 and §12.
 
 - `same_event_codes.yaml` -- SAME/EAS event code -> name and dispatch tier
   (§4). Covers the full Tier A list from the design doc plus a broad set of

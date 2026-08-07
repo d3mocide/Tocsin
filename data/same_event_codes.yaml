@@ -1,14 +1,14 @@
-# SAME (EAS) event codes -> name and dispatch tier, per docs/design-spec.md
+# SAME (EAS) event codes -> name and dispatch tier, per docs/design/master-prompt.md
 # §4. Checked in as data, not hardcoded, because NWS revises this list
 # periodically -- confirm against the current NWS event code list before an
-# operational deployment (docs/design-spec.md §12 open item).
+# operational deployment (docs/design/master-prompt.md §12 open item).
 #
-# Tier A: mesh + MQTT. dispatcher stage 1 (docs/design-spec.md §7) fires
+# Tier A: mesh + MQTT. dispatcher stage 1 (docs/design/master-prompt.md §7) fires
 #         immediately on these, straight from the SAME header.
 # Tier B: MQTT only. Watches, advisories, and statements.
 # Tier C: log only. Tests and routine programming.
 #
-# The Tier A set below is exactly the list given in docs/design-spec.md §4:
+# The Tier A set below is exactly the list given in docs/design/master-prompt.md §4:
 # TOR SVR FFW EWW TSW CEM CDW LEW SPW EQW VOW AVW HMW NUW RHW.
 
 # --- Tier A: immediate-threat warnings -------------------------------------
@@ -27,7 +27,7 @@ AVW: { name: Avalanche Warning, tier: A }
 HMW: { name: Hazardous Materials Warning, tier: A }
 NUW: { name: Nuclear Power Plant Warning, tier: A }
 RHW: { name: Radiological Hazard Warning, tier: A }
-# Not in the docs/design-spec.md §4 Tier A list verbatim, but a national
+# Not in the docs/design/master-prompt.md §4 Tier A list verbatim, but a national
 # EAS activation is by definition the highest-severity possible message on
 # this system -- it must not be lumped in with routine tests below.
 EAN: { name: Emergency Action Notification, tier: A }

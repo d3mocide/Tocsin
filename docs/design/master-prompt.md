@@ -1,10 +1,19 @@
-# Tocsin — Design Specification
+# Tocsin — Design Specification (master prompt)
 **A dual-path NOAA Weather Radio alert monitor with mesh egress.**
 
 > This document is a build specification, not a tutorial. It states decisions that have
 > already been made and the reasoning behind them. Where it says "must," treat it as a
 > constraint; where it says "benchmark" or "verify," treat it as an open item to measure
 > rather than assume.
+
+> **This is the master prompt for the project.** It is the original, unmodified
+> specification the whole build derives from — every architectural decision, parameter,
+> and hazard called out elsewhere in this repo traces back to a section here. Hand this
+> document to a new agent (human or AI) as the brief for continuing the build; pair it
+> with `docs/design/roadmap.md` for the phase breakdown and `docs/design/tracking.md` for
+> current status. Don't edit this file to reflect implementation decisions made
+> along the way — those belong in the roadmap/tracking docs or in code comments. This file
+> only changes if the underlying requirements actually change.
 
 ---
 

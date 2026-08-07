@@ -1,5 +1,5 @@
 # SAME event code -> CAP `event` field text, for fusion's correlation key
-# (docs/design-spec.md §5): (SAME event code <-> CAP event name) AND (FIPS
+# (docs/design/master-prompt.md §5): (SAME event code <-> CAP event name) AND (FIPS
 # overlap) AND (issue times within tolerance).
 #
 # NWS CAP payloads carry the event name as free text in the <event>
@@ -9,7 +9,7 @@
 # CAP's product set doesn't fully match SAME's (§5: "CAP...includes
 # products never broadcast on NWR"), so this mapping and the tier table
 # are allowed to diverge over time. Verify against live CAP payloads before
-# relying on it operationally (docs/design-spec.md §12).
+# relying on it operationally (docs/design/master-prompt.md §12).
 
 TOR: Tornado Warning
 SVR: Severe Thunderstorm Warning
