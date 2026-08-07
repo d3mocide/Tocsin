@@ -1,0 +1,63 @@
+# SAME event code -> CAP `event` field text, for fusion's correlation key
+# (docs/design-spec.md §5): (SAME event code <-> CAP event name) AND (FIPS
+# overlap) AND (issue times within tolerance).
+#
+# NWS CAP payloads carry the event name as free text in the <event>
+# element; in practice it matches the SAME code's descriptive name
+# verbatim, which is why this file looks like a near-duplicate of
+# same_event_codes.yaml's `name` fields. Keep it a separate file anyway --
+# CAP's product set doesn't fully match SAME's (§5: "CAP...includes
+# products never broadcast on NWR"), so this mapping and the tier table
+# are allowed to diverge over time. Verify against live CAP payloads before
+# relying on it operationally (docs/design-spec.md §12).
+
+TOR: Tornado Warning
+SVR: Severe Thunderstorm Warning
+FFW: Flash Flood Warning
+EWW: Extreme Wind Warning
+TSW: Tsunami Warning
+CEM: Civil Emergency Message
+CDW: Civil Danger Warning
+LEW: Law Enforcement Warning
+SPW: Shelter In Place Warning
+EQW: Earthquake Warning
+VOW: Volcano Warning
+AVW: Avalanche Warning
+HMW: Hazardous Materials Warning
+NUW: Nuclear Power Plant Warning
+RHW: Radiological Hazard Warning
+EAN: Emergency Action Notification
+
+TOA: Tornado Watch
+SVA: Severe Thunderstorm Watch
+SVS: Severe Weather Statement
+SPS: Special Weather Statement
+FFA: Flash Flood Watch
+FFS: Flash Flood Statement
+FLW: Flood Warning
+FLA: Flood Watch
+FLS: Flood Statement
+CFW: Coastal Flood Warning
+CFA: Coastal Flood Watch
+WSW: Winter Storm Warning
+WSA: Winter Storm Watch
+BZW: Blizzard Warning
+FZW: Freeze Warning
+HWW: High Wind Warning
+HWA: High Wind Watch
+DSW: Dust Storm Warning
+HUW: Hurricane Warning
+HUA: Hurricane Watch
+TRW: Tropical Storm Warning
+TRA: Tropical Storm Watch
+TSA: Tsunami Watch
+SSW: Storm Surge Warning
+SSA: Storm Surge Watch
+SMW: Special Marine Warning
+AVA: Avalanche Watch
+FRW: Fire Warning
+
+# No stable CAP `event` text for these -- they're SAME/EAS administrative
+# and test codes with no NWS CAP equivalent, so fusion should treat them as
+# RF_ONLY by construction rather than looking for a CAP match.
+# IFW, LAE, CAE, EVI, ADR, NMN, EAT, NIC, RWT, RMT, NPT, DMO

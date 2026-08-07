@@ -1,0 +1,77 @@
+# SAME (EAS) event codes -> name and dispatch tier, per docs/design-spec.md
+# §4. Checked in as data, not hardcoded, because NWS revises this list
+# periodically -- confirm against the current NWS event code list before an
+# operational deployment (docs/design-spec.md §12 open item).
+#
+# Tier A: mesh + MQTT. dispatcher stage 1 (docs/design-spec.md §7) fires
+#         immediately on these, straight from the SAME header.
+# Tier B: MQTT only. Watches, advisories, and statements.
+# Tier C: log only. Tests and routine programming.
+#
+# The Tier A set below is exactly the list given in docs/design-spec.md §4:
+# TOR SVR FFW EWW TSW CEM CDW LEW SPW EQW VOW AVW HMW NUW RHW.
+
+# --- Tier A: immediate-threat warnings -------------------------------------
+TOR: { name: Tornado Warning, tier: A }
+SVR: { name: Severe Thunderstorm Warning, tier: A }
+FFW: { name: Flash Flood Warning, tier: A }
+EWW: { name: Extreme Wind Warning, tier: A }
+TSW: { name: Tsunami Warning, tier: A }
+CEM: { name: Civil Emergency Message, tier: A }
+CDW: { name: Civil Danger Warning, tier: A }
+LEW: { name: Law Enforcement Warning, tier: A }
+SPW: { name: Shelter In Place Warning, tier: A }
+EQW: { name: Earthquake Warning, tier: A }
+VOW: { name: Volcano Warning, tier: A }
+AVW: { name: Avalanche Warning, tier: A }
+HMW: { name: Hazardous Materials Warning, tier: A }
+NUW: { name: Nuclear Power Plant Warning, tier: A }
+RHW: { name: Radiological Hazard Warning, tier: A }
+# Not in the docs/design-spec.md §4 Tier A list verbatim, but a national
+# EAS activation is by definition the highest-severity possible message on
+# this system -- it must not be lumped in with routine tests below.
+EAN: { name: Emergency Action Notification, tier: A }
+
+# --- Tier B: watches, advisories, statements -------------------------------
+TOA: { name: Tornado Watch, tier: B }
+SVA: { name: Severe Thunderstorm Watch, tier: B }
+SVS: { name: Severe Weather Statement, tier: B }
+SPS: { name: Special Weather Statement, tier: B }
+FFA: { name: Flash Flood Watch, tier: B }
+FFS: { name: Flash Flood Statement, tier: B }
+FLW: { name: Flood Warning, tier: B }
+FLA: { name: Flood Watch, tier: B }
+FLS: { name: Flood Statement, tier: B }
+CFW: { name: Coastal Flood Warning, tier: B }
+CFA: { name: Coastal Flood Watch, tier: B }
+WSW: { name: Winter Storm Warning, tier: B }
+WSA: { name: Winter Storm Watch, tier: B }
+BZW: { name: Blizzard Warning, tier: B }
+FZW: { name: Freeze Warning, tier: B }
+HWW: { name: High Wind Warning, tier: B }
+HWA: { name: High Wind Watch, tier: B }
+DSW: { name: Dust Storm Warning, tier: B }
+HUW: { name: Hurricane Warning, tier: B }
+HUA: { name: Hurricane Watch, tier: B }
+TRW: { name: Tropical Storm Warning, tier: B }
+TRA: { name: Tropical Storm Watch, tier: B }
+TSA: { name: Tsunami Watch, tier: B }
+SSW: { name: Storm Surge Warning, tier: B }
+SSA: { name: Storm Surge Watch, tier: B }
+SMW: { name: Special Marine Warning, tier: B }
+AVA: { name: Avalanche Watch, tier: B }
+FRW: { name: Fire Warning, tier: B }
+IFW: { name: Industrial Fire Warning, tier: B }
+LAE: { name: Local Area Emergency, tier: B }
+CAE: { name: Child Abduction Emergency, tier: B }
+EVI: { name: Evacuation Immediate, tier: B }
+ADR: { name: Administrative Message, tier: B }
+NMN: { name: Network Notification Message, tier: B }
+EAT: { name: Emergency Action Termination, tier: B }
+NIC: { name: National Information Center, tier: B }
+
+# --- Tier C: tests, routine programming ------------------------------------
+RWT: { name: Required Weekly Test, tier: C }
+RMT: { name: Required Monthly Test, tier: C }
+NPT: { name: National Periodic Test, tier: C }
+DMO: { name: Practice/Demo Warning, tier: C }
