@@ -48,7 +48,9 @@ audibly and the health RMS signal (master prompt §3) shows a live carrier, not 
 
 **Depends on:** Phase 0. RTL-SDR hardware for the live-capture half.
 
-**Status:** synthetic-test half done; live-capture half not started (see
+**Status:** everything not requiring physical hardware is done (channelizer, ZMQ publish,
+ring buffer, health signal, host-prerequisite check, multi-dongle addressing, pipeline
+wiring); live-hardware verification and SoapySDR/USB packaging remain (see
 `docs/design/tracking.md`).
 
 ---

@@ -44,10 +44,17 @@ services:
     restart: unless-stopped
     environment:
       TOCSIN_MODE: *mode
-    # SoapySDR needs the host USB device and udev rules; not yet wired up
-    # (milestone 1 is channelizer-standalone only -- see this service's
-    # README). Left minimal on purpose rather than guessing device mappings
-    # ahead of live-hardware verification.
+      SDR_RX_DEVICES: ${SDR_RX_DEVICES:-}
+      SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
+      SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
+    tmpfs:
+      - /run/sdr_rx_ring
+    # SoapySDR needs the host USB device and udev rules (`--device=/dev/bus/usb`
+    # plus a serial-matched udev rule) and the SoapySDR system package isn't in
+    # the image yet -- neither is guessable without target hardware to verify
+    # against, so both are left out (see this service's README) rather than
+    # committing an unverified guess. SDR_RX_DEVICES unset means the container
+    # starts, reports that, and exits cleanly.
     profiles: [offgrid, hybrid]
 
   # same-decoder:            # milestone 2 (docs/design/master-prompt.md §10, §4)
