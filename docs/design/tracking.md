@@ -280,7 +280,115 @@ and unit tested," not "verified against real audio."
 
 ## Phase 4 — Segment capture + local STT
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- started ahead of Phase 2's real-audio verification
+at the user's explicit direction (Phase 2's own SAME-decode-from-real-audio confirmation is
+lower priority than forward progress right now); the design doc's own dependency note below
+still holds design-wise, it's just not gating implementation order here.
+
+**Done:**
+- `services/segment_capture`, a new uv-managed service:
+  - `boundary.py`: duplicated (not imported -- service boundary, CLAUDE.md), narrower
+    version of `same_decoder.parser`'s ZCZC regex (just event code + FIPS, no tiers/dedup)
+    plus `is_eom()` for the `NNNN` end-of-message marker `same_decoder` doesn't currently
+    detect at all.
+  - `multimon.py`, `subscriber.py`: identical in shape to `same_decoder`'s own -- this
+    service runs its *own* multimon-ng against the same `same.<site>.<channel>` feed,
+    independently of `same_decoder`'s, per the architecture diagram (§2) drawing both as
+    siblings of `sdr-rx` rather than one depending on the other's output.
+  - `ring_reader.py`: read-only counterpart to `sdr_rx.ring_buffer.ChannelRingBuffer`'s
+    on-disk format (duplicated file-format knowledge, not imported). Handles the real
+    constraint that a capture can run up to the 300s hard timeout while the ring buffer
+    only holds a 30s window: `start()` grabs pre-roll once, `read_new()` is then polled
+    repeatedly and reports `overrun=True` if a gap is ever unrecoverable (already
+    overwritten) rather than silently splicing across it.
+  - `tone.py`: 1050 Hz attention-tone-end detector -- a single-frequency DFT correlation
+    per fixed window (mathematically a Goertzel filter's result for a fixed window, simpler
+    to vectorize since the audio's already fully buffered). Verified against synthetic
+    tone+noise signals, including that a stray sub-`MIN_TONE_SECONDS` blip near 1050 Hz
+    (e.g. an AFSK symbol) doesn't get mistaken for the real 8-11s tone. Returns `None`
+    rather than guessing when no clear run is found -- a wrong trim point is worse than no
+    trim, same posture as the hallucination guard downstream.
+  - `writer.py`: resamples ring-rate audio to stt_worker's 16 kHz mono s16le uniform
+    contract before writing the WAV (duplicated from `sdr_rx.resample`), so `stt_worker`
+    needs no format-conversion code of its own.
+  - `recorder.py`, `bus.py`, `service.py`: per-(site, channel) capture state machine
+    (pre-roll -> live-drain -> finalize on EOM or hard timeout) and the capture-ready ZMQ
+    publisher handing off to `stt_worker`.
+  - Dockerfile: `python:3.11-slim` + apt `multimon-ng` (same package `same_decoder` already
+    uses, apt-install step confirmed building in this sandbox).
+- `services/stt_worker`, a new uv-managed service implementing exactly one provider,
+  `local_whispercpp` -- CLAUDE.md says stay concrete until a second real provider exists to
+  generalize from, so there's no `Provider` abstraction yet, just plain modules:
+  - `subscriber.py`: ZMQ SUB for `segment_capture`'s `capture.<site>.<channel>` topic.
+  - `trim.py`: cuts the WAV at the `voice_start_sample` `segment_capture` computed --
+    design doc §6's "trim before inference" step.
+  - `whispercpp.py`: subprocess wrapper around whisper.cpp's `whisper-cli` binary,
+    requesting its full JSON output (`-oj -ojf`). **Researched rather than assumed, given
+    the design doc calls an unguarded transcript this system's worst failure chain:**
+    per-segment `no_speech_prob` only landed in whisper.cpp's JSON writer via a 2026 PR
+    (`ggml-org/whisper.cpp#2654`), and `avg_logprob` -- the design doc's other named
+    metric -- does not appear to be exposed through the CLI's JSON output at all as of this
+    writing (it exists internally in the decoder's fallback logic, but isn't wired into the
+    JSON writer, and no documented flag requests it). `guard.py` was written to check each
+    threshold only when the corresponding field is actually present, rather than hard-fail
+    or silently no-op depending on the exact whisper.cpp build.
+  - `guard.py`: `no_speech_prob`/`avg_logprob` thresholds (conditional, see above) plus an
+    unconditional blocklist regex for classic Whisper hallucinations ("thank you for
+    watching," subscribe prompts, subtitle-credit strings) -- the blocklist is the one
+    guarantee that holds regardless of whisper.cpp version.
+  - `service.py`: wires trim -> whisper.cpp -> guard -> a `LoggingTranscriptSink` (same
+    "no Redis Streams/fusion consumer yet, Phase 5" rationale as `same_decoder`'s).
+  - `__init__.py`: startup assertion that fails loudly (one clear line, not a traceback --
+    the exact bug class fixed in `sdr_rx.__init__` earlier this session) if
+    `STT_WORKER_MODEL_PATH` isn't a real file, per design doc §8's "off-grid means
+    pre-staged" requirement.
+  - Dockerfile: multi-stage, builds `whisper-cli` from source (`git clone --branch v1.9.2`
+    + `cmake`) since no apt package exists for whisper.cpp on a Debian stable base as of
+    this writing (only landed in Debian *unstable* in January 2026, and is already marked
+    for testing-autoremoval) -- same "build our own, no official image/package exists"
+    reasoning as `deploy/icecast`. Both build and runtime stages use the same base image,
+    so (unlike `sdr-rx`'s SoapySDR ABI concern) there's no interpreter/glibc mismatch risk
+    for the copied binary; added `libgomp1` to the runtime stage since whisper.cpp needs
+    OpenMP at runtime, not just build time, and `python:3.11-slim` doesn't ship it.
+- `compose.yaml`: `sdr-rx`'s ring buffer changed from a private per-container `tmpfs:`
+  mount to a named, tmpfs-backed volume (`sdr-rx-ring`) shared with the new
+  `segment-capture` service -- this is a real behavior change from Phase 1, required
+  because `segment_capture` genuinely needs to read the same backing memory `sdr-rx`
+  writes to, not an independent copy. Added `segment-capture` and `stt-worker` services
+  (env vars, a `segment-captures` volume shared between them for the WAV handoff, a
+  `./models` read-only bind mount for `stt-worker`). `docker compose config` confirmed
+  resolving cleanly, including the shared volumes landing on the right services.
+- `Makefile`: `fetch-models` implemented for real (was a stub) -- downloads a ggml model
+  from `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-<model>.bin` into
+  `./models/`, defaulting to `base.en` per master-prompt.md §6's suggested off-grid
+  default. `make test` now also runs `segment_capture`'s and `stt_worker`'s suites.
+- 63 new tests (38 in `segment_capture`, 25 in `stt_worker`); 191 tests passing (`make
+  test`) across all five implemented services.
+
+**Not started / open:**
+- Build/runtime verification for both new Dockerfiles -- `segment_capture`'s apt-install
+  layer (multimon-ng) was confirmed building in this sandbox, but the `pip install uv` step
+  right after it hit this sandbox's known TLS-intercepting-proxy limitation (see the
+  2026-08-08 entry earlier in this log) before getting further; `stt_worker`'s
+  from-source whisper.cpp build (a `git clone` over HTTPS) was never attempted for the same
+  reason -- it would hit the identical wall immediately. Neither is a code defect; both are
+  the same previously-documented sandbox artifact.
+- Whether whisper.cpp's real JSON output actually matches the researched shape
+  (`{"transcription": [{"text", "no_speech_prob", ...}]}`) once a real binary produces it --
+  `whispercpp.py`'s parser is written against documentation/source-reading, not a real
+  binary's actual output, since no whisper.cpp build has run anywhere in this repo's
+  history yet.
+- Live-hardware verification (design doc's actual exit criteria): a recorded RWT/RMT (or
+  real event) transcribing correctly end to end, offgrid, on target hardware -- blocked on
+  Phase 2's still-open "confirm a real decoded SAME header" item, since segment_capture
+  only starts a capture when its own multimon-ng sees a ZCZC line. Also open: benchmarking
+  actual Whisper RTF against the `base.en`/`small.en` defaults on the Pi 5 now confirmed
+  working in Phase 1 (master prompt §12).
+
+**Depends on:** Phase 2 (needs a real decoded SAME header to trigger a capture at all) --
+per CLAUDE.md's normal "prove phase N before starting N+1" rule this would have waited, but
+implementation was started anyway at the user's explicit direction; the live-hardware exit
+criteria above still can't be met until Phase 2's own real-audio gap closes.
 
 ---
 
@@ -425,3 +533,19 @@ and unit tested," not "verified against real audio."
   `make bench-channelizer` on the real Pi 5 is the only remaining Phase 1 item, and it's a
   "nice to have" against roadmap.md's goal list, not blocking against its actual exit
   criteria.
+- **2026-08-08** — At the user's explicit direction, started Phase 4 (segment capture +
+  local STT) without waiting on Phase 2's real-audio confirmation. Implemented
+  `services/segment_capture` (ring-buffer pre-roll/live-drain capture triggered by its own
+  independent ZCZC/EOM detection, 1050 Hz attention-tone boundary detection, WAV writer) and
+  `services/stt_worker` (whisper.cpp `local_whispercpp` provider only, per CLAUDE.md's
+  "stay concrete" guidance; hallucination guard checking `no_speech_prob`/`avg_logprob`
+  only when whisper.cpp's build actually supplies them, found via research to not be
+  reliably available, plus an unconditional blocklist). `compose.yaml`'s ring buffer moved
+  from `sdr-rx`'s private tmpfs to a named volume shared with the new `segment-capture`
+  service; added a `segment-captures` volume and a `./models` bind mount. `Makefile`'s
+  `fetch-models` stub is now real. 63 new tests, 191 passing across all five implemented
+  services (`make test`). Neither new Dockerfile is build-verified end to end in this
+  sandbox -- `segment_capture`'s apt layer (multimon-ng) built fine, but both it and
+  `stt_worker`'s from-source whisper.cpp build hit the same previously-documented
+  TLS-intercepting-proxy wall this sandbox always hits on pip/git-over-HTTPS. See Phase 4's
+  section above for the full list of what's confirmed vs. still open.
