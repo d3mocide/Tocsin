@@ -57,6 +57,40 @@ async def test_ensure_schema_skips_blank_statements(tmp_path):
     assert len(pool.executed) == 1
 
 
+async def test_ensure_schema_ignores_semicolons_inside_comments(tmp_path):
+    """A `;` in prose used to split the file mid-comment, which sent
+    Postgres a comment-only query (EmptyQueryResponse -> asyncpg
+    `AttributeError`) and left every later statement unapplied."""
+    schema_file = tmp_path / "schema.sql"
+    schema_file.write_text(
+        "-- rows double here; that is the accepted cost\nCREATE TABLE a (x int);\n"
+    )
+    pool = FakePool()
+
+    await db.ensure_schema(pool, schema_path=schema_file)
+
+    assert len(pool.executed) == 1
+    assert pool.executed[0][0].startswith("CREATE TABLE a")
+
+
+def test_split_statements_ignores_semicolons_inside_literals_and_block_comments():
+    sql = "/* one; two /* nested; */ */ INSERT INTO t VALUES ('a;b', \"c;d\"); SELECT 1;"
+    statements = db._split_statements(sql)
+
+    assert statements == ["INSERT INTO t VALUES ('a;b', \"c;d\")", "SELECT 1"]
+
+
+def test_real_schema_splits_into_executable_statements():
+    """Guards the checked-in schema itself: every fragment handed to
+    Postgres has to start with SQL, not with the tail of a comment."""
+    statements = db._split_statements(db.SCHEMA_PATH.read_text())
+
+    assert statements
+    for statement in statements:
+        assert statement.split()[0].upper() in {"CREATE", "SELECT"}, statement[:60]
+    assert any("CREATE TABLE IF NOT EXISTS dispatches" in s for s in statements)
+
+
 async def test_upsert_alert_converts_iso_timestamps_to_datetime():
     pool = FakePool()
     await db.upsert_alert(pool, _alert())

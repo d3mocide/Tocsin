@@ -1492,3 +1492,25 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   disable transmit while the device mapping stayed in place; it's mentioned only in the
   `tcp` note where turning it on by hand is actually required. Verified by rendering
   `docker compose config` from the new file with both compose files and the hybrid profile.
+
+- **2026-08-08:** Fixed `api`'s remaining restart loop, reported from a live `docker compose`
+  log: `ensure_schema` died with `AttributeError: 'NoneType' object has no attribute
+  'decode'` deep inside asyncpg's `_on_result__simple_query`, on every start. Not a
+  connection or config problem -- `db.ensure_schema` split `schema.sql` on a bare
+  `str.split(";")`, and the `dispatches` table's comment block contains a semicolon in
+  prose ("Redelivery of the same stream entry can therefore double a row here; that is the
+  accepted cost..."). That split the file mid-comment: the leading fragment was
+  comment-only, which Postgres answers with `EmptyQueryResponse` and no command tag, so
+  asyncpg had `None` to `.decode()` -- hence a `AttributeError` rather than any SQL error
+  in the traceback (confirmed against asyncpg 0.31.0's `coreproto.pyx`, which discards `I`
+  messages and leaves `result_status_msg` unset). The trailing fragment started mid-comment
+  and would have been a syntax error, so `dispatches` and its two indexes were never
+  created on any deployment that got this far. Replaced the split with `_split_statements`,
+  a scanner that skips `--` comments, nested `/* */` blocks, and quoted literals before
+  splitting -- deliberately no dollar-quote handling, since `schema.sql` is plain DDL with
+  no function bodies and a future `$$` block would fail loudly as a syntax error rather
+  than silently. The prose semicolon stays in `schema.sql` on purpose, as the regression
+  fixture. Tests: comment-semicolon and literal/block-comment cases, plus one that parses
+  the real checked-in `schema.sql` and asserts every fragment starts with `CREATE`/`SELECT`
+  and that `dispatches` survives. `api` suite 103 passed. Not verified: a real `up` against
+  a live Postgres -- still no Docker daemon in this sandbox.

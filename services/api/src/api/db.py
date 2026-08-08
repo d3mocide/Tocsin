@@ -34,9 +34,77 @@ class PoolLike(Protocol):
     async def fetch(self, query: str, *args: Any) -> list[Any]: ...
 
 
+def _split_statements(sql: str) -> list[str]:
+    """Split `schema.sql` on statement-terminating semicolons only,
+    dropping comments as it goes.
+
+    A plain `sql.split(";")` is wrong for any semicolon inside a comment or
+    a string literal, and it fails in a way that is hard to read back from
+    the traceback: the leading fragment is comment-only, Postgres answers
+    a comment-only query with EmptyQueryResponse, and asyncpg has no
+    command tag to decode -- so `ensure_schema` dies with
+    `AttributeError: 'NoneType' object has no attribute 'decode'` instead
+    of any kind of SQL error. The trailing fragment then starts mid-comment
+    and is a syntax error, so every statement after it never runs.
+
+    No dollar-quote handling: `schema.sql` is plain DDL with no function
+    bodies. A `$$ ... $$` block added later would split wrongly, but it
+    would fail as a loud syntax error rather than silently.
+    """
+    statements: list[str] = []
+    current: list[str] = []
+    index = 0
+    length = len(sql)
+
+    while index < length:
+        char = sql[index]
+        pair = sql[index : index + 2]
+
+        if pair == "--":
+            newline = sql.find("\n", index)
+            index = length if newline == -1 else newline
+            continue
+
+        if pair == "/*":
+            depth = 1
+            index += 2
+            while index < length and depth:
+                if sql[index : index + 2] == "/*":
+                    depth += 1
+                    index += 2
+                elif sql[index : index + 2] == "*/":
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            current.append(" ")
+            continue
+
+        if char in "'\"":
+            current.append(char)
+            index += 1
+            while index < length:
+                current.append(sql[index])
+                index += 1
+                if sql[index - 1] == char:
+                    break
+            continue
+
+        if char == ";":
+            statements.append("".join(current))
+            current = []
+            index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    statements.append("".join(current))
+    return [statement.strip() for statement in statements if statement.strip()]
+
+
 async def ensure_schema(pool: PoolLike, schema_path: Path = SCHEMA_PATH) -> None:
-    statements = [s.strip() for s in schema_path.read_text().split(";") if s.strip()]
-    for statement in statements:
+    for statement in _split_statements(schema_path.read_text()):
         await pool.execute(statement)
 
 
