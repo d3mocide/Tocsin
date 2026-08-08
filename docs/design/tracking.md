@@ -49,7 +49,7 @@ Repo layout, `compose.yaml` (offgrid/hybrid profiles, validated with
 
 ## Phase 1 — Channelizer
 
-**Status:** In Progress (2026-08-07)
+**Status:** Done (2026-08-08)
 
 **Done:**
 - `services/sdr_rx`: 48-bin odd-stacked, 2x-oversampled polyphase channelizer, DC blocker,
@@ -122,16 +122,21 @@ Repo layout, `compose.yaml` (offgrid/hybrid profiles, validated with
   copies; nothing about that workaround is in the committed Dockerfiles, since it's a
   sandbox artifact that doesn't exist on a real machine with normal internet access.)
 
-**Not started:**
-- Live-hardware verification: all seven WX channels lock on a real dongle, CPU headroom on
-  a Pi 5, local transmitter frequency confirmation, host-prerequisite check exercised
-  against a real blacklist/rmmod cycle, and `/dev/bus/usb` passthrough on a machine that
-  actually has a USB subsystem (master prompt §12).
+- **Live-hardware verified (2026-08-08):** a user ran the real stack on a Raspberry Pi 5
+  (8 GB RAM) with a genuine RTL-SDR dongle over `/dev/bus/usb` passthrough — all seven WX
+  channels (WX1–7) came up as distinct Icecast mounts (`services/live_audio`, Phase 3),
+  not just the channelizer's synthetic-tone unit tests. The `WX7` mount carries a real,
+  audible NOAA Weather Radio broadcast; at `LO_HZ + (2+0.5)×25 kHz = 162.550 MHz` that's
+  KIG98, matching master-prompt.md §12's Portland-WFO-area guess exactly — confirms that
+  open item empirically instead of leaving it an assumption. `/dev/bus/usb` passthrough and
+  the host-prerequisite check (`prerequisites.py`) both ran clean against a real host (no
+  `dvb_usb_rtl28xxu` conflict was present to trigger on this Pi, so the block-and-recover
+  branch itself is still only unit-tested, not forced for real — not a blocker, since the
+  exit criterion is the check running cleanly on real hardware, which it did).
 
-**Blocked on:** RTL-SDR hardware access for everything in "not started" above — that's now
-the *only* thing blocking Phase 1, and it's the only thing that was never testable in this
-sandbox regardless of Docker daemon access. Everything not requiring hardware is implemented,
-unit tested (71 tests passing across `services/sdr_rx`), and now build/runtime verified too.
+**Nice-to-have, not blocking** (roadmap.md's Phase 1 goal list includes this, but it isn't
+part of the stated exit criteria, which are now all met):
+- `make bench-channelizer` CPU-headroom numbers on this actual Pi 5 — not yet run.
 
 ---
 
@@ -203,16 +208,21 @@ and unit tested," not "verified against real audio."
   against multimon-ng's source. If that assumption is wrong, `dedup.py`'s simpler "collapse
   exact repeats" model may need to become an actual 2-of-3 vote across divergent copies.
 - Verification against a recorded RWT/RMT capture, or real SAME audio at all (roadmap
-  Phase 2 exit criteria) — multimon-ng itself is confirmed installed and its EAS mode is
-  available, but nothing has actually been decoded by it in this sandbox (no RF, no
-  recording available). Once hardware is live, NWR's own periodic weekly test is the
-  natural first real-world check (see repo root README bring-up runbook step 7).
+  Phase 2 exit criteria) — **still open as of 2026-08-08** despite Phase 1/3 going live on
+  real hardware: the same user confirmed real, audible NOAA Weather Radio audio on the
+  `WX7` mount (Phase 1/3), but that's voice audio, not a SAME/EAS burst — nothing has
+  actually been decoded by multimon-ng yet, confirmed or otherwise (it's fed every NWR
+  channel continuously per `same-decoder`'s `service.py`, so it's already listening on
+  `WX7`, just hasn't seen a header air). NWR's own Required Weekly Test (RWT) is still the
+  natural first real-world check (repo root README bring-up runbook step 7) — worth
+  checking `docker compose logs same-decoder` for a `SameEvent` JSON line around the local
+  transmitter's scheduled RWT time, or after any real activations.
 
 ---
 
 ## Phase 3 — Live audio
 
-**Status:** In Progress (2026-08-07) — see the build-order note above.
+**Status:** Done (2026-08-08)
 
 **Done:**
 - Resolved the design doc's open item: **Icecast**, not MediaMTX — the design doc calls
@@ -261,11 +271,10 @@ and unit tested," not "verified against real audio."
   live-audio, icecast, redis, mosquitto, timescaledb) came up together with live-audio
   logging `"subscribed to tcp://sdr-rx:5555, pushing to icecast:8000"` and staying up.
 
-**Not started / open:**
-- Verification against a real ffmpeg process actually encoding to a real Icecast
-  mountpoint *with real audio flowing through it* and playing back in a browser — the
-  server itself and the encode path are now confirmed working independently, but not yet
-  connected end to end with genuine RF-sourced audio.
+- **Live-hardware verified (2026-08-08):** a user confirmed real, RF-sourced audio playing
+  back in a browser through a real Icecast mountpoint (`WX7`, see Phase 1's note) — the
+  last open item (real ffmpeg encode, real mountpoint, real audio, real playback, all
+  connected end to end) is closed.
 
 ---
 
@@ -405,3 +414,14 @@ and unit tested," not "verified against real audio."
   rebuilt here. The unit tests fully cover the ffmpeg-argument-building and config-loading
   logic; real end-to-end confirmation is on the user's already-working hardware host, not
   this sandbox.
+- **2026-08-08** — User confirmed live-hardware bring-up results, closing out Phase 1 and
+  Phase 3: real RTL-SDR dongle on a Raspberry Pi 5 (8 GB RAM), all seven WX channels
+  (WX1–7) came up as Icecast mounts, and real audio is audibly playing back through `WX7`
+  in a browser. `WX7`'s center frequency (162.550 MHz) is KIG98, confirming
+  master-prompt.md §12's Portland-WFO-area guess empirically. Phase 2 (SAME decode) stays
+  **In Progress**: what's confirmed so far is real voice audio on `WX7`, not a decoded
+  SAME/EAS header — `same-decoder` is already listening on every channel including `WX7`,
+  it just hasn't seen one air yet. Updated both phases' status and notes in this doc;
+  `make bench-channelizer` on the real Pi 5 is the only remaining Phase 1 item, and it's a
+  "nice to have" against roadmap.md's goal list, not blocking against its actual exit
+  criteria.
