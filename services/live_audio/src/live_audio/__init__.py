@@ -17,7 +17,7 @@ from .metadata import DEFAULT_DESCRIPTION, DEFAULT_GENRE, DEFAULT_NAME_TEMPLATE,
 from .service import IcecastConfig, Streamer
 from .subscriber import StreamAudioSubscriber
 
-DEFAULT_ZMQ_CONNECT = "tcp://sdr-rx:5555"
+DEFAULT_ZMQ_CONNECT = "tcp://localhost:5555"
 DEFAULT_ICECAST_HOST = "icecast"
 DEFAULT_ICECAST_PORT = 8000
 DEFAULT_ICECAST_USER = "source"

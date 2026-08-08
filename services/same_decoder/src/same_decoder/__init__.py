@@ -18,7 +18,7 @@ from .service import Decoder
 from .subscriber import SameAudioSubscriber
 from .tiers import TierTable
 
-DEFAULT_ZMQ_CONNECT = "tcp://sdr-rx:5555"
+DEFAULT_ZMQ_CONNECT = "tcp://localhost:5555"
 
 
 def _build_sink():

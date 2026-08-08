@@ -25,7 +25,7 @@ from .service import SegmentCaptureService
 from .subscriber import SameAudioSubscriber
 from .tiers import TierTable
 
-DEFAULT_ZMQ_CONNECT = "tcp://sdr-rx:5555"
+DEFAULT_ZMQ_CONNECT = "tcp://localhost:5555"
 DEFAULT_ZMQ_BIND = "tcp://0.0.0.0:5556"
 DEFAULT_RING_BUFFER_DIR = Path("/run/sdr_rx_ring")
 DEFAULT_OUTPUT_DIR = Path("/var/lib/segment_capture/captures")

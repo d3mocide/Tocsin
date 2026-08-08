@@ -5,6 +5,14 @@ mono), pipes each channel's audio to its own `multimon-ng -t raw -a EAS -`
 subprocess, parses decoded `ZCZC` SAME headers, tags them with a tier from
 `data/same_event_codes.yaml`, and logs one structured JSON line per event.
 
+No `compose.yaml` service or Dockerfile of its own: this project ships
+inside `sdr-rx`'s container image (`../sdr_rx/Dockerfile`, build context
+the repo root) as one of four independent uv projects/venvs, started by
+`../sdr_rx/entrypoint.sh` as a self-restarting background process. Still
+fully independent of `sdr-rx` at the Python level (own `pyproject.toml`,
+own tests, no cross-import) -- `../sdr_rx/README.md`'s "Container" section
+has the full picture.
+
 ## Status
 
 Implemented and unit tested: header parsing (`parser.py`), tier lookup
@@ -34,7 +42,7 @@ test runs), events fall back to stdout as JSON (`LoggingEventSink`).
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `SAME_DECODER_ZMQ_CONNECT` | `tcp://sdr-rx:5555` | Address to connect to sdr-rx's ZMQ PUB socket. |
+| `SAME_DECODER_ZMQ_CONNECT` | `tcp://localhost:5555` | Address to connect to sdr-rx's ZMQ PUB socket -- `localhost`, since both run in the same container now (see above). |
 | `TOCSIN_DATA_DIR` | repo-root `data/` | Directory containing `same_event_codes.yaml`. Set by compose to the mounted `data/` volume in containers. |
 | `SAME_DECODER_REDIS_URL` | *(unset -- logs to stdout)* | Redis connection URL. When set, events publish to the `tocsin:same_events` stream for `fusion` instead of stdout. |
 

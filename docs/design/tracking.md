@@ -138,6 +138,13 @@ Repo layout, `compose.yaml` (offgrid/hybrid profiles, validated with
 part of the stated exit criteria, which are now all met):
 - `make bench-channelizer` CPU-headroom numbers on this actual Pi 5 — not yet run.
 
+- **2026-08-08:** `sdr-rx`'s container now also runs `same_decoder`, `live_audio`, and
+  `segment_capture` (Phases 2-4) as independent, self-restarting processes launched by a new
+  `entrypoint.sh`, at the user's request to shrink `compose.yaml`'s container count further.
+  All four stay fully separate uv projects with their own tests; see the Session Log entry
+  this date for the full reasoning and `services/sdr_rx/README.md`'s "Container" section for
+  the mechanics.
+
 ---
 
 ## Phase 2 — SAME decode end to end
@@ -215,8 +222,10 @@ and unit tested," not "verified against real audio."
   channel continuously per `same-decoder`'s `service.py`, so it's already listening on
   `WX7`, just hasn't seen a header air). NWR's own Required Weekly Test (RWT) is still the
   natural first real-world check (repo root README bring-up runbook step 7) — worth
-  checking `docker compose logs same-decoder` for a `SameEvent` JSON line around the local
-  transmitter's scheduled RWT time, or after any real activations.
+  checking `docker compose logs sdr-rx | grep same-decoder` for a `SameEvent` JSON line
+  around the local transmitter's scheduled RWT time, or after any real activations
+  (`same-decoder` stopped being a separate compose service/container on 2026-08-08 — see
+  Phase 1's notes and the Session Log).
 
 ---
 
@@ -275,6 +284,11 @@ and unit tested," not "verified against real audio."
   back in a browser through a real Icecast mountpoint (`WX7`, see Phase 1's note) — the
   last open item (real ffmpeg encode, real mountpoint, real audio, real playback, all
   connected end to end) is closed.
+
+- **2026-08-08:** `live_audio` no longer has its own `compose.yaml` service or Dockerfile --
+  it now ships inside `sdr-rx`'s container image as a second process, connecting to sdr-rx
+  over `localhost:5555` instead of `tcp://sdr-rx:5555`. See Phase 1's notes and the Session
+  Log entry this date.
 
 ---
 
@@ -389,6 +403,13 @@ still holds design-wise, it's just not gating implementation order here.
 per CLAUDE.md's normal "prove phase N before starting N+1" rule this would have waited, but
 implementation was started anyway at the user's explicit direction; the live-hardware exit
 criteria above still can't be met until Phase 2's own real-audio gap closes.
+
+- **2026-08-08:** `segment_capture` no longer has its own `compose.yaml` service or
+  Dockerfile -- it now ships inside `sdr-rx`'s container image as a third process, reading
+  sdr-rx's ring buffer over a private `tmpfs:` mount instead of the `sdr-rx-ring` named
+  volume (removed) that used to share it across two containers. `stt-worker` (still
+  separate) now reaches its capture-ready ZMQ socket at `sdr-rx`'s hostname instead of its
+  own. See Phase 1's notes and the Session Log entry this date.
 
 ---
 
@@ -1165,3 +1186,85 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   `dispatcher` was considered and rejected, since it would give up the independent
   `on-failure`/`unless-stopped` restart policies and device-passthrough isolation those
   services are deliberately built around.
+- **2026-08-08** — Revisited the rejection immediately above, at the user's request: the
+  restart-policy/isolation cost is real, but so is the argument for merging anyway --
+  `same-decoder`, `live-audio`, and `segment-capture` are already one failure domain in
+  practice (all three are useless without `sdr-rx` producing anything, and none of them
+  crash-loops the others today), and one container's interleaved, per-line-prefixed logs
+  (each of the four already prints its own `"<name>: ..."` prefix, an existing convention,
+  not new) are easier to read when diagnosing one failure than four `docker compose logs`
+  invocations. Folded `same_decoder`, `live_audio`, and `segment_capture` into `sdr-rx`'s
+  container (deliberately left `stt-worker` out -- see below), taking `compose.yaml` from
+  12 containers to 9. All four stay fully independent uv projects with their own
+  `pyproject.toml`/tests (`make test` unchanged) -- no cross-package Python import, same
+  boundary rule as the merges above.
+  - `services/sdr_rx/Dockerfile` now builds all four into separate venvs on one
+    `debian:bookworm-slim` image (`python:3.11-slim` won't do -- sdr-rx's apt-installed
+    SoapySDR bindings need to stay on Debian's own interpreter, see the Dockerfile's own
+    comment; the other three don't need `--system-site-packages` but happily share the same
+    base and get `multimon-ng`/`ffmpeg` from the same apt layer).
+  - New `entrypoint.sh` is meaningfully more involved than the fusion+nws-poller one: none
+    of the four processes is a single "always required" foreground owner the way `fusion`
+    is for `nws-poller`, because the repo root README's bring-up runbook *requires*
+    same-decoder/live-audio/segment-capture to keep running even when sdr-rx has no dongle
+    configured at all. All four now run as independent, self-restarting background loops
+    under `set -m` (so each gets its own process group), with a `trap`/`cleanup` that sends
+    `kill -TERM -- "-$pid"` (the process-group form, not a plain `kill $pid`) to each on
+    `docker stop` -- without that, SIGTERM would hit only the idle loop shell, not the
+    actually-running `uv run <service>` underneath it, and `docker stop` would hang out its
+    full timeout before falling back to SIGKILL. sdr-rx's own loop is the one with real
+    exit-code-dependent logic, ported from this file's very first 2026-08-08 entry (the
+    `restart: on-failure`-vs-`unless-stopped` bug fixed there): exit 0 ("no devices
+    configured") stops that one loop from retrying; exit 1 retries. `SDR_RX_LIST_DEVICES`
+    (`make sdr-devices`) is special-cased at the top of the script to `exec` straight into
+    just sdr-rx's listing codepath, skipping the other three entirely -- without this,
+    `make sdr-devices` would launch the whole stack and then hang forever instead of
+    printing serials and exiting, since the merged entrypoint's default path never returns.
+  - `compose.yaml`: `same-decoder`/`live-audio`/`segment-capture`'s env vars folded into
+    `sdr-rx`; their `*_ZMQ_CONNECT` defaults (both the compose env var and each service's
+    own `DEFAULT_ZMQ_CONNECT` constant in source) changed from `tcp://sdr-rx:5555` to
+    `tcp://localhost:5555`, since they're the same container now, not a separate one
+    reaching sdr-rx by service name. The `sdr-rx-ring` named tmpfs volume is gone --
+    segment-capture reading sdr-rx's ring buffer only ever needed a *shared* volume because
+    they were different containers; merged, a private `tmpfs:` mount on sdr-rx does the same
+    job with one less top-level volume. `stt-worker` (kept separate -- see below) now
+    connects to `tcp://sdr-rx:5556` instead of `tcp://segment-capture:5556`, since
+    segment-capture no longer has its own hostname; that constant changed in
+    `stt_worker/__init__.py` too.
+  - **`stt-worker` deliberately excluded**, per an explicit scoping question this session:
+    it has no hardware dependency (unlike the other four), a completely different resource
+    profile (CPU-bound whisper.cpp transcription vs. this container's I/O-bound RF
+    plumbing), the heaviest single build in the repo (from-source whisper.cpp), and its own
+    independent "missing model file" restart story -- it doesn't share sdr-rx's fate the way
+    same-decoder/live-audio/segment-capture do.
+  - Updated `services/sdr_rx/README.md` (new "Container" section), `same_decoder/README.md`,
+    `live_audio/README.md`, `segment_capture/README.md` (each gained a short "ships inside
+    sdr-rx's container now" note plus corrected `*_ZMQ_CONNECT` defaults),
+    `services/stt_worker/README.md`, and the root README's hardware bring-up runbook (step
+    4's "same-decoder/live-audio/icecast stay up while sdr-rx exits" description no longer
+    holds -- the whole container now stays `Up`, with sdr-rx's own process just logging that
+    it stopped retrying; step 7's `docker compose logs -f same-decoder` became `docker
+    compose logs -f sdr-rx | grep same-decoder` since that's no longer a separate service).
+    Also corrected a `docker compose logs same-decoder` pointer in Phase 2's own "Not
+    started / open" notes for the same reason.
+  - Test suites for all five touched services (`sdr_rx`, `same_decoder`, `live_audio`,
+    `segment_capture`, `stt_worker`) re-run and green, unchanged counts (81/29/28/46/38).
+  - `docker compose config` resolves cleanly for both profiles, both now listing the same 9
+    services.
+  - Build- and run-verified against a real Docker daemon, not just `docker compose config`
+    (same local CA-trust workaround as the earlier entry this date, nothing committed): `uv
+    venv --system-site-packages` genuinely sees apt's SoapySDR bindings inside this merged
+    image (`import SoapySDR` succeeds, `SoapySDRUtil --info` lists the `rtlsdr` factory) --
+    confirms the four-projects-on-one-base-image approach doesn't break sdr-rx's ABI
+    constraint. Ran the merged container with no `SDR_RX_DEVICES` set: `docker top` showed
+    `same-decoder`, `live-audio`, and `segment-capture` all alive with real `uv run <name>`
+    children, no `uv run sdr-rx` process anywhere, sdr-rx's own log line read "exited 0 (no
+    devices configured) -- not retrying," and `docker ps` still showed the container `Up` --
+    exactly the bring-up runbook's intended shape, now produced by one container instead of
+    four. `SDR_RX_LIST_DEVICES=1` (the `make sdr-devices` path) exited in under a second with
+    only sdr-rx's own listing codepath ever starting, confirming the entrypoint's early
+    short-circuit works. `docker stop` on the running container returned in 0.33s with the
+    container fully removed and no leftover processes -- confirms `set -m` plus the
+    process-group `kill -TERM -- "-$pid"` in `cleanup()` actually reaches the real `uv run
+    <service>` processes, not just their loop shells, avoiding a hang out to the stop
+    timeout and a SIGKILL fallback.
