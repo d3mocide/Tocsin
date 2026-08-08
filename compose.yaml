@@ -79,10 +79,15 @@ services:
     environment:
       SAME_DECODER_ZMQ_CONNECT: tcp://sdr-rx:5555
       TOCSIN_DATA_DIR: /app/data
+      # Publishes to Redis Streams (tocsin:same_events) for fusion (design
+      # doc §5: "Both paths write raw events to Redis Streams before
+      # fusion sees them") instead of only logging to stdout.
+      SAME_DECODER_REDIS_URL: redis://redis:6379/0
     volumes:
       - ./data:/app/data:ro
     depends_on:
       - sdr-rx
+      - redis
     profiles: [offgrid, hybrid]
 
   icecast:
@@ -155,13 +160,44 @@ services:
       - segment-capture
     profiles: [offgrid, hybrid]
 
-  # nws-poller:                # milestone 5 -- hybrid only (docs/design/master-prompt.md §8)
-  #   build: ./services/nws_poller
-  #   profiles: [hybrid]
+  nws-poller:
+    build: ./services/nws_poller
+    restart: unless-stopped
+    environment:
+      # Empty by default, not `:?`-required: compose interpolates every
+      # service's environment during `config` regardless of which
+      # --profile was selected, so a hard-required var here would block
+      # `offgrid` startup too even though nws-poller (hybrid-only) never
+      # runs there -- exactly the regression CLAUDE.md's connectivity rule
+      # warns about. Same pattern as SDR_RX_DEVICES: nws_poller's own
+      # __init__.py already fails loudly and exits 1 if this is unset,
+      # which only matters (and only restart-loops) under the hybrid
+      # profile where the container actually starts.
+      NWS_POLLER_USER_AGENT: ${NWS_POLLER_USER_AGENT:-}
+      NWS_POLLER_AREAS: ${NWS_POLLER_AREAS:-OR,WA}
+      NWS_POLLER_INTERVAL_SECONDS: ${NWS_POLLER_INTERVAL_SECONDS:-60}
+      NWS_POLLER_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+    # hybrid only (design doc §8: nws-poller is one of the four
+    # network-dependent components offgrid disables entirely) -- this
+    # profile gate is the actual "disabled off-grid" mechanism, since
+    # there's no in-process TOCSIN_MODE branch to speak of: the process
+    # simply never starts under the offgrid profile.
+    profiles: [hybrid]
 
-  # fusion:                    # milestone 5
-  #   build: ./services/fusion
-  #   profiles: [offgrid, hybrid]
+  fusion:
+    build: ./services/fusion
+    restart: unless-stopped
+    environment:
+      TOCSIN_MODE: *mode
+      TOCSIN_DATA_DIR: /app/data
+      FUSION_REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      - redis
+    profiles: [offgrid, hybrid]
 
   # dispatcher:                # milestone 6-7
   #   build: ./services/dispatcher

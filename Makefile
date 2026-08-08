@@ -63,3 +63,5 @@ test:
 	cd services/live_audio && uv sync && uv run pytest
 	cd services/segment_capture && uv sync && uv run pytest
 	cd services/stt_worker && uv sync && uv run pytest
+	cd services/nws_poller && uv sync && uv run pytest
+	cd services/fusion && uv sync && uv run pytest

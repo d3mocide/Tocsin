@@ -23,9 +23,12 @@ decoded line only once two of three copies agree" assumption in
 multimon-ng's actual source -- worth an early check once real audio is
 flowing (see the repo root README's bring-up runbook).
 
-Structured events currently go to stdout as JSON (`LoggingEventSink`) --
-there's no Redis Streams / fusion consumer yet (that's Phase 5); `EventSink`
-is the seam a real publisher drops into later.
+Structured events go to Redis Streams (`redis_sink.py`, stream
+`tocsin:same_events`) when `SAME_DECODER_REDIS_URL` is set -- `fusion`
+(Phase 5) consumes from there via a consumer group so a crash mid-event
+resumes rather than loses it (design doc §5). Without that env var (local/
+test runs), events fall back to stdout as JSON (`LoggingEventSink`).
+`EventSink` is the seam either implementation drops into.
 
 ## Configuration
 
@@ -33,6 +36,7 @@ is the seam a real publisher drops into later.
 |---|---|---|
 | `SAME_DECODER_ZMQ_CONNECT` | `tcp://sdr-rx:5555` | Address to connect to sdr-rx's ZMQ PUB socket. |
 | `TOCSIN_DATA_DIR` | repo-root `data/` | Directory containing `same_event_codes.yaml`. Set by compose to the mounted `data/` volume in containers. |
+| `SAME_DECODER_REDIS_URL` | *(unset -- logs to stdout)* | Redis connection URL. When set, events publish to the `tocsin:same_events` stream for `fusion` instead of stdout. |
 
 ## Development
 

@@ -25,11 +25,11 @@ completion of the phase's actual exit criteria.
 | Phase | Description | Status | Last updated |
 |---|---|---|---|
 | 0 | Bootstrap | Done | 2026-08-07 |
-| 1 | Channelizer | In Progress | 2026-08-07 |
+| 1 | Channelizer | Done | 2026-08-08 |
 | 2 | SAME decode end to end | In Progress | 2026-08-07 |
-| 3 | Live audio | In Progress | 2026-08-07 |
-| 4 | Segment capture + local STT | Not Started | — |
-| 5 | NWS poller + fusion | Not Started | — |
+| 3 | Live audio | Done | 2026-08-08 |
+| 4 | Segment capture + local STT | In Progress | 2026-08-08 |
+| 5 | NWS poller + fusion | In Progress | 2026-08-08 |
 | 6 | Dispatcher stage 1 | Not Started | — |
 | 7 | Dispatcher stage 2 + remote STT | Not Started | — |
 | 8 | API + web UI | Not Started | — |
@@ -394,7 +394,138 @@ criteria above still can't be met until Phase 2's own real-audio gap closes.
 
 ## Phase 5 — NWS poller + fusion
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- at the user's explicit direction, built ahead of
+Phase 2's real-audio confirmation to get the whole stack to an end-to-end MVP faster, same
+build-order exception as Phase 4. Unlike Phases 2-4, this phase's actual exit criteria
+(roadmap.md: "correlation logic verified against recorded fixtures... covering true
+matches, near-misses..., and each unmatched state") don't need real hardware or a running
+Redis at all -- so unlike those phases, this one **is** fully verified against its stated
+exit criteria already, not just unit tested ahead of hardware proof. What's still open is
+integration with the real, running system (live Redis, live `same-decoder`/`nws-poller`
+output, a real `api.weather.gov` response), which does depend on Phase 2's still-open
+real-audio gap for the RF side.
+
+**Done:**
+- `services/nws_poller`, a new uv-managed service:
+  - `client.py`: `NwsAlertsClient`, ETag-conditional GET against `api.weather.gov/alerts/active`.
+    Verified the actual API contract against the API's own published OpenAPI spec
+    (`api.weather.gov/openapi.json`) rather than assuming: confirmed `area` takes exactly
+    one state/marine-area code per request (not comma-separated, not repeatable -- `zone`
+    supports repetition, `area` doesn't), so polling multiple states means one request per
+    area, each with its own tracked ETag. Injectable GET callable, same testability pattern
+    as `same_decoder.multimon`'s injectable subprocess command.
+  - `parser.py`: GeoJSON feature -> `CapAlert` dataclass, including `geocode.SAME` (the
+    field that makes direct FIPS-set correlation against SAME headers possible with no
+    county-name lookup in between -- design doc §5) and `parameters.VTEC`.
+  - `tracker.py`: `(id, sent)` dedup -- `/alerts/active` returns the full active-alert
+    snapshot on every successful poll, not a delta, so without this every still-active
+    alert would be re-emitted to `fusion` on every single cycle for as long as it stays
+    active.
+  - `redis_sink.py`: publishes to Redis Stream `tocsin:cap_alerts`
+    (`RedisStreamCapAlertSink`), `LoggingCapAlertSink` fallback when no Redis URL is
+    configured -- same seam pattern as every other phase's `LoggingXSink`.
+  - `service.py`/`__init__.py`: polling loop wiring, env-configured
+    (`NWS_POLLER_USER_AGENT`, `NWS_POLLER_AREAS`, `NWS_POLLER_INTERVAL_SECONDS`,
+    `NWS_POLLER_REDIS_URL`); refuses to start with a clear message if the (API-required)
+    User-Agent or area list is missing, and a single bad poll cycle logs and continues
+    rather than crash-looping the process (network flakiness is the expected case for every
+    hybrid-only component, not exceptional -- design doc §8).
+  - 19 tests, all against a fake HTTP getter and a fake Redis client -- no real network or
+    Redis in this sandbox.
+- `services/same_decoder`: added `redis_sink.py` (`RedisStreamEventSink`, publishes to
+  `tocsin:same_events`) implementing the phase's actual durability requirement (design doc
+  §5: "Both paths write raw events to Redis Streams before fusion sees them") that earlier
+  phases explicitly deferred ("no Redis Streams/fusion consumer yet -- that's Phase 5", see
+  `LoggingEventSink`'s old docstring). `__init__.py` now picks the Redis sink when
+  `SAME_DECODER_REDIS_URL` is set, falling back to the existing `LoggingEventSink`
+  otherwise so local/test runs are unaffected. 1 new test, 29 total (up from 28).
+- `services/fusion`, a new uv-managed service -- the correlation logic itself:
+  - `mapping.py`: loads `data/same_to_cap.yaml`, reusing `same_decoder.tiers`'s
+    lazy-default-data-dir fix verbatim (a module-level `.parents[N]` constant crash-looped a
+    container once already this build -- see Phase 2's notes -- not repeating that here).
+  - `correlator.py`: the actual predicate from design doc §5 -- event-code match (via the
+    mapping) AND FIPS-set intersection AND issue-time overlap within a default ±5 min
+    tolerance. `SameEventIn.received_at` (decode-time UTC timestamp) stands in for SAME's
+    own year-less `JJJHHMM` issue time -- NWR is a live broadcast, so decode time and issue
+    time are seconds apart in practice, and this sidesteps year-boundary ambiguity
+    `JJJHHMM` alone can't resolve without more context.
+  - `confidence.py`: mode-relative confidence table (design doc §5's explicit requirement)
+    -- `RF_ONLY` scores high off-grid (the only possible state, not a warning sign) and
+    lower in hybrid (the API lagged or disagreed); `API_ONLY` is the reverse, and scores 0
+    off-grid as a defensive placeholder since `nws-poller` never runs there to produce one.
+  - `store.py`: `AlertStore`, an event-driven in-memory correlation state machine --
+    `ingest_same`/`ingest_cap` each scan currently-open alerts of the *opposite* source type
+    for a match (linear scan, deliberate: even a busy evening produces a handful of open
+    alerts, not thousands -- no index needed yet). A match promotes both to one `CONFIRMED`
+    `Alert` with both sources; no match opens a new `RF_ONLY`/`API_ONLY` alert. Explicitly
+    not handled yet (documented in the module's own docstring, not silently skipped): a
+    second SAME event or CAP update reissue for an already-`CONFIRMED` alert opens a new
+    Alert rather than attaching to the existing one -- multi-site RF-RF and CAP-update
+    correlation aren't part of the design doc's stated SAME<->CAP correlation key.
+  - `redis_bus.py`: `StreamConsumer`, consumer-group durability over both streams (design
+    doc §5: "If fusion crashes mid-event it resumes from the consumer group rather than
+    losing an alert"). Verified this actually works, not just plausible-sounding: wrote a
+    faithful in-memory fake of Redis's consumer-group semantics (`tests/fake_redis_streams.py`
+    -- `">"` delivers an entry exactly once per consumer, `"0"` replays that consumer's own
+    still-pending entries) and a test that has a handler genuinely raise mid-processing,
+    confirms the entry was never acked, reconnects a *second* `StreamConsumer` under the
+    same consumer name, and confirms the crash-orphaned entry gets replayed and processed.
+    Also confirmed a *different* consumer name does **not** see another consumer's pending
+    entries, which drove a real design decision: `FUSION_CONSUMER_NAME` defaults to a fixed
+    string (`"fusion"`), not a hostname -- a hostname-derived default would silently break
+    crash recovery across container *recreation* (new hostname each time), whereas a fixed
+    name survives it since Redis's pending-entries list persists in Redis, not the
+    container. Documented as an explicit "at least once, not exactly once" tradeoff
+    (matching the design doc's own stated acceptance of this) rather than building
+    duplicate-suppression that isn't asked for.
+  - `__init__.py`: env-configured (`TOCSIN_MODE`, `TOCSIN_DATA_DIR`, `FUSION_REDIS_URL`,
+    `FUSION_CONSUMER_NAME`); this is the first service in the repo to actually read
+    `TOCSIN_MODE` in code rather than only via compose profile selection.
+  - 33 tests. `tests/fixtures.py` builds realistic `SameEventIn`/`CapAlertIn` fixtures
+    (Multnomah/Clackamas FIPS, a real-shaped TOR SAME header, a real-shaped CAP Tornado
+    Warning payload) and `test_correlator.py`/`test_store.py` cover every case the
+    roadmap's stated exit criteria name: a true match, a near-miss on county, a near-miss on
+    event code, a near-miss on time-window tolerance, a SAME code with no CAP equivalent
+    (never matches, by construction), and both unmatched states (`RF_ONLY`, `API_ONLY`) in
+    both arrival orders (RF-first and CAP-first).
+- `compose.yaml`: wired `same-decoder`'s `SAME_DECODER_REDIS_URL`, added `nws-poller`
+  (hybrid-only profile, per design doc §8) and `fusion` (both profiles) services. Found and
+  fixed one real bug this surfaced: `NWS_POLLER_USER_AGENT`'s first draft used compose's
+  hard-required `${VAR:?message}` syntax, which correctly demanded a value under the
+  `hybrid` profile -- but compose interpolates every service's environment during `config`
+  resolution regardless of which `--profile` was actually selected, so it also blocked
+  `offgrid` startup even though `nws-poller` never runs there. Confirmed both ways with a
+  real `docker compose config` run (`POSTGRES_PASSWORD=x TOCSIN_MODE=offgrid docker compose
+  --profile offgrid config` failed before the fix, succeeded after). Fixed to the same
+  empty-default-plus-app-level-check pattern `SDR_RX_DEVICES` already established, since
+  that pattern is exactly what avoids this class of bug. `docker compose config` now
+  resolves cleanly for both profiles with no required-var footguns, confirmed with and
+  without every hybrid-only env var set.
+- `Makefile`: `test` target now also runs `nws_poller` and `fusion`. `.env.example`:
+  documented the two new hybrid-only vars.
+- 244 tests passing across all seven implemented services (`make test`), up from 191.
+
+**Not started / open:**
+- Neither new Dockerfile is build-verified -- no Docker daemon in this authoring sandbox
+  this session (unlike the 2026-08-08 session earlier in this log that had one). Both
+  Dockerfiles are plain `python:3.11-slim` + `uv sync` with no apt/from-source step (unlike
+  `sdr-rx`/`stt-worker`), so the risk profile is lower than those, but "lower risk" isn't
+  "verified."
+- Not verified against a real Redis instance, real `same-decoder`/`nws-poller` output, or a
+  real `api.weather.gov` response -- `nws_poller`'s response-shape assumptions come from the
+  API's own published OpenAPI spec, not a live call. Worth an early real-network check once
+  Redis and both producers are actually running together.
+- `AlertStore` doesn't yet persist anything -- `LoggingAlertSink` is the only sink, same "no
+  consumer yet" seam pattern as every prior phase's default sink. Phase 8's `api` service is
+  the eventual TimescaleDB-backed consumer.
+- The two deliberately-out-of-scope gaps named in `store.py`'s and `redis_bus.py`'s own
+  docstrings (no CONFIRMED-alert re-attachment; at-least-once redelivery can double-ingest
+  across a crash) are open items, not bugs -- revisit once real traffic shows how often they
+  matter.
+
+**Depends on:** Phase 2 (RF-side events) for full integration testing; per roadmap.md, the
+correlation logic itself was explicitly designed to be developed and proven against fixtures
+without it, which is what actually happened here.
 
 ---
 
@@ -549,3 +680,29 @@ criteria above still can't be met until Phase 2's own real-audio gap closes.
   `stt_worker`'s from-source whisper.cpp build hit the same previously-documented
   TLS-intercepting-proxy wall this sandbox always hits on pip/git-over-HTTPS. See Phase 4's
   section above for the full list of what's confirmed vs. still open.
+- **2026-08-08** — At the user's explicit direction ("let's get an MVP of the whole project
+  up and running, working end to end"), built Phase 5 in full: `services/nws_poller` (new --
+  ETag-conditional `api.weather.gov` client verified against the API's own OpenAPI spec,
+  GeoJSON parser, active-alert dedup tracker, Redis Streams sink), `services/fusion` (new --
+  event-code/FIPS/time-window correlator, mode-relative confidence, an in-memory
+  `AlertStore` state machine, and a Redis consumer-group durability layer whose
+  crash-recovery replay is actually tested, not just asserted, against a hand-written
+  faithful fake of Redis's stream semantics), and `services/same_decoder` gained the
+  `RedisStreamEventSink` the design doc's durability requirement (§5) needed and earlier
+  phases had explicitly deferred to "Phase 5." Unlike Phases 2-4, this phase's stated exit
+  criteria (roadmap.md: correlation verified against fixtures covering true matches,
+  near-misses, and each unmatched state) don't depend on real hardware at all, and are fully
+  met as of this session, not just unit-tested-ahead-of-proof. Found and fixed one real bug
+  along the way: `docker compose config` interpolates every service's environment
+  regardless of which `--profile` is selected, so the first draft's hard-required
+  `NWS_POLLER_USER_AGENT` (`${VAR:?...}`, correct in isolation for `hybrid`) was silently
+  blocking `offgrid` startup too, even though `nws-poller` never runs there -- exactly the
+  class of regression CLAUDE.md's connectivity rule exists to prevent. Fixed to the same
+  empty-default-plus-app-level-loud-fail pattern `SDR_RX_DEVICES` already uses; confirmed
+  both profiles resolve cleanly with `docker compose config`, with and without every
+  hybrid-only var set. `Makefile`'s `test` target and `.env.example` updated. 244 tests
+  passing (`make test`), up from 191. No Docker daemon in this sandbox this session, so
+  neither new image is build-verified (lower risk than `sdr-rx`/`stt-worker`'s images since
+  both are plain `python:3.11-slim` + `uv sync`, no apt/from-source step, but not the same
+  as verified); also not yet run against a real Redis instance or real `api.weather.gov`
+  traffic. See Phase 5's section above for the full done/open breakdown.
