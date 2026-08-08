@@ -1476,3 +1476,19 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   against a live Postgres, since this sandbox still has no Docker daemon -- the transient
   vs. permanent split is covered by injected-`connect` unit tests raising real asyncpg
   exception types.
+
+- **2026-08-08:** Restructured `.env.example` at the user's request ("full of comments and
+  the whole thing is all over the place"). Same variables, grouped into Core / Ports /
+  Radio / Transcription / Meshtastic / Hybrid-only sections and ordered by how often they
+  are touched, with the long-form reasoning cut down to one or two lines per var and a
+  pointer to the service README that already carries it in full (verified before deleting:
+  the networked-node recipe and the drop-the-overlay instructions are both in
+  `services/dispatcher/README.md`, the Icecast one-knob-three-uses explanation is in the
+  root README's "Ports", gain guidance is in `services/sdr_rx/README.md`). 143 lines to 108.
+  One variable added, `STT_WORKER_MODEL_FILE`: `compose.yaml` reads it and the Makefile
+  tells you to set it after `make fetch-models STT_MODEL=...`, but it was absent here.
+  `MESHTASTIC_ENABLED` deliberately stays out as an active line -- `compose.mesh.yaml`
+  reads it as `${MESHTASTIC_ENABLED:-true}`, so an explicit `false` in `.env` would silently
+  disable transmit while the device mapping stayed in place; it's mentioned only in the
+  `tcp` note where turning it on by hand is actually required. Verified by rendering
+  `docker compose config` from the new file with both compose files and the hybrid profile.
