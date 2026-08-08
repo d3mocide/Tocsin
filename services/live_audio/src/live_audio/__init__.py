@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 
+from .metadata import DEFAULT_DESCRIPTION, DEFAULT_GENRE, DEFAULT_NAME_TEMPLATE, MetadataConfig, load_site_and_channel_names
 from .service import IcecastConfig, Streamer
 from .subscriber import StreamAudioSubscriber
 
@@ -30,9 +31,17 @@ def main() -> None:
         user=os.environ.get("ICECAST_SOURCE_USER", DEFAULT_ICECAST_USER),
         password=os.environ.get("ICECAST_SOURCE_PASSWORD", "hackme"),
     )
+    site_names, channel_names = load_site_and_channel_names(os.environ.get("LIVE_AUDIO_METADATA_CONFIG"))
+    metadata = MetadataConfig(
+        name_template=os.environ.get("ICECAST_STREAM_NAME_TEMPLATE", DEFAULT_NAME_TEMPLATE),
+        description=os.environ.get("ICECAST_STREAM_DESCRIPTION", DEFAULT_DESCRIPTION),
+        genre=os.environ.get("ICECAST_STREAM_GENRE", DEFAULT_GENRE),
+        site_names=site_names,
+        channel_names=channel_names,
+    )
 
     subscriber = StreamAudioSubscriber(connect_addr)
-    streamer = Streamer(icecast)
+    streamer = Streamer(icecast, metadata)
     print(f"live-audio: subscribed to {connect_addr}, pushing to {icecast.host}:{icecast.port}", flush=True)
     try:
         while True:

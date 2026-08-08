@@ -14,7 +14,7 @@ help:
 	@printf "  %-17s %s\n" "test" "Run the test suite for every service that has one"
 	@printf "  %-17s %s\n" "sdr-devices" "List rtlsdr device serials, for setting SDR_RX_DEVICES"
 	@printf "  %-17s %s\n" "bench-channelizer" "Run the channelizer CPU throughput benchmark"
-	@printf "  %-17s %s\n" "fetch-models" "Pre-stage STT model weights (not yet implemented)"
+	@printf "  %-17s %s\n" "fetch-models" "Pre-stage STT model weights into ./models/ (offgrid-required)"
 	@echo ""
 	@echo "See README.md and docs/design/master-prompt.md for details."
 
@@ -42,17 +42,24 @@ sdr-devices:
 	docker compose build sdr-rx
 	docker compose run --rm -e SDR_RX_LIST_DEVICES=1 sdr-rx
 
-# Pre-stage STT model weights into a mounted volume while network is still
-# available -- offgrid means pre-staged, never download-on-first-boot
-# (docs/design/master-prompt.md §8). Not yet implemented: stt_worker (milestone 4)
-# doesn't exist yet, so there's no model manifest to fetch against.
+# Pre-stage STT model weights into ./models/ (bind-mounted read-only into
+# stt-worker, see compose.yaml) while network is still available -- offgrid
+# means pre-staged, never download-on-first-boot (docs/design/master-prompt.md
+# §8). Defaults to base.en, master-prompt.md §6's suggested off-grid default;
+# override with `make fetch-models STT_MODEL=small.en` for hybrid-local, and
+# set STT_WORKER_MODEL_FILE to match if it's not base.en.
+STT_MODEL ?= base.en
 fetch-models:
-	@echo "fetch-models: not yet implemented -- stt_worker (milestone 4) doesn't exist yet."
-	@echo "See docs/design/master-prompt.md §8 and the build order in README.md."
-	@exit 1
+	mkdir -p models
+	curl -fL -o models/ggml-$(STT_MODEL).bin \
+		https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$(STT_MODEL).bin
+	@echo "fetch-models: models/ggml-$(STT_MODEL).bin ready."
+	@echo "If STT_MODEL isn't base.en, also set STT_WORKER_MODEL_FILE=ggml-$(STT_MODEL).bin (see services/stt_worker/README.md)."
 
 # Run the test suite for every service that has one.
 test:
 	cd services/sdr_rx && uv sync && uv run pytest
 	cd services/same_decoder && uv sync && uv run pytest
 	cd services/live_audio && uv sync && uv run pytest
+	cd services/segment_capture && uv sync && uv run pytest
+	cd services/stt_worker && uv sync && uv run pytest

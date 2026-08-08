@@ -23,8 +23,15 @@ def icecast_source_url(host: str, port: int, user: str, password: str, mount: st
     return f"icecast://{user}:{password}@{host}:{port}{mount}"
 
 
-def build_ffmpeg_command(icecast_url: str, sample_rate_hz: int) -> list[str]:
-    return [
+def build_ffmpeg_command(
+    icecast_url: str,
+    sample_rate_hz: int,
+    *,
+    stream_name: str | None = None,
+    stream_description: str | None = None,
+    stream_genre: str | None = None,
+) -> list[str]:
+    command = [
         "ffmpeg",
         "-loglevel", "error",
         "-f", "s16le",
@@ -34,9 +41,18 @@ def build_ffmpeg_command(icecast_url: str, sample_rate_hz: int) -> list[str]:
         "-c:a", "libvorbis",
         "-b:a", "32k",
         "-content_type", "application/ogg",
-        "-f", "ogg",
-        icecast_url,
     ]  # fmt: skip
+    # -ice_name/-ice_description/-ice_genre are ffmpeg's icecast protocol
+    # options (not codec options), only meaningful right before the output
+    # URL -- same mechanism as -content_type above.
+    if stream_name:
+        command += ["-ice_name", stream_name]
+    if stream_description:
+        command += ["-ice_description", stream_description]
+    if stream_genre:
+        command += ["-ice_genre", stream_genre]
+    command += ["-f", "ogg", icecast_url]
+    return command
 
 
 class FFmpegFeeder:

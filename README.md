@@ -84,8 +84,8 @@ tocsin/
 │   ├── sdr_rx/                  # SoapySDR + PFB channelizer
 │   ├── same_decoder/            # multimon-ng EAS/SAME decode -> tiered events
 │   ├── live_audio/              # feeds sdr-rx's 16kHz stream into Icecast
-│   ├── segment_capture/
-│   ├── stt_worker/              # providers/{whispercpp,faster_whisper,remote_http}.py
+│   ├── segment_capture/         # ZCZC->EOM ring-buffer capture + tone-boundary detect
+│   ├── stt_worker/              # whisper.cpp transcription + hallucination guards
 │   ├── nws_poller/
 │   ├── fusion/
 │   ├── dispatcher/              # egress/{meshtastic_serial,meshtastic_mqtt,mqtt}.py
@@ -134,14 +134,24 @@ still open, and don't read "implemented" below as "verified."
    two real bugs were caught and fixed this way (an illegal `--` inside an XML comment, and
    Icecast refusing to run as root) -- see `docs/design/tracking.md`. Not yet verified with
    genuine RF-sourced audio flowing through the encode path.
-4. Segment capture + local STT (ring buffer, trim, transcribe, hallucination guards).
+4. Segment capture + local STT (`services/segment_capture` + `services/stt_worker`).
+   Ring-buffer pre-roll/live-drain capture, 1050 Hz attention-tone boundary detection,
+   whisper.cpp (`local_whispercpp` only -- CLAUDE.md says stay concrete until a second
+   provider is real) transcription, and hallucination guards (`no_speech_prob`/
+   `avg_logprob` thresholds where whisper.cpp's build actually supplies them, plus an
+   unconditional blocklist) are all implemented and unit tested. Not yet build/
+   runtime-verified: `segment_capture`'s multimon-ng apt install confirmed working (same
+   package, same base image as `same_decoder`'s already-verified Dockerfile), but
+   `stt_worker`'s whisper.cpp-from-source build step hasn't completed in any sandbox so far
+   -- see `docs/design/tracking.md`. Requires `make fetch-models` before it can run at all
+   (§8: off-grid means pre-staged, never downloaded on first boot).
 5. NWS poller + fusion (correlation logic with recorded fixtures from both sources).
 6. Dispatcher stage 1 (template only, serial Meshtastic, idempotency, rate limiting).
 7. Dispatcher stage 2 + remote STT (enrichment with all guards and breakers).
 8. API + web UI.
 
-Phases past live audio are scaffolded as empty service directories only; see each
-service's `README.md` for status.
+Phases past segment capture + local STT are scaffolded as empty service directories only;
+see each service's `README.md` for status.
 
 ## Non-goals
 
@@ -164,7 +174,7 @@ uv run pytest
 ```
 
 `make test` runs the test suite for every service that has one (currently `sdr_rx`,
-`same_decoder`, `live_audio`).
+`same_decoder`, `live_audio`, `segment_capture`, `stt_worker`).
 
 See `CLAUDE.md` / `AGENTS.md` for conventions agents (and humans) should follow when
 working in this repo.

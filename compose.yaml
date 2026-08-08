@@ -54,8 +54,13 @@ services:
       SDR_RX_DEVICES: ${SDR_RX_DEVICES:-}
       SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
       SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
-    tmpfs:
-      - /run/sdr_rx_ring
+    # A named tmpfs volume, not each container's own private `tmpfs:` mount
+    # (which is how this looked before segment-capture existed) -- Phase 4's
+    # segment-capture reads sdr-rx's ring buffer directly (design doc §3,
+    # "pre-roll"), which only works if both containers share the same
+    # backing memory, not two independent anonymous tmpfses.
+    volumes:
+      - sdr-rx-ring:/run/sdr_rx_ring
     devices:
       - /dev/bus/usb:/dev/bus/usb
     # /dev/bus/usb gives the container the whole USB bus rather than one
@@ -96,18 +101,59 @@ services:
       ICECAST_PORT: "8000"
       ICECAST_SOURCE_USER: source
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:-hackme}
+      ICECAST_STREAM_NAME_TEMPLATE: ${ICECAST_STREAM_NAME_TEMPLATE:-Tocsin {site} {channel}}
+      ICECAST_STREAM_DESCRIPTION: ${ICECAST_STREAM_DESCRIPTION:-Tocsin NOAA Weather Radio relay}
+      ICECAST_STREAM_GENRE: ${ICECAST_STREAM_GENRE:-weather}
+      # Empty by default -- only set LIVE_AUDIO_METADATA_CONFIG (and uncomment
+      # the matching volume below) once you actually have a metadata.yaml
+      # with site_names/channel_names display-name overrides to mount; see
+      # services/live_audio/README.md.
+      LIVE_AUDIO_METADATA_CONFIG: ${LIVE_AUDIO_METADATA_CONFIG:-}
+    # volumes:
+    #   - ./deploy/live_audio/metadata.yaml:/app/metadata.yaml:ro
     depends_on:
       - sdr-rx
       - icecast
     profiles: [offgrid, hybrid]
 
-  # segment-capture:          # milestone 4
-  #   build: ./services/segment_capture
-  #   profiles: [offgrid, hybrid]
+  segment-capture:
+    build: ./services/segment_capture
+    # on-failure, not unless-stopped: main() checks that the sdr-rx-ring
+    # volume is actually mounted at startup and exits 1 with a clear
+    # message if not (see services/segment_capture/README.md) -- a real
+    # failure worth retrying, not a deliberate clean-exit path the way
+    # sdr-rx's "no devices configured" is.
+    restart: on-failure
+    environment:
+      SEGMENT_CAPTURE_ZMQ_CONNECT: tcp://sdr-rx:5555
+      SEGMENT_CAPTURE_ZMQ_BIND: tcp://0.0.0.0:5556
+      SEGMENT_CAPTURE_RING_BUFFER_DIR: /run/sdr_rx_ring
+      SEGMENT_CAPTURE_OUTPUT_DIR: /var/lib/segment_capture/captures
+    volumes:
+      - sdr-rx-ring:/run/sdr_rx_ring
+      - segment-captures:/var/lib/segment_capture/captures
+    depends_on:
+      - sdr-rx
+    profiles: [offgrid, hybrid]
 
-  # stt-worker:                # milestone 4
-  #   build: ./services/stt_worker
-  #   profiles: [offgrid, hybrid]
+  stt-worker:
+    build: ./services/stt_worker
+    # on-failure: a missing model file (STT_WORKER_MODEL_PATH) is a real,
+    # static misconfiguration -- but unlike SDR_RX_DEVICES's old bug, main()
+    # already prints one clear line and exits before any traceback, and the
+    # very next restart picks up a model dropped into ./models/ with no
+    # manual intervention, which is worth the restart loop in the meantime.
+    restart: on-failure
+    environment:
+      STT_WORKER_ZMQ_CONNECT: tcp://segment-capture:5556
+      STT_WORKER_MODEL_PATH: /models/${STT_WORKER_MODEL_FILE:-ggml-base.en.bin}
+      STT_WORKER_INITIAL_PROMPT: ${STT_WORKER_INITIAL_PROMPT:-}
+    volumes:
+      - segment-captures:/var/lib/segment_capture/captures
+      - ./models:/models:ro
+    depends_on:
+      - segment-capture
+    profiles: [offgrid, hybrid]
 
   # nws-poller:                # milestone 5 -- hybrid only (docs/design/master-prompt.md §8)
   #   build: ./services/nws_poller
@@ -133,3 +179,14 @@ volumes:
   redis-data:
   mosquitto-data:
   timescale-data:
+  # tmpfs-backed so it behaves like sdr-rx's old per-container tmpfs mount
+  # (fast, ephemeral, in-memory) while still being shareable with
+  # segment-capture -- a plain named volume would persist to disk instead.
+  sdr-rx-ring:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+  # Not tmpfs: finished captures are real data worth keeping across a
+  # restart (replay, debugging a bad transcript), unlike the raw ring
+  # buffer they're extracted from.
+  segment-captures:

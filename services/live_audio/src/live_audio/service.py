@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .feeder import FFmpegFeeder, build_ffmpeg_command, icecast_source_url, mount_name
+from .metadata import MetadataConfig
 
 
 @dataclass(frozen=True)
@@ -21,8 +22,9 @@ class Streamer:
     whole process) if that channel's ffmpeg dies -- one bad mountpoint
     shouldn't take every other channel's stream down."""
 
-    def __init__(self, icecast: IcecastConfig, feeder_factory=FFmpegFeeder):
+    def __init__(self, icecast: IcecastConfig, metadata: MetadataConfig | None = None, feeder_factory=FFmpegFeeder):
         self._icecast = icecast
+        self._metadata = metadata or MetadataConfig()
         self._feeder_factory = feeder_factory
         self._feeders: dict[tuple[str, str], FFmpegFeeder] = {}
         self._dead: set[tuple[str, str]] = set()
@@ -36,7 +38,16 @@ class Streamer:
             url = icecast_source_url(
                 self._icecast.host, self._icecast.port, self._icecast.user, self._icecast.password, mount_name(site, channel)
             )
-            feeder = self._feeder_factory(build_ffmpeg_command(url, sample_rate_hz))
+            meta = self._metadata.resolve(site, channel)
+            feeder = self._feeder_factory(
+                build_ffmpeg_command(
+                    url,
+                    sample_rate_hz,
+                    stream_name=meta.name,
+                    stream_description=meta.description,
+                    stream_genre=meta.genre,
+                )
+            )
             self._feeders[key] = feeder
         if not feeder.is_alive():
             self._dead.add(key)
