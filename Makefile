@@ -66,3 +66,5 @@ test:
 	cd services/nws_poller && uv sync && uv run pytest
 	cd services/fusion && uv sync && uv run pytest
 	cd services/dispatcher && uv sync && uv run pytest
+	cd services/api && uv sync && uv run pytest
+	cd web && npm install && npm run build

@@ -54,6 +54,11 @@ services:
       SDR_RX_DEVICES: ${SDR_RX_DEVICES:-}
       SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
       SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
+      # Publishes RF health (tocsin:health) and per-site spectrum snapshots
+      # (tocsin:spectrum:<site>) for api (Phase 8).
+      SDR_RX_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
     # A named tmpfs volume, not each container's own private `tmpfs:` mount
     # (which is how this looked before segment-capture existed) -- Phase 4's
     # segment-capture reads sdr-rx's ring buffer directly (design doc §3,
@@ -262,13 +267,32 @@ services:
     # fallback leg are the only mode/config-gated parts.
     profiles: [offgrid, hybrid]
 
-  # api:                       # milestone 8
-  #   build: ./services/api
-  #   profiles: [offgrid, hybrid]
+  api:
+    build: ./services/api
+    # on-failure: a missing/malformed API_POSTGRES_DSN is main()'s own
+    # loud-fail-and-exit-1 check (see services/api/README.md) -- worth
+    # retrying since timescaledb itself may just not be ready yet on a
+    # cold start, not a permanent misconfiguration the way it would be if
+    # this were a required-but-plausibly-absent var like NWS_POLLER_USER_AGENT.
+    restart: on-failure
+    environment:
+      API_POSTGRES_DSN: postgresql://tocsin:${POSTGRES_PASSWORD}@timescaledb:5432/tocsin
+      API_REDIS_URL: redis://redis:6379/0
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+    depends_on:
+      - redis
+      - timescaledb
+    profiles: [offgrid, hybrid]
 
-  # web:                       # milestone 8
-  #   build: ./web
-  #   profiles: [offgrid, hybrid]
+  web:
+    build: ./web
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    profiles: [offgrid, hybrid]
 
 volumes:
   redis-data:

@@ -5,12 +5,22 @@ alerts" -- it means the RF path is dead (antenna, dongle, or transmitter
 down). This is the primary liveness signal for the whole SDR path, so it has
 to distinguish "quiet audio" from "no carrier at all."
 
-Sampled continuously into TimescaleDB per the design doc, but the DB schema
-and a real writer don't exist yet -- no service in this repo writes to
-Postgres yet, and standing that up isn't a Phase-1 dependency. `HealthSink`
-is the seam: `HealthTracker.sample()` computes the metric and hands it to
-whatever sink is configured, so a TimescaleDB-backed one can be dropped in
-later (Phase 5 storage) without touching this module.
+Keyed on `(site, channel)`, not `channel` alone -- a second dongle is a
+second transmitter *site* covering the same seven channel names (design
+doc §3, "Multi-dongle"), the same reason `sdr_rx.bus`'s ZMQ topics carry
+site (see `docs/design/tracking.md`'s 2026-08-07 session log for that
+exact bug already being found and fixed once for topics). This module
+predates that fix and shared one `HealthTracker` across every site's
+`DevicePipeline` with no site key at all -- two sites' `WX5` would
+silently collide in `_flat_since` and in every emitted `ChannelHealth`,
+with no way for a consumer to tell which site's channel had actually gone
+dead. Fixed here, ahead of Phase 8 actually surfacing this data in a UI
+(`docs/design/tracking.md`).
+
+Sampled continuously into TimescaleDB per the design doc, via
+`RedisStreamHealthSink` (Phase 8) -- `HealthSink` is the seam:
+`HealthTracker.sample()` computes the metric and hands it to whatever sink
+is configured.
 """
 
 from __future__ import annotations
@@ -27,6 +37,7 @@ FLAT_CARRIER_RMS_THRESHOLD = 1e-4
 
 @dataclass(frozen=True)
 class ChannelHealth:
+    site: str
     channel: str
     timestamp_ns: int
     rms: float
@@ -39,7 +50,8 @@ class HealthSink(Protocol):
 
 
 class LoggingHealthSink:
-    """Process-local default sink; stands in for the TimescaleDB writer."""
+    """Process-local default sink; stands in for `RedisStreamHealthSink`
+    when no Redis URL is configured (local/test runs)."""
 
     def __init__(self):
         self.history: list[ChannelHealth] = []
@@ -49,7 +61,10 @@ class LoggingHealthSink:
 
 
 class HealthTracker:
-    """Tracks per-channel flat-carrier duration across successive `sample()` calls."""
+    """Tracks per-`(site, channel)` flat-carrier duration across successive
+    `sample()` calls. One instance is safe to share across every site's
+    `DevicePipeline` (unlike `SpectrumTracker`, which is one-per-site) --
+    the `(site, channel)` key is what makes that safe now."""
 
     def __init__(
         self,
@@ -60,24 +75,25 @@ class HealthTracker:
         self._sink = sink or LoggingHealthSink()
         self._flat_carrier_seconds = flat_carrier_seconds
         self._rms_threshold = rms_threshold
-        self._flat_since: dict[str, float] = {}
+        self._flat_since: dict[tuple[str, str], float] = {}
 
-    def sample(self, channel: str, audio: np.ndarray, now: float | None = None) -> ChannelHealth:
+    def sample(self, site: str, channel: str, audio: np.ndarray, now: float | None = None) -> ChannelHealth:
         now = time.monotonic() if now is None else now
+        key = (site, channel)
         audio = np.asarray(audio, dtype=np.float64)
         rms = float(np.sqrt(np.mean(audio**2))) if audio.size else 0.0
         power = rms**2
 
         if rms < self._rms_threshold:
-            self._flat_since.setdefault(channel, now)
+            self._flat_since.setdefault(key, now)
         else:
-            self._flat_since.pop(channel, None)
+            self._flat_since.pop(key, None)
 
-        flat_duration = now - self._flat_since[channel] if channel in self._flat_since else 0.0
+        flat_duration = now - self._flat_since[key] if key in self._flat_since else 0.0
         dead = flat_duration >= self._flat_carrier_seconds
 
         health = ChannelHealth(
-            channel=channel, timestamp_ns=time.time_ns(), rms=rms, power=power, dead=dead
+            site=site, channel=channel, timestamp_ns=time.time_ns(), rms=rms, power=power, dead=dead
         )
         self._sink.record(health)
         return health

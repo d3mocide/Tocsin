@@ -118,40 +118,39 @@ any of it operationally -- see `docs/design/tracking.md` for exactly what's conf
 still open, and don't read "implemented" below as "verified."
 
 0. Bootstrap (repo scaffolding, compose profiles, checked-in reference data). **Done.**
-1. Channelizer (`services/sdr_rx`). Channelizer DSP, ZMQ publishing, tmpfs ring buffer,
-   health signal, host-prerequisite check, multi-dongle addressing, and SoapySDR/USB
-   Docker packaging are all implemented, unit tested, and (as of 2026-08-08) build- and
-   runtime-verified against a real Docker daemon -- `import SoapySDR` genuinely resolves
-   inside the container. **Not yet done:** live-hardware verification (real dongle,
-   `/dev/bus/usb` on a machine that has one) -- see "Hardware bring-up" above.
+1. Channelizer (`services/sdr_rx`). **Done**, including live-hardware verification: a real
+   RTL-SDR dongle on a Raspberry Pi 5 locked all seven WX channels.
 2. SAME decode end to end (`services/same_decoder`: multimon-ng → parsed, tiered event).
-   Implemented, unit tested, and build/runtime-verified -- multimon-ng's EAS mode is
-   confirmed present and the container runs stably. A real crash-loop bug was caught and
-   fixed this way (see `docs/design/tracking.md`, 2026-08-08). Not yet verified against
-   actual multimon-ng *decode output* or a recorded RWT capture (needs real audio).
-3. Live audio (`services/live_audio` + Icecast, picked over MediaMTX -- see
-   `services/live_audio/README.md`). Implemented, unit tested, and build/runtime-verified;
-   two real bugs were caught and fixed this way (an illegal `--` inside an XML comment, and
-   Icecast refusing to run as root) -- see `docs/design/tracking.md`. Not yet verified with
-   genuine RF-sourced audio flowing through the encode path.
+   Implemented, unit tested, build/runtime-verified. **Not yet verified:** an actual decoded
+   SAME/EAS header from real RF (real NWR *voice* audio is confirmed flowing, per Phase 1/3;
+   no header has aired during testing yet) -- this is the one gap every phase since has
+   inherited.
+3. Live audio (`services/live_audio` + Icecast). **Done**, including live-hardware
+   verification: real RF-sourced audio audible in a browser.
 4. Segment capture + local STT (`services/segment_capture` + `services/stt_worker`).
-   Ring-buffer pre-roll/live-drain capture, 1050 Hz attention-tone boundary detection,
-   whisper.cpp (`local_whispercpp` only -- CLAUDE.md says stay concrete until a second
-   provider is real) transcription, and hallucination guards (`no_speech_prob`/
-   `avg_logprob` thresholds where whisper.cpp's build actually supplies them, plus an
-   unconditional blocklist) are all implemented and unit tested. Not yet build/
-   runtime-verified: `segment_capture`'s multimon-ng apt install confirmed working (same
-   package, same base image as `same_decoder`'s already-verified Dockerfile), but
-   `stt_worker`'s whisper.cpp-from-source build step hasn't completed in any sandbox so far
-   -- see `docs/design/tracking.md`. Requires `make fetch-models` before it can run at all
-   (§8: off-grid means pre-staged, never downloaded on first boot).
-5. NWS poller + fusion (correlation logic with recorded fixtures from both sources).
-6. Dispatcher stage 1 (template only, serial Meshtastic, idempotency, rate limiting).
-7. Dispatcher stage 2 + remote STT (enrichment with all guards and breakers).
-8. API + web UI.
+   Implemented and unit tested, including Phase 7's `remote_http` provider and `STT_CHAIN`
+   race. Blocked on the same real-SAME-header gap as Phase 2 for live verification.
+5. NWS poller + fusion (`services/nws_poller` + `services/fusion`). Implemented and fully
+   verified against its own exit criteria (fixture-covered correlation logic needs no
+   hardware) -- see `docs/design/tracking.md`.
+6. Dispatcher stage 1 (`services/dispatcher`: template message, serial Meshtastic,
+   idempotency, rate limiting). Implemented and unit tested.
+7. Dispatcher stage 2 + remote STT (LiteLLM enrichment, circuit breaker, Meshtastic MQTT
+   fallback). Implemented and unit tested, including both of this phase's literal roadmap
+   exit criteria exercised directly in tests.
+8. API + web UI (`services/api` + `web/`). Implemented and unit tested: FastAPI REST + SSE
+   over a real TimescaleDB-backed alert store (the first thing in this repo to actually
+   write to Postgres), RF health + spectrum display, `RF_ONLY`/`API_ONLY` divergence rate.
+   `web/`'s TypeScript type-checks and builds cleanly; not run against a real browser/backend
+   in this sandbox.
 
-Phases past segment capture + local STT are scaffolded as empty service directories only;
-see each service's `README.md` for status.
+Phases 5-8 were built ahead of Phase 2's real-audio proof, at the user's explicit direction,
+to reach a whole-stack MVP faster -- see `docs/design/tracking.md`'s per-phase notes for the
+full done/open breakdown and every build-order exception's reasoning. None of them are
+verified against real hardware, a real Meshtastic node, a real LiteLLM endpoint, or a real
+Postgres/Redis instance; every wire contract with external systems (Meshtastic serial/MQTT,
+LiteLLM, the OpenAI STT shape, the NWS CAP API) was checked against real published specs
+rather than guessed, which is a meaningfully different claim from "verified live."
 
 ## Non-goals
 
@@ -173,8 +172,9 @@ uv sync
 uv run pytest
 ```
 
-`make test` runs the test suite for every service that has one (currently `sdr_rx`,
-`same_decoder`, `live_audio`, `segment_capture`, `stt_worker`).
+`make test` runs the test suite for every service that has one (`sdr_rx`, `same_decoder`,
+`live_audio`, `segment_capture`, `stt_worker`, `nws_poller`, `fusion`, `dispatcher`, `api`)
+plus `web`'s type-check-and-build.
 
 See `CLAUDE.md` / `AGENTS.md` for conventions agents (and humans) should follow when
 working in this repo.

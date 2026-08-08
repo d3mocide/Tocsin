@@ -32,7 +32,7 @@ completion of the phase's actual exit criteria.
 | 5 | NWS poller + fusion | In Progress | 2026-08-08 |
 | 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
 | 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-08 |
-| 8 | API + web UI | Not Started | — |
+| 8 | API + web UI | In Progress | 2026-08-08 |
 
 ---
 
@@ -763,7 +763,107 @@ actual RF in this repo's history yet.
 
 ## Phase 8 — API + web UI
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- same build-order exception as Phases 5-7: built at
+the user's explicit direction ("finish 7 and then move to 8") ahead of Phase 2's real-audio
+proof. The largest single phase so far -- the first to touch TimescaleDB at all, the first
+FastAPI service, and the first TypeScript in this repo.
+
+**Done:**
+- Found and fixed a real bug in `sdr_rx` while wiring health data into the UI, not introduced
+  by this phase: `HealthTracker` was shared across every site's `DevicePipeline` in a
+  multi-dongle setup but keyed samples on `channel` alone -- two sites' `WX5` would silently
+  collide, the same bug class already fixed once for `sdr_rx.bus`'s ZMQ topics (this doc,
+  2026-08-07). Fixed by keying on `(site, channel)` throughout `health.py`, with a regression
+  test reproducing the exact collision.
+- `services/sdr_rx` gained `spectrum.py`: the 41 non-NWR bins (design doc §3: "the 41 unused
+  bins feed the spectrum/waterfall display as free occupancy data") computed from the
+  channelizer's already-full 48-bin output that `DevicePipeline.process()` was previously
+  discarding -- genuinely free, no new DSP work, just reading what was already being thrown
+  away. Correctly reindexes raw FFT columns to odd-stacked bin order via the same `k %
+  NUM_BINS` mapping `DevicePipeline` already used per-NWR-bin (tested explicitly for both a
+  positive-k and a negative-k wraparound case, since getting this silently wrong would have
+  produced a plausible-looking but mislabeled spectrum). Throttled to ~1/sec, published as a
+  latest-snapshot Redis key (not a stream -- a waterfall display wants "now," not history).
+  `redis_sink.py` gained `RedisStreamHealthSink` (`tocsin:health`, a real time series worth
+  keeping) alongside the spectrum snapshot sink. 9 new tests, 81 total in `sdr_rx` (up from
+  72).
+- `services/api`, a new FastAPI service and the first thing in this repo to actually write to
+  the `timescaledb` compose service:
+  - `schema.sql` (applied idempotently at startup, `db.ensure_schema`): `alerts` (upserted by
+    id, since `fusion` republishes the same alert on every state transition) and
+    `health_samples` (an actual TimescaleDB hypertable via `create_hypertable` -- the one
+    table in this schema where a real time-series database earns its keep over plain
+    Postgres). No ORM/migration framework -- raw asyncpg, matching this codebase's established
+    minimalism; there's no schema-evolution story yet to build tooling for.
+  - `redis_bus.py`: an async port of `fusion`/`dispatcher`'s consumer-group `StreamConsumer`
+    (`redis.asyncio` throughout, `asyncio.create_task` for the background poll loop), serving
+    both `tocsin:alerts` and `tocsin:health`. Crash-replay tested against an async version of
+    the same hand-written faithful Redis-streams fake used elsewhere.
+  - `ingest.py`/`sse.py`: newly ingested alerts upsert into Postgres *and* fan out live to any
+    connected `/alerts/stream` client via an in-process `Broadcaster` (one `asyncio.Queue` per
+    client) -- deliberately not Redis pub/sub, since `api` has no horizontal-scaling story yet
+    to justify it.
+  - `app.py`: `GET /alerts`, `/alerts/stream` (SSE), `/health`, `/spectrum`, `/spectrum/{site}`,
+    `/stats` (alert-state counts plus the `RF_ONLY`/`API_ONLY` divergence rate -- design doc
+    §5's stated "best single health metric for the whole system"). `create_app()` takes
+    already-constructed `pool`/`redis_client` rather than building them in a `lifespan`
+    callback, specifically to keep route logic testable with fakes and no async context
+    manager to trigger or bypass.
+  - Found one real testing-infrastructure trap, not a product bug: an early `/alerts/stream`
+    test opened a live `TestClient.stream()` connection against the endpoint's intentionally-
+    infinite generator and hung indefinitely -- `TestClient`'s stream context manager doesn't
+    reliably cancel that on exit. Killed the hung process, replaced the test with one that
+    confirms the route is registered correctly without opening a live connection, since the
+    actual pub/sub logic (`Broadcaster`) already has full direct coverage in `test_sse.py`.
+  - 36 tests: `db.py` (schema application, upsert/insert queries, the ISO-string ->
+    `datetime` conversion asyncpg requires for `timestamptz` params -- JSON has no native
+    datetime type, and asyncpg does not parse strings implicitly), `redis_bus.py`,
+    `sse.py`, `spectrum.py`, `ingest.py`, `config.py`, and `app.py` (via FastAPI's
+    `TestClient` against fake Postgres/Redis).
+- `web/`, a new Vite + TypeScript frontend -- vanilla, no framework (the design doc names
+  "Vite + TypeScript" without one, and there's no way to visually verify UI polish in this
+  authoring sandbox regardless of framework choice, so this stayed proportionate):
+  `src/api.ts` (REST fetch helpers + `subscribeToAlerts` via native `EventSource`, no SSE
+  library needed), `src/views/{alerts,health,spectrum,stats}.ts` (hand-authored DOM
+  manipulation -- the alert feed's `upsert()` replaces an already-rendered alert in place
+  rather than duplicating it when `fusion` republishes the same id on a state transition; the
+  spectrum view colors the 7 NWR channel bins distinctly from the 41 spectrum-only bins), and
+  `src/main.ts` wiring SSE (push) for alerts against 5s polling (no push feed yet) for
+  health/spectrum/stats. `nginx.conf` proxies `/api/*` to the `api` service in production
+  (stripping the prefix, `proxy_buffering off` for SSE specifically -- buffering would defeat
+  the point of a live feed). `npm run build` (`tsc --noEmit` then `vite build`) is the only
+  verification performed -- confirmed real by running it against the live npm registry in
+  this session, not assumed.
+- `compose.yaml`: `sdr-rx` gained `SDR_RX_REDIS_URL`; `api` (Postgres DSN built from the
+  already-required `POSTGRES_PASSWORD`, so no new required-var footgun) and `web` (nginx on
+  8080, proxying to `api`) added, both profiles. `docker compose config` confirmed resolving
+  cleanly for both.
+- Caught up two stale spots in the root README while touching this area: the "Build order"
+  section still described Phase 1 as hardware-unverified and didn't mention Phases 5-8 at
+  all (both facts had changed several sessions ago without the README being updated to
+  match); fixed to reflect actual current status per this doc, and the `make test` service
+  list was missing every service added since Phase 4.
+- 395 tests passing across all nine implemented Python services (`make test`), up from 350,
+  plus `web`'s clean type-check-and-build.
+
+**Not started / open:**
+- No transcript storage (design doc §9 names "transcripts" alongside alerts/health as
+  TimescaleDB's job) -- nothing consumes `tocsin:transcripts` into Postgres yet, only
+  `dispatcher`'s stage 2 reads it, ephemerally, off the stream. Worth a table once the UI
+  wants to show transcript text.
+- No auth (design doc §9: "reverse proxy + Argon2id local backend auth") -- out of scope for
+  this phase, which is about the data path, not the deploy-behind-Caddy story.
+- Not verified against a real Postgres, Redis, browser, or live upstream producer anywhere in
+  this phase -- verified against fakes, fixtures, and (for `web`) a real `npm`/`tsc` run
+  against the live registry, but no real page has ever been rendered against a real backend.
+- `/alerts` has no pagination beyond `limit` (no cursor/offset) -- fine at current expected
+  alert volumes.
+
+**Depends on:** Phase 5 (alert store) and Phase 1 (health signal) per roadmap.md -- both
+already built (Phase 5 fully proven against its own exit criteria; Phase 1 live-hardware
+verified). The only remaining real dependency is the same one every phase since 2 has
+flagged: no real SAME header has been decoded from actual RF in this repo's history yet, so
+the alert feed this UI displays has never shown a real RF-sourced alert end to end.
 
 ---
 
@@ -974,3 +1074,32 @@ actual RF in this repo's history yet.
   this phase touched real Meshtastic/MQTT/LiteLLM/remote-STT infrastructure or a real Redis
   -- every wire contract was verified against real published specs this session, but that's
   "spec-verified," not "live-verified"; see Phase 7's section above for the full breakdown.
+- **2026-08-08** — Finished Phase 8 in the same session, at the user's explicit direction
+  ("finish 7 and then move to 8"): the API + web UI milestone, and by far the largest single
+  phase so far -- the first to write to TimescaleDB, the first FastAPI service, the first
+  TypeScript in this repo. Found and fixed a real latent bug in `sdr_rx` while wiring health
+  data into the new UI (not caused by this phase, just surfaced by finally using the data for
+  something): `HealthTracker` was shared across every site's `DevicePipeline` but keyed
+  samples on `channel` alone, so two dongles/sites would silently collide on the same channel
+  name -- the identical bug class already fixed once for this service's own ZMQ topics
+  (2026-08-07 entry above). Fixed by keying on `(site, channel)` throughout, with a
+  regression test reproducing the exact collision. Added `sdr_rx.spectrum`: the 41 spectrum-
+  only bins design doc §3 describes, computed for free from data `DevicePipeline.process()`
+  was already discarding, correctly reindexed through the same `k % NUM_BINS` mapping
+  `DevicePipeline` uses per-channel (verified against both a positive- and negative-k
+  wraparound case, since a silent reindexing bug would have produced a plausible-looking but
+  mislabeled spectrum display). Built `services/api` (FastAPI, raw asyncpg against a
+  checked-in `schema.sql`, async Redis consumer groups feeding both Postgres and a live SSE
+  fan-out) and `web/` (vanilla Vite+TypeScript, no framework -- proportionate given this
+  sandbox can't visually verify UI polish regardless of framework choice). Hit and fixed one
+  real test-infrastructure trap along the way: an `/alerts/stream` test using
+  `TestClient.stream()` against the endpoint's intentionally-infinite SSE generator hung the
+  whole test run indefinitely; killed the hung process and replaced it with a route-
+  registration check, relying on `test_sse.py`'s already-thorough direct coverage of the
+  underlying pub/sub logic instead. Also caught the root README's "Build order" section badly
+  out of date (still described Phase 1 as hardware-unverified, didn't mention Phases 5-8 at
+  all) and fixed it to match this doc, since a stale root README undermines the very
+  "where are we" tracking this file exists to provide. 395 tests passing across all nine
+  Python services (`make test`), up from 350, plus a clean `web` type-check-and-build
+  confirmed against the live npm registry. Nothing in this phase ran against a real Postgres,
+  Redis, or browser -- see Phase 8's section above for the complete breakdown.
