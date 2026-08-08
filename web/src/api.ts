@@ -1,9 +1,10 @@
 import type { Alert, HealthSample, SpectrumSnapshot, Stats } from "./types";
 
-// Same-origin /api by default (production nginx proxies it -- see
-// Dockerfile/nginx.conf); override for `npm run dev` via a .env.local
-// with VITE_API_BASE_URL=http://localhost:8000.
-const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? "/api";
+// Same-origin, unprefixed by default -- the production build is served
+// by the `api` container itself (see services/api/app.py's static mount),
+// so its own routes are already same-origin. Override for `npm run dev`
+// via a .env.local with VITE_API_BASE_URL=http://localhost:8000.
+const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? "";
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);

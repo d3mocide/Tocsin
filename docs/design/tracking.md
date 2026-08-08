@@ -138,6 +138,27 @@ Repo layout, `compose.yaml` (offgrid/hybrid profiles, validated with
 part of the stated exit criteria, which are now all met):
 - `make bench-channelizer` CPU-headroom numbers on this actual Pi 5 — not yet run.
 
+- **2026-08-08:** `sdr-rx`'s container now also runs `same_decoder`, `live_audio`, and
+  `segment_capture` (Phases 2-4) as independent, self-restarting processes launched by a new
+  `entrypoint.sh`, at the user's request to shrink `compose.yaml`'s container count further.
+  All four stay fully separate uv projects with their own tests; see the Session Log entry
+  this date for the full reasoning and `services/sdr_rx/README.md`'s "Container" section for
+  the mechanics.
+- **2026-08-08:** Manual RTL-SDR gain is now `SDR_RX_GAIN_DB` (`.env`/`compose.yaml`,
+  default 30 dB), threaded through `main()` into `SoapySDRDevice(gain_db=...)`, at the
+  user's request -- previously only changeable by editing `capture.DEFAULT_GAIN_DB` in
+  source, despite the design doc and this repo's own README already flagging it as "the
+  thing most likely to need adjusting against your actual RF environment." Tuner frequency
+  (`channels.LO_HZ`) and sample rate (`capture.SAMPLE_RATE_HZ`) deliberately stayed fixed --
+  both are load-bearing channelizer assumptions (the national NWR channel plan and the
+  48-bin odd-stacked math), not per-site tuning knobs; see `services/sdr_rx/README.md`'s
+  Configuration section for the reasoning. Two new tests
+  (`test_main_passes_sdr_rx_gain_db_through_to_the_device`,
+  `test_main_defaults_gain_db_when_sdr_rx_gain_db_is_unset`) using a fake `SoapySDRDevice`
+  that records its `gain_db` and fails fast, the same shape `main()` already handles for
+  "bindings not installed" -- avoids `thread.join()` blocking forever the way a fake that
+  actually started a capture thread would. 83 tests passing in `sdr_rx`, up from 81.
+
 ---
 
 ## Phase 2 — SAME decode end to end
@@ -215,8 +236,10 @@ and unit tested," not "verified against real audio."
   channel continuously per `same-decoder`'s `service.py`, so it's already listening on
   `WX7`, just hasn't seen a header air). NWR's own Required Weekly Test (RWT) is still the
   natural first real-world check (repo root README bring-up runbook step 7) — worth
-  checking `docker compose logs same-decoder` for a `SameEvent` JSON line around the local
-  transmitter's scheduled RWT time, or after any real activations.
+  checking `docker compose logs sdr-rx | grep same-decoder` for a `SameEvent` JSON line
+  around the local transmitter's scheduled RWT time, or after any real activations
+  (`same-decoder` stopped being a separate compose service/container on 2026-08-08 — see
+  Phase 1's notes and the Session Log).
 
 ---
 
@@ -275,6 +298,11 @@ and unit tested," not "verified against real audio."
   back in a browser through a real Icecast mountpoint (`WX7`, see Phase 1's note) — the
   last open item (real ffmpeg encode, real mountpoint, real audio, real playback, all
   connected end to end) is closed.
+
+- **2026-08-08:** `live_audio` no longer has its own `compose.yaml` service or Dockerfile --
+  it now ships inside `sdr-rx`'s container image as a second process, connecting to sdr-rx
+  over `localhost:5555` instead of `tcp://sdr-rx:5555`. See Phase 1's notes and the Session
+  Log entry this date.
 
 ---
 
@@ -390,6 +418,13 @@ per CLAUDE.md's normal "prove phase N before starting N+1" rule this would have 
 implementation was started anyway at the user's explicit direction; the live-hardware exit
 criteria above still can't be met until Phase 2's own real-audio gap closes.
 
+- **2026-08-08:** `segment_capture` no longer has its own `compose.yaml` service or
+  Dockerfile -- it now ships inside `sdr-rx`'s container image as a third process, reading
+  sdr-rx's ring buffer over a private `tmpfs:` mount instead of the `sdr-rx-ring` named
+  volume (removed) that used to share it across two containers. `stt-worker` (still
+  separate) now reaches its capture-ready ZMQ socket at `sdr-rx`'s hostname instead of its
+  own. See Phase 1's notes and the Session Log entry this date.
+
 ---
 
 ## Phase 5 — NWS poller + fusion
@@ -504,6 +539,11 @@ real-audio gap for the RF side.
 - `Makefile`: `test` target now also runs `nws_poller` and `fusion`. `.env.example`:
   documented the two new hybrid-only vars.
 - 244 tests passing across all seven implemented services (`make test`), up from 191.
+- **2026-08-08:** `nws-poller` no longer has its own `compose.yaml` service or Dockerfile --
+  it now ships inside `fusion`'s container image as a second process, launched by
+  `services/fusion/entrypoint.sh` only under `TOCSIN_MODE=hybrid`. Still a fully separate uv
+  project with its own tests (`make test` unchanged); see the Session Log entry this date for
+  the full reasoning.
 
 **Not started / open:**
 - Neither new Dockerfile is build-verified -- no Docker daemon in this authoring sandbox
@@ -845,6 +885,11 @@ FastAPI service, and the first TypeScript in this repo.
   list was missing every service added since Phase 4.
 - 395 tests passing across all nine implemented Python services (`make test`), up from 350,
   plus `web`'s clean type-check-and-build.
+- **2026-08-08:** `web` no longer has its own `compose.yaml` service, Dockerfile, or nginx
+  container -- `services/api`'s Dockerfile now builds it as a stage and `app.py` serves the
+  built `dist/` as static files at `/`, mounted after every API route so the route table is
+  unchanged. `web/src/api.ts`'s default base URL moved from `/api` to same-origin unprefixed
+  accordingly. See the Session Log entry this date for the full reasoning.
 
 **Not started / open:**
 - No transcript storage (design doc §9 names "transcripts" alongside alerts/health as
@@ -1103,3 +1148,137 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   Python services (`make test`), up from 350, plus a clean `web` type-check-and-build
   confirmed against the live npm registry. Nothing in this phase ran against a real Postgres,
   Redis, or browser -- see Phase 8's section above for the complete breakdown.
+- **2026-08-08** — At the user's request, consolidated `compose.yaml` from 14 containers to
+  12 under the `hybrid` profile (13 to 12 under `offgrid`, where only the `web` merge counts
+  -- `nws-poller` was already hybrid-only, so it was never one of `offgrid`'s 13 to begin
+  with). Confirmed against real resolved service lists, not just arithmetic: `docker compose
+  --profile offgrid config --services` and `--profile hybrid config --services` both list
+  exactly the same 12 names now (`api`, `dispatcher`, `fusion`, `icecast`, `live-audio`,
+  `mosquitto`, `redis`, `same-decoder`, `sdr-rx`, `segment-capture`, `stt-worker`,
+  `timescaledb`) -- the offgrid/hybrid split that used to show up as `nws-poller`
+  existing-or-not now lives entirely inside `fusion`'s container instead. Two merges, both
+  deployment-only -- no service's own Python package was touched, and neither
+  crosses a service boundary with a Python import (CLAUDE.md's "communicate over ZMQ, Redis,
+  MQTT, HTTP, not imports" rule still holds): (1) `web` merged into `api` -- `services/api`'s
+  Dockerfile gained a `node:22` build stage for `web/` (build context moved to the repo root
+  so it can reach both directories) and `app.py`'s `create_app` now optionally mounts the
+  built `dist/` as static files at `/`, registered after every API route so explicit routes
+  still win their exact path; `web/src/api.ts`'s default `API_BASE_URL` changed from `/api`
+  to same-origin unprefixed now that there's no nginx proxy stripping that prefix. Removed
+  `web/Dockerfile` and `web/nginx.conf`. (2) `nws-poller` merged into `fusion` -- both stay
+  fully independent `uv` projects/venvs (own `pyproject.toml`, own tests, still run
+  separately via `make test`), built into one image by `services/fusion`'s Dockerfile (also
+  now repo-root-context) and launched as two OS processes by a new `entrypoint.sh`: fusion
+  runs via `exec` as the container's foreground/PID-1 process (so it still owns the
+  container's exit status and receives `docker stop`'s SIGTERM directly), while nws-poller
+  runs in a self-restarting background loop, started only when `TOCSIN_MODE=hybrid` --
+  replacing the old `profiles: [hybrid]` compose-level gate with the exact kind of runtime
+  `TOCSIN_MODE` branch CLAUDE.md's connectivity contract asks for, so a bad/missing
+  `NWS_POLLER_USER_AGENT` under hybrid retries in place instead of taking fusion down with
+  it. `compose.yaml`'s `api` service kept its host port at 8080 (now mapped straight to
+  the container's 8000 instead of nginx's 80) so the bring-up runbook in the root README
+  didn't need to change. Added `API_STATIC_DIR` config plus 4 new tests to `services/api`
+  covering the static mount (root 404s with no static dir configured, serves `index.html`
+  when one is, and API routes still win over it) and its config default/override/disable --
+  40 tests passing there, up from 36; `services/fusion` and `services/nws_poller` untouched
+  internally, still passing their existing suites (36 and 19 respectively). A Docker daemon
+  turned out to be reachable in this session (same as the 2026-08-08 entry above that first
+  found one) -- used it to actually build and run both merged images, not just resolve
+  `docker compose config`. `docker top` on the merged `fusion` container confirmed
+  `nws-poller` is genuinely absent under `TOCSIN_MODE=offgrid` and present under `hybrid`;
+  with `NWS_POLLER_USER_AGENT` deliberately left unset under hybrid, confirmed `nws-poller`
+  retry-loops in place ("retrying in 5s") while `fusion`'s own process stays up throughout --
+  the exact failure-isolation behavior the merge was designed to preserve. For the merged
+  `api` container, ran it against real `redis` and `timescaledb` containers and confirmed
+  with `curl`: `GET /` returns the built SPA's `index.html`, its JS asset resolves with
+  `content-type: application/javascript`, and `GET /alerts`, `/health`, `/stats` all still
+  return the expected JSON -- static mount and API routes coexisting for real, not just
+  argued about in a docstring. (Building required trusting this sandbox's TLS-intercepting
+  proxy CA inside the build -- a local-only workaround via a scratch Dockerfile/cert copy,
+  same pattern as this file's very first 2026-08-08 entry; nothing from that workaround was
+  committed.) Went no further than these two: folding `same-decoder`/`segment-capture` into `sdr-rx` or
+  `dispatcher` was considered and rejected, since it would give up the independent
+  `on-failure`/`unless-stopped` restart policies and device-passthrough isolation those
+  services are deliberately built around.
+- **2026-08-08** — Revisited the rejection immediately above, at the user's request: the
+  restart-policy/isolation cost is real, but so is the argument for merging anyway --
+  `same-decoder`, `live-audio`, and `segment-capture` are already one failure domain in
+  practice (all three are useless without `sdr-rx` producing anything, and none of them
+  crash-loops the others today), and one container's interleaved, per-line-prefixed logs
+  (each of the four already prints its own `"<name>: ..."` prefix, an existing convention,
+  not new) are easier to read when diagnosing one failure than four `docker compose logs`
+  invocations. Folded `same_decoder`, `live_audio`, and `segment_capture` into `sdr-rx`'s
+  container (deliberately left `stt-worker` out -- see below), taking `compose.yaml` from
+  12 containers to 9. All four stay fully independent uv projects with their own
+  `pyproject.toml`/tests (`make test` unchanged) -- no cross-package Python import, same
+  boundary rule as the merges above.
+  - `services/sdr_rx/Dockerfile` now builds all four into separate venvs on one
+    `debian:bookworm-slim` image (`python:3.11-slim` won't do -- sdr-rx's apt-installed
+    SoapySDR bindings need to stay on Debian's own interpreter, see the Dockerfile's own
+    comment; the other three don't need `--system-site-packages` but happily share the same
+    base and get `multimon-ng`/`ffmpeg` from the same apt layer).
+  - New `entrypoint.sh` is meaningfully more involved than the fusion+nws-poller one: none
+    of the four processes is a single "always required" foreground owner the way `fusion`
+    is for `nws-poller`, because the repo root README's bring-up runbook *requires*
+    same-decoder/live-audio/segment-capture to keep running even when sdr-rx has no dongle
+    configured at all. All four now run as independent, self-restarting background loops
+    under `set -m` (so each gets its own process group), with a `trap`/`cleanup` that sends
+    `kill -TERM -- "-$pid"` (the process-group form, not a plain `kill $pid`) to each on
+    `docker stop` -- without that, SIGTERM would hit only the idle loop shell, not the
+    actually-running `uv run <service>` underneath it, and `docker stop` would hang out its
+    full timeout before falling back to SIGKILL. sdr-rx's own loop is the one with real
+    exit-code-dependent logic, ported from this file's very first 2026-08-08 entry (the
+    `restart: on-failure`-vs-`unless-stopped` bug fixed there): exit 0 ("no devices
+    configured") stops that one loop from retrying; exit 1 retries. `SDR_RX_LIST_DEVICES`
+    (`make sdr-devices`) is special-cased at the top of the script to `exec` straight into
+    just sdr-rx's listing codepath, skipping the other three entirely -- without this,
+    `make sdr-devices` would launch the whole stack and then hang forever instead of
+    printing serials and exiting, since the merged entrypoint's default path never returns.
+  - `compose.yaml`: `same-decoder`/`live-audio`/`segment-capture`'s env vars folded into
+    `sdr-rx`; their `*_ZMQ_CONNECT` defaults (both the compose env var and each service's
+    own `DEFAULT_ZMQ_CONNECT` constant in source) changed from `tcp://sdr-rx:5555` to
+    `tcp://localhost:5555`, since they're the same container now, not a separate one
+    reaching sdr-rx by service name. The `sdr-rx-ring` named tmpfs volume is gone --
+    segment-capture reading sdr-rx's ring buffer only ever needed a *shared* volume because
+    they were different containers; merged, a private `tmpfs:` mount on sdr-rx does the same
+    job with one less top-level volume. `stt-worker` (kept separate -- see below) now
+    connects to `tcp://sdr-rx:5556` instead of `tcp://segment-capture:5556`, since
+    segment-capture no longer has its own hostname; that constant changed in
+    `stt_worker/__init__.py` too.
+  - **`stt-worker` deliberately excluded**, per an explicit scoping question this session:
+    it has no hardware dependency (unlike the other four), a completely different resource
+    profile (CPU-bound whisper.cpp transcription vs. this container's I/O-bound RF
+    plumbing), the heaviest single build in the repo (from-source whisper.cpp), and its own
+    independent "missing model file" restart story -- it doesn't share sdr-rx's fate the way
+    same-decoder/live-audio/segment-capture do.
+  - Updated `services/sdr_rx/README.md` (new "Container" section), `same_decoder/README.md`,
+    `live_audio/README.md`, `segment_capture/README.md` (each gained a short "ships inside
+    sdr-rx's container now" note plus corrected `*_ZMQ_CONNECT` defaults),
+    `services/stt_worker/README.md`, and the root README's hardware bring-up runbook (step
+    4's "same-decoder/live-audio/icecast stay up while sdr-rx exits" description no longer
+    holds -- the whole container now stays `Up`, with sdr-rx's own process just logging that
+    it stopped retrying; step 7's `docker compose logs -f same-decoder` became `docker
+    compose logs -f sdr-rx | grep same-decoder` since that's no longer a separate service).
+    Also corrected a `docker compose logs same-decoder` pointer in Phase 2's own "Not
+    started / open" notes for the same reason.
+  - Test suites for all five touched services (`sdr_rx`, `same_decoder`, `live_audio`,
+    `segment_capture`, `stt_worker`) re-run and green, unchanged counts (81/29/28/46/38).
+  - `docker compose config` resolves cleanly for both profiles, both now listing the same 9
+    services.
+  - Build- and run-verified against a real Docker daemon, not just `docker compose config`
+    (same local CA-trust workaround as the earlier entry this date, nothing committed): `uv
+    venv --system-site-packages` genuinely sees apt's SoapySDR bindings inside this merged
+    image (`import SoapySDR` succeeds, `SoapySDRUtil --info` lists the `rtlsdr` factory) --
+    confirms the four-projects-on-one-base-image approach doesn't break sdr-rx's ABI
+    constraint. Ran the merged container with no `SDR_RX_DEVICES` set: `docker top` showed
+    `same-decoder`, `live-audio`, and `segment-capture` all alive with real `uv run <name>`
+    children, no `uv run sdr-rx` process anywhere, sdr-rx's own log line read "exited 0 (no
+    devices configured) -- not retrying," and `docker ps` still showed the container `Up` --
+    exactly the bring-up runbook's intended shape, now produced by one container instead of
+    four. `SDR_RX_LIST_DEVICES=1` (the `make sdr-devices` path) exited in under a second with
+    only sdr-rx's own listing codepath ever starting, confirming the entrypoint's early
+    short-circuit works. `docker stop` on the running container returned in 0.33s with the
+    container fully removed and no leftover processes -- confirms `set -m` plus the
+    process-group `kill -TERM -- "-$pid"` in `cleanup()` actually reaches the real `uv run
+    <service>` processes, not just their loop shells, avoiding a hang out to the stop
+    timeout and a SIGKILL fallback.

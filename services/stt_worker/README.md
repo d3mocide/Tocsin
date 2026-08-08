@@ -83,7 +83,7 @@ to end here -- see `docs/design/tracking.md`.
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `STT_WORKER_ZMQ_CONNECT` | `tcp://segment-capture:5556` | Address to connect to segment-capture's capture-ready ZMQ PUB socket. |
+| `STT_WORKER_ZMQ_CONNECT` | `tcp://sdr-rx:5556` | Address to connect to segment-capture's capture-ready ZMQ PUB socket. `sdr-rx`'s hostname, not `segment-capture`'s -- segment_capture ships inside sdr-rx's container now (see `services/sdr_rx/README.md`'s "Container" section) and no longer has a container/hostname of its own, though it still binds the same port there. |
 | `STT_WORKER_MODEL_PATH` | *(required)* | Path to a ggml model file (see `make fetch-models`). Startup fails loudly if missing or not a file -- off-grid means pre-staged, never downloaded on first boot (design doc §8). |
 | `STT_WORKER_WORK_DIR` | `/tmp/stt_worker` | Scratch directory for trimmed WAV copies. |
 | `STT_WORKER_LANGUAGE` | `en` | Passed to whisper-cli's `-l`. |

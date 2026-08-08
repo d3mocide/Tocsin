@@ -50,7 +50,7 @@ async def _run(config: ApiConfig) -> None:
         asyncio.create_task(health_consumer.run_forever(stop_event)),
     ]
 
-    app = create_app(pool, redis_client, broadcaster)
+    app = create_app(pool, redis_client, broadcaster, static_dir=config.static_dir)
     server = uvicorn.Server(uvicorn.Config(app, host=config.host, port=config.port, log_level="info"))
     print(f"api: serving on {config.host}:{config.port}, Postgres + Redis connected", flush=True)
     try:

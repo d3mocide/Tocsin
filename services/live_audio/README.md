@@ -6,6 +6,14 @@ channel as its own Ogg/Vorbis stream to Icecast via ffmpeg, so a channel can
 be confirmed by ear (tuning, antenna, gain) without waiting on SAME decode
 or STT.
 
+No `compose.yaml` service or Dockerfile of its own: this project ships
+inside `sdr-rx`'s container image (`../sdr_rx/Dockerfile`, build context
+the repo root) as one of four independent uv projects/venvs, started by
+`../sdr_rx/entrypoint.sh` as a self-restarting background process. Still
+fully independent of `sdr-rx` at the Python level (own `pyproject.toml`,
+own tests, no cross-import) -- `../sdr_rx/README.md`'s "Container" section
+has the full picture.
+
 Icecast over MediaMTX for this v1 -- see `feeder.py`'s docstring for the
 tradeoff.
 
@@ -25,7 +33,7 @@ is not yet verified -- see the repo root README's bring-up runbook.
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `LIVE_AUDIO_ZMQ_CONNECT` | `tcp://sdr-rx:5555` | Address to connect to sdr-rx's ZMQ PUB socket. |
+| `LIVE_AUDIO_ZMQ_CONNECT` | `tcp://localhost:5555` | Address to connect to sdr-rx's ZMQ PUB socket -- `localhost`, since both run in the same container now (see above). |
 | `ICECAST_HOST` | `icecast` | Icecast server hostname. |
 | `ICECAST_PORT` | `8000` | Icecast server port. |
 | `ICECAST_SOURCE_USER` | `source` | Icecast source-client username (Icecast's convention: always `source`). |

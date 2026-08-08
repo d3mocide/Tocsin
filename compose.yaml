@@ -40,73 +40,44 @@ services:
     profiles: [offgrid, hybrid]
 
   sdr-rx:
-    build: ./services/sdr_rx
-    # on-failure, not unless-stopped: with no SDR_RX_DEVICES configured (a
-    # deliberately supported state -- see the README's bring-up runbook),
-    # main() reports that and exits 0. unless-stopped restarts on ANY exit
-    # including that one, crash-looping a container that isn't actually
-    # crashing (confirmed against a real build). on-failure only restarts
-    # the exit-1 path (bad serial / device error), which is the case that
-    # actually warrants a retry.
-    restart: on-failure
+    # Build context is the repo root, not services/sdr_rx/ -- this image
+    # also installs same_decoder, live_audio, and segment_capture
+    # (formerly their own containers; see entrypoint.sh for why they now
+    # share this one). restart: unless-stopped at the compose level is a
+    # last-resort safety net for the entrypoint script itself crashing --
+    # each of the four processes' own on-failure-vs-unless-stopped
+    # semantics (the "no devices configured" exit-0 case in particular,
+    # see entrypoint.sh) are now handled inside that script instead of by
+    # Docker's restart policy, since sdr-rx no longer has its own
+    # container to apply one to.
+    build:
+      context: .
+      dockerfile: services/sdr_rx/Dockerfile
+    restart: unless-stopped
     environment:
       TOCSIN_MODE: *mode
       SDR_RX_DEVICES: ${SDR_RX_DEVICES:-}
+      # Manual gain in dB (design doc §3: "Auto gain oscillates on a
+      # constant carrier"). 30 dB is a starting point for a typical setup,
+      # not a universal value -- antenna, cable loss, and distance to the
+      # transmitter all shift what's correct for a given site; see the
+      # root README's "Tweak from there" bring-up step.
+      SDR_RX_GAIN_DB: ${SDR_RX_GAIN_DB:-30}
       SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
       SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
       # Publishes RF health (tocsin:health) and per-site spectrum snapshots
       # (tocsin:spectrum:<site>) for api (Phase 8).
       SDR_RX_REDIS_URL: redis://redis:6379/0
-    depends_on:
-      - redis
-    # A named tmpfs volume, not each container's own private `tmpfs:` mount
-    # (which is how this looked before segment-capture existed) -- Phase 4's
-    # segment-capture reads sdr-rx's ring buffer directly (design doc §3,
-    # "pre-roll"), which only works if both containers share the same
-    # backing memory, not two independent anonymous tmpfses.
-    volumes:
-      - sdr-rx-ring:/run/sdr_rx_ring
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-    # /dev/bus/usb gives the container the whole USB bus rather than one
-    # device node, because RTL-SDR dongles enumerate under a bus-relative
-    # path that isn't stable across replugs -- device selection happens in
-    # the app layer by serial (SDR_RX_DEVICES), not by bind-mounting one
-    # /dev/bus/usb/BBB/DDD path. The host also needs the udev rule in
-    # deploy/udev/ so the dongle is group-readable without running the
-    # container privileged -- see this service's README for the full
-    # bring-up sequence (blacklist, udev rule, `make sdr-devices`).
-    profiles: [offgrid, hybrid]
-
-  same-decoder:
-    build: ./services/same_decoder
-    restart: unless-stopped
-    environment:
-      SAME_DECODER_ZMQ_CONNECT: tcp://sdr-rx:5555
+      # same-decoder, live-audio, segment-capture: localhost, not
+      # tcp://sdr-rx:5555 -- they're the same container as sdr-rx now, not
+      # a separate one reaching it by service name.
+      SAME_DECODER_ZMQ_CONNECT: tcp://localhost:5555
       TOCSIN_DATA_DIR: /app/data
       # Publishes to Redis Streams (tocsin:same_events) for fusion (design
       # doc §5: "Both paths write raw events to Redis Streams before
       # fusion sees them") instead of only logging to stdout.
       SAME_DECODER_REDIS_URL: redis://redis:6379/0
-    volumes:
-      - ./data:/app/data:ro
-    depends_on:
-      - sdr-rx
-      - redis
-    profiles: [offgrid, hybrid]
-
-  icecast:
-    build: ./deploy/icecast
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    profiles: [offgrid, hybrid]
-
-  live-audio:
-    build: ./services/live_audio
-    restart: unless-stopped
-    environment:
-      LIVE_AUDIO_ZMQ_CONNECT: tcp://sdr-rx:5555
+      LIVE_AUDIO_ZMQ_CONNECT: tcp://localhost:5555
       ICECAST_HOST: icecast
       ICECAST_PORT: "8000"
       ICECAST_SOURCE_USER: source
@@ -119,36 +90,44 @@ services:
       # with site_names/channel_names display-name overrides to mount; see
       # services/live_audio/README.md.
       LIVE_AUDIO_METADATA_CONFIG: ${LIVE_AUDIO_METADATA_CONFIG:-}
-    # volumes:
-    #   - ./deploy/live_audio/metadata.yaml:/app/metadata.yaml:ro
-    depends_on:
-      - sdr-rx
-      - icecast
-    profiles: [offgrid, hybrid]
-
-  segment-capture:
-    build: ./services/segment_capture
-    # on-failure, not unless-stopped: main() checks that the sdr-rx-ring
-    # volume is actually mounted at startup and exits 1 with a clear
-    # message if not (see services/segment_capture/README.md) -- a real
-    # failure worth retrying, not a deliberate clean-exit path the way
-    # sdr-rx's "no devices configured" is.
-    restart: on-failure
-    environment:
-      SEGMENT_CAPTURE_ZMQ_CONNECT: tcp://sdr-rx:5555
+      SEGMENT_CAPTURE_ZMQ_CONNECT: tcp://localhost:5555
+      # stt-worker (a separate container) connects to this one, so it
+      # stays reachable by this service's name -- see stt-worker's
+      # STT_WORKER_ZMQ_CONNECT below.
       SEGMENT_CAPTURE_ZMQ_BIND: tcp://0.0.0.0:5556
       SEGMENT_CAPTURE_RING_BUFFER_DIR: /run/sdr_rx_ring
       SEGMENT_CAPTURE_OUTPUT_DIR: /var/lib/segment_capture/captures
-      # Phase 7: segment-capture now does its own tier lookup (threaded
-      # through to stt_worker -> dispatcher's stage 2), same data file
-      # same-decoder already mounts.
-      TOCSIN_DATA_DIR: /app/data
-    volumes:
-      - sdr-rx-ring:/run/sdr_rx_ring
-      - segment-captures:/var/lib/segment_capture/captures
-      - ./data:/app/data:ro
     depends_on:
-      - sdr-rx
+      - redis
+      - icecast
+    # A private tmpfs, not the shared named volume this used to be
+    # (`sdr-rx-ring`, removed) -- that only existed so segment-capture, a
+    # *separate* container, could read sdr-rx's ring buffer over shared
+    # backing memory (design doc §3, "pre-roll"). Now that both are the
+    # same container/filesystem, a plain per-container tmpfs is enough
+    # again, same as before segment-capture existed.
+    tmpfs:
+      - /run/sdr_rx_ring
+    volumes:
+      - ./data:/app/data:ro
+      - segment-captures:/var/lib/segment_capture/captures
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    # /dev/bus/usb gives the container the whole USB bus rather than one
+    # device node, because RTL-SDR dongles enumerate under a bus-relative
+    # path that isn't stable across replugs -- device selection happens in
+    # the app layer by serial (SDR_RX_DEVICES), not by bind-mounting one
+    # /dev/bus/usb/BBB/DDD path. The host also needs the udev rule in
+    # deploy/udev/ so the dongle is group-readable without running the
+    # container privileged -- see this service's README for the full
+    # bring-up sequence (blacklist, udev rule, `make sdr-devices`).
+    profiles: [offgrid, hybrid]
+
+  icecast:
+    build: ./deploy/icecast
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
     profiles: [offgrid, hybrid]
 
   stt-worker:
@@ -160,7 +139,11 @@ services:
     # manual intervention, which is worth the restart loop in the meantime.
     restart: on-failure
     environment:
-      STT_WORKER_ZMQ_CONNECT: tcp://segment-capture:5556
+      # sdr-rx, not segment-capture -- segment-capture no longer has its
+      # own container/hostname (it's now one of sdr-rx's four processes,
+      # still publishing its capture-ready ZMQ PUB socket on the same
+      # port, just from that container's name instead of its own).
+      STT_WORKER_ZMQ_CONNECT: tcp://sdr-rx:5556
       STT_WORKER_MODEL_PATH: /models/${STT_WORKER_MODEL_FILE:-ggml-base.en.bin}
       STT_WORKER_INITIAL_PROMPT: ${STT_WORKER_INITIAL_PROMPT:-}
       # Publishes to Redis Streams (tocsin:transcripts) for dispatcher's
@@ -177,47 +160,46 @@ services:
       - segment-captures:/var/lib/segment_capture/captures
       - ./models:/models:ro
     depends_on:
-      - segment-capture
+      - sdr-rx
       - redis
     profiles: [offgrid, hybrid]
 
-  nws-poller:
-    build: ./services/nws_poller
-    restart: unless-stopped
-    environment:
-      # Empty by default, not `:?`-required: compose interpolates every
-      # service's environment during `config` regardless of which
-      # --profile was selected, so a hard-required var here would block
-      # `offgrid` startup too even though nws-poller (hybrid-only) never
-      # runs there -- exactly the regression CLAUDE.md's connectivity rule
-      # warns about. Same pattern as SDR_RX_DEVICES: nws_poller's own
-      # __init__.py already fails loudly and exits 1 if this is unset,
-      # which only matters (and only restart-loops) under the hybrid
-      # profile where the container actually starts.
-      NWS_POLLER_USER_AGENT: ${NWS_POLLER_USER_AGENT:-}
-      NWS_POLLER_AREAS: ${NWS_POLLER_AREAS:-OR,WA}
-      NWS_POLLER_INTERVAL_SECONDS: ${NWS_POLLER_INTERVAL_SECONDS:-60}
-      NWS_POLLER_REDIS_URL: redis://redis:6379/0
-    depends_on:
-      - redis
-    # hybrid only (design doc §8: nws-poller is one of the four
-    # network-dependent components offgrid disables entirely) -- this
-    # profile gate is the actual "disabled off-grid" mechanism, since
-    # there's no in-process TOCSIN_MODE branch to speak of: the process
-    # simply never starts under the offgrid profile.
-    profiles: [hybrid]
-
   fusion:
-    build: ./services/fusion
+    # Build context is the repo root, not services/fusion/ -- this image
+    # also installs nws_poller (formerly its own container; see
+    # entrypoint.sh) as a second, independent uv project/venv alongside
+    # fusion's.
+    build:
+      context: .
+      dockerfile: services/fusion/Dockerfile
     restart: unless-stopped
     environment:
       TOCSIN_MODE: *mode
       TOCSIN_DATA_DIR: /app/data
       FUSION_REDIS_URL: redis://redis:6379/0
+      # nws-poller's own env (was its own compose service, gated by
+      # `profiles: [hybrid]`; entrypoint.sh now gates it on TOCSIN_MODE at
+      # container start instead -- see that file). Empty by default, not
+      # `:?`-required, same reasoning as before the merge: a hard-required
+      # var here would block `offgrid` startup too, even though this
+      # entire block is skipped there -- exactly the regression
+      # CLAUDE.md's connectivity rule warns about. nws_poller's own
+      # __init__.py still fails loudly and exits 1 (retried by
+      # entrypoint.sh) if this is unset, which only matters under
+      # TOCSIN_MODE=hybrid where entrypoint.sh actually starts it.
+      NWS_POLLER_USER_AGENT: ${NWS_POLLER_USER_AGENT:-}
+      NWS_POLLER_AREAS: ${NWS_POLLER_AREAS:-OR,WA}
+      NWS_POLLER_INTERVAL_SECONDS: ${NWS_POLLER_INTERVAL_SECONDS:-60}
+      NWS_POLLER_REDIS_URL: redis://redis:6379/0
     volumes:
       - ./data:/app/data:ro
     depends_on:
       - redis
+    # both, unlike nws-poller's old hybrid-only profile: fusion itself
+    # always runs (offgrid alerts simply stay RF_ONLY -- see fusion's
+    # README), and the nws-poller half of this container now self-gates
+    # on TOCSIN_MODE inside entrypoint.sh rather than never starting the
+    # whole container under offgrid.
     profiles: [offgrid, hybrid]
 
   dispatcher:
@@ -268,7 +250,13 @@ services:
     profiles: [offgrid, hybrid]
 
   api:
-    build: ./services/api
+    # Build context is the repo root, not services/api/ -- the Dockerfile's
+    # first stage builds web/ (formerly its own nginx container; see
+    # web/README.md and services/api/app.py's static mount) before the
+    # Python runtime stage.
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
     # on-failure: a missing/malformed API_POSTGRES_DSN is main()'s own
     # loud-fail-and-exit-1 check (see services/api/README.md) -- worth
     # retrying since timescaledb itself may just not be ready yet on a
@@ -280,32 +268,22 @@ services:
       API_REDIS_URL: redis://redis:6379/0
       API_HOST: 0.0.0.0
       API_PORT: "8000"
+    ports:
+      # Was web/nginx's port before that container merged in here -- kept
+      # at 8080 so the bring-up runbook (README.md) doesn't change.
+      - "8080:8000"
     depends_on:
       - redis
       - timescaledb
-    profiles: [offgrid, hybrid]
-
-  web:
-    build: ./web
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    depends_on:
-      - api
     profiles: [offgrid, hybrid]
 
 volumes:
   redis-data:
   mosquitto-data:
   timescale-data:
-  # tmpfs-backed so it behaves like sdr-rx's old per-container tmpfs mount
-  # (fast, ephemeral, in-memory) while still being shareable with
-  # segment-capture -- a plain named volume would persist to disk instead.
-  sdr-rx-ring:
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
   # Not tmpfs: finished captures are real data worth keeping across a
   # restart (replay, debugging a bad transcript), unlike the raw ring
-  # buffer they're extracted from.
+  # buffer they're extracted from (a private `tmpfs:` mount on sdr-rx
+  # itself now, not a named volume -- see that service's comment on why
+  # it no longer needs to be shared across containers).
   segment-captures:

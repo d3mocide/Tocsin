@@ -4,6 +4,16 @@ Captures a full SAME voice-message clip -- header through EOM -- from
 `sdr-rx`'s ring buffer, and hands it off to `stt-worker` (milestone 4,
 `docs/design/master-prompt.md` §10, §4).
 
+No `compose.yaml` service or Dockerfile of its own: this project ships
+inside `sdr-rx`'s container image (`../sdr_rx/Dockerfile`, build context
+the repo root) as one of four independent uv projects/venvs, started by
+`../sdr_rx/entrypoint.sh` as a self-restarting background process. Still
+fully independent of `sdr-rx` at the Python level (own `pyproject.toml`,
+own tests, no cross-import) -- `../sdr_rx/README.md`'s "Container" section
+has the full picture. `stt-worker` stays a separate container and reaches
+this process's own ZMQ PUB socket (below) via `sdr-rx`'s hostname, not
+`segment-capture`'s -- see `services/stt_worker/README.md`.
+
 ## Design
 
 Runs its own multimon-ng (`-a EAS`) against the same `same.<site>.<channel>`
@@ -49,9 +59,9 @@ authoring sandbox, so the full path isn't exercised end to end here -- see
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `SEGMENT_CAPTURE_ZMQ_CONNECT` | `tcp://sdr-rx:5555` | Address to connect to sdr-rx's ZMQ PUB socket (the `same.*` topic). |
-| `SEGMENT_CAPTURE_ZMQ_BIND` | `tcp://0.0.0.0:5556` | Bind address for this service's own capture-ready ZMQ PUB socket. |
-| `SEGMENT_CAPTURE_RING_BUFFER_DIR` | `/run/sdr_rx_ring` | Must be the same directory sdr-rx writes its ring buffer to -- a shared volume, not each container's own tmpfs. |
+| `SEGMENT_CAPTURE_ZMQ_CONNECT` | `tcp://localhost:5555` | Address to connect to sdr-rx's ZMQ PUB socket (the `same.*` topic) -- `localhost`, since both run in the same container now (see above). |
+| `SEGMENT_CAPTURE_ZMQ_BIND` | `tcp://0.0.0.0:5556` | Bind address for this service's own capture-ready ZMQ PUB socket. Reachable from other containers (`stt-worker`) at `sdr-rx`'s hostname, since this process no longer has one of its own. |
+| `SEGMENT_CAPTURE_RING_BUFFER_DIR` | `/run/sdr_rx_ring` | Must be the same directory sdr-rx writes its ring buffer to. A private `tmpfs:` mount on the shared container now, not a named volume across two containers the way it was before this merge. |
 | `SEGMENT_CAPTURE_OUTPUT_DIR` | `/var/lib/segment_capture/captures` | Where finished WAV files are written -- a volume shared with stt-worker. |
 | `SEGMENT_CAPTURE_PREROLL_SECONDS` | `10` | How much already-buffered ring-buffer audio to grab when a message starts. |
 | `SEGMENT_CAPTURE_HARD_TIMEOUT_SECONDS` | `300` | Force-finalize a capture that never sees an EOM (design doc §4). |

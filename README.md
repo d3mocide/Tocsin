@@ -29,8 +29,7 @@ events and a listenable audio stream. Everything up through step 4 works with no
 plugged in yet -- only step 5 onward needs hardware. Steps 1-4 have been run for real
 against a Docker daemon (see `docs/design/tracking.md`, 2026-08-08) with `/dev/bus/usb`
 passthrough stubbed out (this repo's own dev sandbox has no USB subsystem to test that
-part against); step 4's `make up-offgrid` came up clean with all non-`sdr-rx` services
-staying up and `sdr-rx` exiting 0 as designed.
+part against); step 4's `make up-offgrid` came up clean.
 
 1. **Blacklist the DVB driver on the host** (not the container) -- the kernel's
    `dvb_usb_rtl28xxu` claims the dongle before SoapySDR can open it otherwise:
@@ -49,25 +48,28 @@ staying up and `sdr-rx` exiting 0 as designed.
    Postgres yet) and build everything: `cp .env.example .env` and edit it, or
    `export POSTGRES_PASSWORD=...`.
 4. **Bring the stack up without a dongle first** to confirm the software side is healthy:
-   `make up-offgrid`. `sdr-rx` will report "no devices configured" and exit cleanly (that's
-   expected -- see its README); `same-decoder`, `live-audio`, and `icecast` should all stay
-   up.
+   `make up-offgrid`. `sdr-rx` (the container also running `same-decoder`, `live-audio`, and
+   `segment-capture` -- see `services/sdr_rx/README.md`'s "Container" section) will log "no
+   devices configured" for its own process and stop retrying it, but stays `Up`: the other
+   three processes inside it, plus `icecast`, all keep running normally regardless.
 5. **Plug in the dongle**, then find its serial: `make sdr-devices`.
 6. **Set `SDR_RX_DEVICES`** to `site:serial` (e.g. `export SDR_RX_DEVICES=home:00000001`)
    and restart: `make down && make up-offgrid`.
 7. **Verify the RF path is alive**:
-   - Logs: `docker compose logs -f sdr-rx` should show no repeated errors.
+   - Logs: `docker compose logs -f sdr-rx` should show no repeated errors. All four of
+     sdr-rx/same-decoder/live-audio/segment-capture's log lines are interleaved here now
+     (each line is prefixed with its own service name, e.g. `same-decoder: ...`), since
+     they're one container.
    - Listen: open `http://<host>:8000/home-WX5.ogg` (swap in your site/channel; see
      `services/live_audio/README.md`) in a browser or media player -- you should hear NWR's
      continuous broadcast. This is the fastest way to confirm tuning/gain/antenna before
      worrying about SAME decode at all.
-   - Decode: `docker compose logs -f same-decoder` -- NWR broadcasts a Required Weekly Test
-     (RWT) on a schedule (and RMT monthly); when one airs, you should see a JSON event line
-     with `"event_code": "RWT"`. You don't have to wait for a real warning to confirm the
-     whole pipeline works end to end.
-8. **Tweak from there.** Gain (`sdr_rx.capture.DEFAULT_GAIN_DB`, currently a fixed 30 dB per
-   the design doc), which of the seven WX channels you expect to hear locally, and the
-   local transmitter frequency assumption (design doc §12 open item) are the things most
+   - Decode: `docker compose logs -f sdr-rx | grep same-decoder` -- NWR broadcasts a
+     Required Weekly Test (RWT) on a schedule (and RMT monthly); when one airs, you should
+     see a JSON event line with `"event_code": "RWT"`. You don't have to wait for a real
+     warning to confirm the whole pipeline works end to end.
+8. **Tweak from there.** Gain (`SDR_RX_GAIN_DB` in `.env`, 30 dB by default per the design
+   doc -- see `services/sdr_rx/README.md`'s Configuration table) is the one thing most
    likely to need adjusting against your actual RF environment.
 
 None of steps 5-8 have been verified against real hardware yet in this repo's history --
@@ -142,7 +144,9 @@ still open, and don't read "implemented" below as "verified."
    over a real TimescaleDB-backed alert store (the first thing in this repo to actually
    write to Postgres), RF health + spectrum display, `RF_ONLY`/`API_ONLY` divergence rate.
    `web/`'s TypeScript type-checks and builds cleanly; not run against a real browser/backend
-   in this sandbox.
+   in this sandbox. `web/` builds into `api`'s own container image and is served from there
+   (`GET /` and below) rather than running as a separate container -- see
+   `services/api/README.md`.
 
 Phases 5-8 were built ahead of Phase 2's real-audio proof, at the user's explicit direction,
 to reach a whole-stack MVP faster -- see `docs/design/tracking.md`'s per-phase notes for the

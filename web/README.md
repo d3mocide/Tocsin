@@ -5,6 +5,13 @@ via SSE), RF channel health, spectrum display, and the `RF_ONLY`/
 `API_ONLY` divergence rate as the headline system health metric (design
 doc §5). Talks to `services/api`.
 
+Builds into `services/api`'s own container image rather than running as
+its own container -- `services/api/Dockerfile` has a `node:22` build
+stage for this directory, and `api`'s `app.py` serves the built `dist/`
+as static files. There's no `web/Dockerfile` or nginx config here
+anymore; see `services/api/README.md` for how the merged container
+works and why.
+
 Vanilla TypeScript, no framework -- the design doc names "Vite + TypeScript
 UI" without specifying one, and there's no way to visually verify UI
 polish in this authoring sandbox regardless of framework choice, so this
@@ -40,11 +47,12 @@ piece of this phase.
 ## Configuration
 
 `VITE_API_BASE_URL` (build-time, via `.env.local` for `npm run dev`):
-defaults to same-origin `/api`, which the production Dockerfile's nginx
-config proxies to the `api` service (stripping the `/api` prefix -- see
-`nginx.conf`). Local dev against a real `api` running on its default port
-needs `VITE_API_BASE_URL=http://localhost:8000` in `.env.local`, since
-Vite's dev server doesn't run the same nginx proxy.
+defaults to same-origin, unprefixed, since the production build is
+served directly by the `api` service that also owns those routes (no
+proxy or prefix-stripping involved). Local dev against a real `api`
+running on its default port needs `VITE_API_BASE_URL=http://localhost:8000`
+in `.env.local`, since Vite's dev server doesn't serve `api`'s routes
+itself.
 
 ## Development
 

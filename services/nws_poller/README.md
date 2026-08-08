@@ -4,8 +4,17 @@ Polls `api.weather.gov/alerts/active` with ETag-conditional requests, one
 request per configured area (the API's `area` parameter takes exactly one
 state/marine-area code per call -- confirmed against the API's own OpenAPI
 spec), and publishes new/updated CAP alerts to Redis Streams for `fusion`.
-`hybrid` profile only -- disabled entirely in `offgrid` mode (design doc
-§8) by simply not being started under that compose profile.
+`hybrid` only -- disabled entirely in `offgrid` mode (design doc §8).
+
+No `compose.yaml` service or Dockerfile of its own: this project ships
+inside `fusion`'s container image (`../fusion/Dockerfile`, build context
+the repo root) as a second, independent uv project/venv, started by
+`../fusion/entrypoint.sh` only when `TOCSIN_MODE=hybrid` -- that
+`TOCSIN_MODE` check is what enforces "disabled entirely in `offgrid`"
+now, replacing the compose-profile gate this service used to have when
+it was its own container. Still fully independent of `fusion` at the
+Python level (own `pyproject.toml`, own tests, no cross-import) --
+`../fusion/README.md`'s "Container" section has the full picture.
 
 ## Status
 

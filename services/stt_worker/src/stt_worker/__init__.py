@@ -23,7 +23,7 @@ from . import remote_http, whispercpp
 from .service import DEFAULT_REMOTE_BUDGET_SECONDS, TranscriptionWorker
 from .subscriber import CaptureSubscriber
 
-DEFAULT_ZMQ_CONNECT = "tcp://segment-capture:5556"
+DEFAULT_ZMQ_CONNECT = "tcp://sdr-rx:5556"
 DEFAULT_WORK_DIR = Path("/tmp/stt_worker")
 
 

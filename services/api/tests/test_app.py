@@ -20,8 +20,8 @@ class FakeRedis:
         return [k for k in self.store if k.startswith(prefix)]
 
 
-def _client(pool=None, redis=None, broadcaster=None):
-    app = create_app(pool or FakePool(), redis or FakeRedis(), broadcaster)
+def _client(pool=None, redis=None, broadcaster=None, static_dir=None):
+    app = create_app(pool or FakePool(), redis or FakeRedis(), broadcaster, static_dir=static_dir)
     return TestClient(app)
 
 
@@ -109,3 +109,28 @@ def test_stream_alerts_route_is_registered_as_sse():
 def test_cors_allows_any_origin_for_browser_reads():
     response = _client().get("/alerts", headers={"Origin": "http://localhost:5173"})
     assert response.headers["access-control-allow-origin"] == "*"
+
+
+def test_with_no_static_dir_root_is_a_plain_404():
+    # Formerly nginx's job (web/nginx.conf); with no built web/dist
+    # mounted (e.g. plain `uv run api` dev use), "/" simply isn't a route.
+    response = _client().get("/")
+    assert response.status_code == 404
+
+
+def test_static_dir_serves_the_built_spa_at_root(tmp_path):
+    (tmp_path / "index.html").write_text("<html>tocsin</html>")
+    response = _client(static_dir=tmp_path).get("/")
+    assert response.status_code == 200
+    assert "tocsin" in response.text
+
+
+def test_static_dir_does_not_shadow_api_routes(tmp_path):
+    # An /alerts/index.html or similar under dist would be unusual, but the
+    # point is the API route registered above the mount always wins for
+    # its exact path -- see app.py's comment on mount ordering.
+    (tmp_path / "index.html").write_text("<html>tocsin</html>")
+    pool = FakePool(fetch_results=[[{"id": "a1", "state": "RF_ONLY", "sources": json.dumps([])}]])
+    response = _client(pool=pool, static_dir=tmp_path).get("/alerts")
+    assert response.status_code == 200
+    assert response.json() == [{"id": "a1", "state": "RF_ONLY", "sources": []}]
