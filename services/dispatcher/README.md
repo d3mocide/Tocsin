@@ -100,6 +100,7 @@ a delivered message into a crashed poll cycle.
 | `TOCSIN_DATA_DIR` | repo-root `data/` | Directory containing `fips.csv`. |
 | `DISPATCHER_REDIS_URL` | `redis://redis:6379/0` | Redis connection URL (stream consumption, idempotency keys, circuit breaker state). |
 | `DISPATCHER_CONSUMER_NAME` | `dispatcher` | Redis consumer-group consumer name. Fixed, not hostname-derived -- see `__init__.py`'s comment (same reasoning as `fusion`'s). |
+| `MESHTASTIC_ENABLED` | `true` (unset), `false` via `compose.yaml` | `false` runs with no Meshtastic node attached -- see "Running without a mesh node" below. Also reported on the liveness heartbeat as `mesh`. |
 | `MESHTASTIC_SERIAL_DEV_PATH` | *(unset -- autodetect)* | Serial device path, e.g. `/dev/ttyUSB0`. Only needed if more than one serial device is attached to the host. |
 | `MESHTASTIC_GATEWAY_NODE_ID` | *(unset -- MQTT fallback disabled)* | Decimal node ID of the Meshtastic node that will relay MQTT-injected messages onto the mesh. |
 | `MQTT_HOST` / `MQTT_PORT` | `mosquitto` / `1883` | The local MQTT broker (`compose.yaml`'s `mosquitto` service). |
@@ -109,6 +110,38 @@ a delivered message into a crashed poll cycle.
 | `DISPATCHER_LITELLM_MODEL` | `gpt-4o-mini` | Model name passed to the chat-completions request. |
 | `DISPATCHER_CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive LiteLLM failures before the breaker opens. |
 | `DISPATCHER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `300` | How long the breaker stays open before allowing another attempt. |
+
+## Running without a mesh node
+
+Not everyone wants the radio. Tocsin's whole receive side -- SAME decode,
+segment capture, transcription, the alert log and the web UI -- is independent
+of Meshtastic, so a monitoring-only station is a supported configuration.
+
+In `.env`, drop the mesh overlay from `COMPOSE_FILE`:
+
+```sh
+COMPOSE_FILE=compose.yaml
+```
+
+That single change both removes the `devices:` mapping and defaults
+`MESHTASTIC_ENABLED` to `false`. It has to be a file rather than a flag:
+Docker refuses to *start* a container whose `devices:` host path is missing,
+so with the mapping in the base file an absent node kills the container before
+its entrypoint runs, and a list entry in an override cannot be unset once the
+base declares it.
+
+Stage 1 still runs in full -- dedup, idempotency, rate limiting, message
+building -- and the dispatch log records every message with reason
+`mesh_disabled`, so `GET /dispatches` and the web UI show exactly what would
+have gone out over the mesh. Only the transmit is skipped.
+
+The MQTT leg is deliberately still reachable: under `TOCSIN_MODE=hybrid` with
+`MESHTASTIC_GATEWAY_NODE_ID` set, messages relay via MQTT even with no local
+node, since "no node here, gateway elsewhere" is a real deployment.
+
+With the mesh *enabled*, a node that won't open is still a loud exit 1 under
+`restart: on-failure` -- someone who configured a radio and lost it should find
+out immediately, not run a silently muted station.
 
 ## Development
 

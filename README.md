@@ -22,6 +22,17 @@ not covered here. For the phase-by-phase build plan and current status, see
 Both modes run from one `compose.yaml` using Docker Compose profiles, selected by a single
 `TOCSIN_MODE=offgrid|hybrid` environment variable.
 
+The Meshtastic node is optional in either mode. To run a receive-only station -- SAME
+decode, transcription, alert log and web UI, with no radio to relay over -- drop the mesh
+overlay from `COMPOSE_FILE` in `.env`:
+
+```sh
+COMPOSE_FILE=compose.yaml
+```
+
+Dispatcher still runs stage 1 in full and logs what it would have transmitted. See
+`services/dispatcher/README.md`'s "Running without a mesh node".
+
 ## Hardware bring-up
 
 This is the sequence to go from a cloned repo to a real RTL-SDR dongle feeding decoded SAME
@@ -48,7 +59,10 @@ part against); step 4's `make up-offgrid` came up clean.
    Postgres yet) and build everything: `cp .env.example .env` and edit it, or
    `export POSTGRES_PASSWORD=...`.
 4. **Bring the stack up without a dongle first** to confirm the software side is healthy:
-   `make up-offgrid`. `sdr-rx` (the container also running `same-decoder`, `live-audio`, and
+   `make up-offgrid`. If no Meshtastic node is attached yet either, set
+   `COMPOSE_FILE=compose.yaml` in `.env` for this step -- Docker will not start `dispatcher`
+   while its `devices:` mapping points at a serial port the host doesn't have.
+   `sdr-rx` (the container also running `same-decoder`, `live-audio`, and
    `segment-capture` -- see `services/sdr_rx/README.md`'s "Container" section) will log "no
    devices configured" for its own process and stop retrying it, but stays `Up`: the other
    three processes inside it, plus `icecast`, all keep running normally regardless.

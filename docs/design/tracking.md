@@ -1369,3 +1369,23 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   the compose passthrough, documented both selectors in `.env.example` (neither was there),
   and covered the env-to-client wiring with tests in both services, which had tested the
   clients' `model` argument but never that anything actually supplied it.
+
+- **2026-08-08:** Tocsin can now run with no Meshtastic node attached, at the user's
+  request ("some users might just want a way to run this without the meshtastic relay").
+  Two things blocked it: Docker refuses to *start* a container whose `devices:` host path
+  is absent, so the mapping in `compose.yaml` made a node a hard prerequisite for the whole
+  stack -- including the receive-only half that needs no radio -- and `main()` treated a
+  serial interface it couldn't open as fatal. Moved the device mapping into a new
+  `compose.mesh.yaml` overlay (a list entry in an override can't be unset once the base
+  declares it, so a separate file is the only way to make it optional), included by default
+  via `COMPOSE_FILE` in `.env`; the overlay also flips `MESHTASTIC_ENABLED`, so dropping it
+  is a single switch that removes the mapping and the transmit path together. With mesh
+  off, `DualPathSender` skips serial and reports `mesh_disabled` while stage 1 still runs
+  in full, so the dispatch log records what would have been sent; the MQTT leg stays
+  reachable, since "no local node, gateway elsewhere" is a real deployment. A
+  configured-but-missing node is still a loud exit 1.
+- **2026-08-08:** Fixed `make down`, which stopped nothing. Every service in `compose.yaml`
+  declares `profiles:`, and Compose does not select a profiled service unless its profile is
+  active -- so the bare `docker compose down` matched zero services and exited 0 while the
+  stack kept running (user-reported, confirmed with `docker compose config --services`).
+  Now names both profiles explicitly and adds `--remove-orphans`.

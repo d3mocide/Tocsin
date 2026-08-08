@@ -46,6 +46,8 @@ DEFAULT_MQTT_PORT = 1883
 # this exact string, and dispatcher is a singleton the same way fusion is.
 DEFAULT_CONSUMER_NAME = "dispatcher"
 
+_FALSEY = {"false", "0", "no", "off"}
+
 
 def _build_mqtt_client() -> MeshtasticMqttClient | None:
     """`None` when no gateway node is configured -- there's nothing to
@@ -62,6 +64,39 @@ def _build_mqtt_client() -> MeshtasticMqttClient | None:
         gateway_node_id=int(gateway_node_id),
         region=os.environ.get("MESHTASTIC_MQTT_REGION", DEFAULT_REGION),
     )
+
+
+def _mesh_enabled() -> bool:
+    return os.environ.get("MESHTASTIC_ENABLED", "true").strip().lower() not in _FALSEY
+
+
+def _build_serial_client() -> MeshtasticSerialClient | None:
+    """`None` when `MESHTASTIC_ENABLED` is false -- running with no
+    Meshtastic node attached at all is supported (see
+    `egress/dispatch.py`), so this is the one path where failing to open
+    the serial interface is deliberate rather than fatal.
+
+    With mesh enabled, a node that won't open is still fatal (exit 1 under
+    `restart: on-failure`): someone who configured a radio and lost it
+    wants to know immediately, not to discover a silently muted station
+    mid-event."""
+    if not _mesh_enabled():
+        print("dispatcher: MESHTASTIC_ENABLED=false -- mesh transmit disabled", flush=True)
+        return None
+    # None -> meshtastic-python's SerialInterface autodetects the device;
+    # set explicitly when more than one serial device is attached.
+    dev_path = os.environ.get("MESHTASTIC_SERIAL_DEV_PATH") or None
+    try:
+        return MeshtasticSerialClient(dev_path=dev_path)
+    except Exception as exc:
+        print(
+            f"dispatcher: could not open Meshtastic serial interface: {exc}\n"
+            "If no node is attached, set MESHTASTIC_ENABLED=false (and drop "
+            "compose.mesh.yaml from COMPOSE_FILE) to run without one -- see "
+            "services/dispatcher/README.md.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def _build_stage2_dispatcher(redis_client, egress: DualPathSender, log) -> Stage2Dispatcher | None:
@@ -96,9 +131,6 @@ def main() -> None:
     data_dir = os.environ.get("TOCSIN_DATA_DIR")
     redis_url = os.environ.get("DISPATCHER_REDIS_URL", DEFAULT_REDIS_URL)
     consumer_name = os.environ.get("DISPATCHER_CONSUMER_NAME", DEFAULT_CONSUMER_NAME)
-    # None -> meshtastic-python's SerialInterface autodetects the device;
-    # set explicitly when more than one serial device is attached.
-    serial_dev_path = os.environ.get("MESHTASTIC_SERIAL_DEV_PATH") or None
 
     try:
         fips_table = FipsTable.load(Path(data_dir) if data_dir else None)
@@ -106,12 +138,7 @@ def main() -> None:
         print(f"dispatcher: could not load FIPS table: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    try:
-        serial_client = MeshtasticSerialClient(dev_path=serial_dev_path)
-    except Exception as exc:
-        print(f"dispatcher: could not open Meshtastic serial interface: {exc}", file=sys.stderr)
-        sys.exit(1)
-
+    serial_client = _build_serial_client()
     egress = DualPathSender(serial_client=serial_client, mqtt_client=_build_mqtt_client(), mode=mode)
 
     import redis as redis_lib
@@ -153,7 +180,10 @@ def main() -> None:
     print(f"dispatcher: consuming as {consumer_name!r} from {redis_url}", flush=True)
     while True:
         try:
-            heartbeat.beat(mode=mode, stage2=stage2 is not None)
+            # `mesh` rides along so the status board can distinguish "no
+            # alerts tonight" from "transmit is off" -- otherwise a
+            # deliberately mesh-less station looks identical to a broken one.
+            heartbeat.beat(mode=mode, stage2=stage2 is not None, mesh=serial_client is not None)
             for consumer in consumers:
                 consumer.poll_once()
         except Exception as exc:

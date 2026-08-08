@@ -14,6 +14,17 @@ is the second service in this repo (after `fusion`) to actually read
 `TOCSIN_MODE` in code rather than only via compose profile selection,
 since stage 1's serial path itself has no mode dependency at all.
 
+A `None` serial client means no Meshtastic node is attached at all
+(`MESHTASTIC_ENABLED=false` -- see `__init__.py`), which is a supported
+way to run Tocsin: SAME decode, transcription, the alert log and the web
+UI are all independent of the radio, so the whole receive side stays
+useful to someone who just wants a monitoring station. Stage 1 still
+runs in full -- dedup, idempotency, rate limiting, message building --
+so the dispatch log records exactly what *would* have gone out over the
+mesh; only the transmit itself is skipped. Note this still leaves the
+MQTT leg reachable in hybrid mode: "no local node, relay via MQTT" is a
+real deployment, not a contradiction.
+
 Once the MQTT publish is *attempted*, this marks the message delivered
 regardless of further confirmation -- there's no ack tracking for the
 MQTT leg itself (design doc's own flow: "no ack -> publish... -> mark
@@ -34,13 +45,15 @@ HYBRID_MODE = "hybrid"
 @dataclass(frozen=True)
 class EgressResult:
     delivered: bool
-    path: str  # "serial" | "mqtt_fallback" | "serial_no_ack" | "mqtt_fallback_failed"
+    # "serial" | "mqtt_fallback" | "serial_no_ack" | "mqtt_fallback_failed"
+    # | "mesh_disabled"
+    path: str
 
 
 class DualPathSender:
     def __init__(
         self,
-        serial_client: MeshtasticSerialClient,
+        serial_client: MeshtasticSerialClient | None,
         mqtt_client: MeshtasticMqttClient | None,
         mode: str,
     ):
@@ -49,12 +62,16 @@ class DualPathSender:
         self._mode = mode
 
     def send(self, text: str) -> EgressResult:
-        result = self._serial.send_text(text)
-        if result.acked:
-            return EgressResult(delivered=True, path="serial")
+        if self._serial is None:
+            unsent_path = "mesh_disabled"
+        else:
+            result = self._serial.send_text(text)
+            if result.acked:
+                return EgressResult(delivered=True, path="serial")
+            unsent_path = "serial_no_ack"
 
         if self._mode != HYBRID_MODE or self._mqtt is None:
-            return EgressResult(delivered=False, path="serial_no_ack")
+            return EgressResult(delivered=False, path=unsent_path)
 
         try:
             self._mqtt.publish_text(text)
