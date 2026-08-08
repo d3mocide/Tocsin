@@ -26,11 +26,26 @@ interface AlertDetail {
   dispatches: Dispatch[];
 }
 
+/** How many cards are built at once. A hybrid deployment accumulates a
+ * few hundred API_ONLY alerts within a day, and every one of them was
+ * being rebuilt on every repaint. Cards past this are one button click
+ * away, not gone -- the feed is a scrolling log, so numbered pages would
+ * be the wrong shape for it. */
+const PAGE_SIZE = 40;
+
 export class AlertFeedView {
   private readonly container: HTMLElement;
   private readonly store: Store;
   private readonly details = new Map<string, AlertDetail>();
   private readonly pending = new Set<string>();
+  /** Rendered card keyed by alert id, with the signature it was built
+   * from, so a repaint reuses every card whose content didn't change.
+   * Rebuilding all of them (the old `replaceChildren` of freshly built
+   * nodes) is what dropped the feed's scroll position and made a busy
+   * system flash. */
+  private readonly cards = new Map<string, { node: HTMLElement; signature: string }>();
+  private limit = PAGE_SIZE;
+  private lastFilterSignature = "";
 
   constructor(container: HTMLElement, store: Store) {
     this.container = container;
@@ -41,25 +56,84 @@ export class AlertFeedView {
     const { alerts, reference, expandedAlertId, errors } = this.store.state;
     const error = errors.get("alerts");
     if (error) {
+      this.cards.clear();
       replaceChildren(this.container, el("p", { class: "panel-error", text: `Alert feed unavailable — ${error}` }));
       return;
     }
 
+    // Changing a filter is a new query, not more of the same one: keeping
+    // an expanded page count across it would show a different number of
+    // results depending on what was scrolled through before.
+    const filterSignature = JSON.stringify(this.store.state.filters);
+    if (filterSignature !== this.lastFilterSignature) {
+      this.lastFilterSignature = filterSignature;
+      this.limit = PAGE_SIZE;
+    }
+
     const now = new Date();
-    const visible = [...alerts.values()]
+    const matching = [...alerts.values()]
       .filter((alert) => this.matches(alert, reference, now))
       .sort(byUrgencyThenRecency(reference, now));
 
-    if (visible.length === 0) {
+    if (matching.length === 0) {
+      this.cards.clear();
       const empty = alerts.size === 0 ? "No alerts yet." : "No alerts match the current filters.";
       replaceChildren(this.container, el("p", { class: "empty", text: empty }));
       return;
     }
 
-    replaceChildren(
-      this.container,
-      ...visible.map((alert) => this.card(alert, reference, now, alert.id === expandedAlertId)),
+    const visible = matching.slice(0, this.limit);
+    const nodes: HTMLElement[] = visible.map((alert) =>
+      this.cardFor(alert, reference, now, alert.id === expandedAlertId),
     );
+
+    for (const id of [...this.cards.keys()]) {
+      if (!visible.some((alert) => alert.id === id)) this.cards.delete(id);
+    }
+
+    const hidden = matching.length - visible.length;
+    if (hidden > 0) nodes.push(this.moreButton(hidden));
+    reconcile(this.container, nodes);
+  }
+
+  private moreButton(hidden: number): HTMLElement {
+    const button = el("button", {
+      class: "feed-more",
+      text: `Show ${Math.min(hidden, PAGE_SIZE)} more (${hidden} older ${hidden === 1 ? "alert" : "alerts"} hidden)`,
+      attrs: { type: "button" },
+    });
+    button.addEventListener("click", () => {
+      this.limit += PAGE_SIZE;
+      this.render();
+    });
+    return button;
+  }
+
+  /** Builds a card only when its rendered content would differ from the
+   * one already on screen. The signature covers everything `card()` reads,
+   * including the two clock-derived strings -- which is why a card holding
+   * an open `<audio>` element survives the 15s repaint tick. */
+  private cardFor(alert: Alert, reference: Reference | null, now: Date, expanded: boolean): HTMLElement {
+    const signature = [
+      alert.last_updated,
+      alert.state,
+      alert.confidence,
+      alert.event_name,
+      alert.fips_codes.join(","),
+      alert.sources.length,
+      tierOf(alert, reference) ?? "",
+      String(isActive(alert, now)),
+      relativeTime(alert.last_updated, now),
+      expiryLabel(alert, now),
+      String(expanded),
+      expanded ? String(this.details.has(alert.id)) : "",
+    ].join("|");
+
+    const cached = this.cards.get(alert.id);
+    if (cached && cached.signature === signature) return cached.node;
+    const node = this.card(alert, reference, now, expanded);
+    this.cards.set(alert.id, { node, signature });
+    return node;
   }
 
   private matches(alert: Alert, reference: Reference | null, now: Date): boolean {
@@ -135,7 +209,7 @@ export class AlertFeedView {
 
   private toggle(alert: Alert): void {
     const alreadyOpen = this.store.state.expandedAlertId === alert.id;
-    this.store.update((state) => {
+    this.store.update("alerts", (state) => {
       state.expandedAlertId = alreadyOpen ? null : alert.id;
     });
     if (!alreadyOpen) void this.loadDetail(alert);
@@ -159,7 +233,7 @@ export class AlertFeedView {
       this.details.set(alert.id, { transcripts: [], dispatches: [] });
     } finally {
       this.pending.delete(alert.id);
-      this.store.notify();
+      this.store.notify("alerts");
     }
   }
 
@@ -193,6 +267,26 @@ export class AlertFeedView {
       detail ? transcriptPanel(detail.transcripts) : el("p", { class: "empty", text: "Loading detail…" }),
       detail ? dispatchPanel(detail.dispatches, now) : null,
     );
+  }
+}
+
+/** Keyed in-place patch: nodes already in the right order are left
+ * untouched, so an unchanged card is never detached and re-inserted --
+ * detaching is what reset the feed's scroll position and stopped playback
+ * on any capture that was mid-play. */
+function reconcile(container: HTMLElement, desired: HTMLElement[]): void {
+  let cursor = container.firstChild;
+  for (const node of desired) {
+    if (cursor === node) {
+      cursor = cursor.nextSibling;
+      continue;
+    }
+    container.insertBefore(node, cursor);
+  }
+  while (cursor) {
+    const next = cursor.nextSibling;
+    container.removeChild(cursor);
+    cursor = next;
   }
 }
 

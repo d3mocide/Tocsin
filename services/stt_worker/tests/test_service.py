@@ -267,3 +267,43 @@ def test_local_wins_when_remote_returns_empty_text(tmp_path):
     )
     worker.handle_capture(_payload(wav_path, tier="A"))
     assert sink.transcripts[0].text == "local text"
+
+
+def _local_that_must_not_run(wav_path, model_path, binary, language, initial_prompt):
+    raise AssertionError("local transcription ran with STT_CHAIN=remote")
+
+
+def test_remote_only_transcribes_without_a_local_model(tmp_path):
+    """`STT_CHAIN=remote`: no ggml model is staged, so `model_path` is
+    `None` and whisper.cpp is never invoked."""
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path=None,
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_local_that_must_not_run,
+        local_enabled=False,
+        remote_run=lambda path: Transcript(text="remote text", segments=()),
+    )
+    worker.handle_capture(_payload(wav_path, tier="A"))
+    assert sink.transcripts[0].text == "remote text"
+
+
+def test_remote_only_covers_tier_b_too(tmp_path):
+    """Tier B is local-only when a local provider exists to be preferred;
+    with none, holding Tier B back would just drop those transcripts."""
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path=None,
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_local_that_must_not_run,
+        local_enabled=False,
+        remote_run=lambda path: Transcript(text="remote text", segments=()),
+    )
+    worker.handle_capture(_payload(wav_path, tier="B"))
+    assert sink.transcripts[0].text == "remote text"

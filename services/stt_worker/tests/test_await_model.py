@@ -42,6 +42,29 @@ def test_waits_for_a_model_dropped_in_later(tmp_path):
     assert len(polls) == 3
 
 
+def test_keeps_beating_while_it_waits(tmp_path):
+    """Without this the status board can't tell "waiting for a model" from
+    "crashed", which is how a box that never staged one read as
+    `stt-worker: no heartbeat` indefinitely."""
+    model = tmp_path / "ggml-base.en.bin"
+    clock = FakeClock()
+    beats = []
+
+    class FakeHeartbeat:
+        def beat(self, **detail):
+            beats.append(detail)
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        if len(beats) == 3:
+            model.write_bytes(b"x")
+
+    await_model(str(model), heartbeat=FakeHeartbeat(), poll_interval_seconds=15.0, sleep=sleep, clock=clock)
+
+    assert len(beats) == 3
+    assert beats[0] == {"waiting_for_model": str(model)}
+
+
 def test_says_so_periodically_instead_of_waiting_silently(tmp_path, capsys):
     model = tmp_path / "ggml-base.en.bin"
     clock = FakeClock()

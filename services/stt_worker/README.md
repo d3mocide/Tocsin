@@ -35,6 +35,17 @@ implementable against a generic OpenAI-compatible endpoint (its standard
 response is just `{"text": ...}`, with none of whisper.cpp's
 `no_speech_prob`/`avg_logprob` guaranteed).
 
+`STT_CHAIN=remote` (no `local`) is the third form: a hybrid deployment that
+transcribes entirely against the remote endpoint and stages no ggml model
+at all. `STT_WORKER_MODEL_PATH` is then unused and nothing waits for a
+model file -- waiting for one that was never going to arrive is what left
+`stt-worker` showing "no heartbeat" on the status board with no
+transcripts ever produced. Every tier goes remote in this mode (Tier B's
+local-only rule is about preferring the free local provider, and there
+isn't one). This form is hybrid-only by construction: it makes
+transcription depend on the network, so an `offgrid` deployment must
+always keep `local` in the chain.
+
 Transcripts publish to Redis Streams (`redis_sink.py`, stream
 `tocsin:transcripts`) when `STT_WORKER_REDIS_URL` is set -- `dispatcher`'s
 stage 2 (Phase 7) consumes from there via a consumer group. Without that
@@ -84,14 +95,14 @@ to end here -- see `docs/design/tracking.md`.
 | Env var | Default | Purpose |
 |---|---|---|
 | `STT_WORKER_ZMQ_CONNECT` | `tcp://sdr-rx:5556` | Address to connect to segment-capture's capture-ready ZMQ PUB socket. `sdr-rx`'s hostname, not `segment-capture`'s -- segment_capture ships inside sdr-rx's container now (see `services/sdr_rx/README.md`'s "Container" section) and no longer has a container/hostname of its own, though it still binds the same port there. |
-| `STT_WORKER_MODEL_PATH` | *(required)* | Path to a ggml model file (see `make fetch-models`). Unset is a misconfiguration and exits 1; set-but-not-yet-present makes the worker log once and wait, polling every 15s, so a model dropped into `./models/` later starts it with no restart needed. Never downloaded on first boot -- off-grid means pre-staged (design doc §8). |
+| `STT_WORKER_MODEL_PATH` | *(required unless `STT_CHAIN=remote`)* | Path to a ggml model file (see `make fetch-models`). Ignored entirely when the chain has no `local`. Otherwise: unset is a misconfiguration and exits 1; set-but-not-yet-present makes the worker log once and wait, polling every 15s, so a model dropped into `./models/` later starts it with no restart needed. Never downloaded on first boot -- off-grid means pre-staged (design doc §8). |
 | `STT_WORKER_WORK_DIR` | `/tmp/stt_worker` | Scratch directory for trimmed WAV copies. |
 | `STT_WORKER_LANGUAGE` | `en` | Passed to whisper-cli's `-l`. |
 | `STT_WORKER_INITIAL_PROMPT` | *(none)* | Passed to whisper-cli's `--prompt` -- design doc §6 recommends seeding local county/place names, since NWR's synthesized voices fail almost exclusively on proper nouns. |
 | `STT_WORKER_WHISPER_BINARY` | `whisper-cli` | Binary name/path, in case the Dockerfile's build ever needs to change it. |
 | `STT_WORKER_REDIS_URL` | *(unset -- logs to stdout)* | Redis connection URL. When set, transcripts publish to the `tocsin:transcripts` stream for `dispatcher` instead of stdout. |
-| `STT_CHAIN` | `local` | `local` or `local,remote` -- see "Design" above. |
-| `STT_WORKER_REMOTE_BASE_URL` | *(unset)* | Base URL for the `remote_http` provider. Required for `STT_CHAIN=local,remote` to actually enable remote (otherwise falls back to local-only with a warning). |
+| `STT_CHAIN` | `local` | `local`, `local,remote`, or `remote` -- see "Design" above. |
+| `STT_WORKER_REMOTE_BASE_URL` | *(unset)* | Base URL for the `remote_http` provider. Required for `STT_CHAIN=local,remote` to actually enable remote (otherwise falls back to local-only with a warning). With `STT_CHAIN=remote` there is nothing to fall back to, so an unset URL exits 1. |
 | `STT_WORKER_REMOTE_API_KEY` | *(none)* | Sent as `Authorization: Bearer <key>` if set. |
 | `STT_WORKER_REMOTE_MODEL` | `whisper-1` | Passed as the `model` form field. |
 | `STT_WORKER_REMOTE_BUDGET_SECONDS` | `10` | How long remote gets to win the race, measured from when both providers start. |

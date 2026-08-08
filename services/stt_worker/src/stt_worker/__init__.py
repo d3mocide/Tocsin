@@ -52,14 +52,21 @@ def _build_sink(redis_client):
     return RedisStreamTranscriptSink(redis_client)
 
 
-def _build_remote_run():
-    """`STT_CHAIN` (design doc §6): `local` (default, offgrid) disables
-    remote entirely; `local,remote` (hybrid) enables it, but only if a
-    base URL is actually configured -- a hybrid-only misconfiguration must
-    never block the local-only path that works off-grid too (CLAUDE.md's
-    connectivity rule), so this warns and falls back rather than
-    exiting."""
-    chain = {part.strip() for part in os.environ.get("STT_CHAIN", "local").split(",") if part.strip()}
+def parse_chain(raw: str | None) -> set[str]:
+    """`STT_CHAIN` (design doc §6): `local` (offgrid default), `local,remote`
+    (hybrid race), or `remote` alone -- a deployment that transcribes
+    entirely against a remote endpoint and never stages a local model.
+    Empty/unset means `local`."""
+    chain = {part.strip() for part in (raw or "").split(",") if part.strip()}
+    return chain or {"local"}
+
+
+def _build_remote_run(chain: set[str]):
+    """Remote is enabled only if a base URL is actually configured -- a
+    hybrid-only misconfiguration must never block the local-only path that
+    works off-grid too (CLAUDE.md's connectivity rule), so this warns and
+    falls back rather than exiting. `main()` handles the one case that
+    can't fall back: `remote` with no `local` behind it."""
     if "remote" not in chain:
         return None
     base_url = os.environ.get("STT_WORKER_REMOTE_BASE_URL")
@@ -82,6 +89,7 @@ def _build_remote_run():
 def await_model(
     model_path: str,
     *,
+    heartbeat=None,
     poll_interval_seconds: float = MODEL_POLL_INTERVAL_SECONDS,
     reminder_interval_seconds: float = MODEL_REMINDER_INTERVAL_SECONDS,
     sleep=time.sleep,
@@ -97,7 +105,12 @@ def await_model(
     single missing file came to look like the stack was broken. Waiting
     keeps one process idle and quiet instead. Still says so periodically:
     silence would make a misconfigured worker indistinguishable from a
-    working one on a night with no captures."""
+    working one on a night with no captures.
+
+    The heartbeat has to keep beating throughout, or the wait is
+    indistinguishable from a crash on the status board -- which is exactly
+    how a deployment that never staged a model came to read as
+    "stt-worker: no heartbeat" for hours."""
     if Path(model_path).is_file():
         return
     print(
@@ -109,6 +122,8 @@ def await_model(
     )
     last_reminder = clock()
     while not Path(model_path).is_file():
+        if heartbeat is not None:
+            heartbeat.beat(waiting_for_model=model_path)
         sleep(poll_interval_seconds)
         if clock() - last_reminder >= reminder_interval_seconds:
             print(f"stt-worker: still waiting for a model file at {model_path!r}.", file=sys.stderr, flush=True)
@@ -119,15 +134,35 @@ def await_model(
 def main() -> None:
     connect_addr = os.environ.get("STT_WORKER_ZMQ_CONNECT", DEFAULT_ZMQ_CONNECT)
     model_path = os.environ.get("STT_WORKER_MODEL_PATH")
+    chain = parse_chain(os.environ.get("STT_CHAIN"))
+    local_enabled = "local" in chain
+    remote_run = _build_remote_run(chain)
 
-    # Off-grid means pre-staged, never download-on-first-boot (design doc
-    # §8), so an unset path is a misconfiguration with nothing to wait for.
-    # A *set* path that isn't there yet is the recoverable case -- see
-    # `await_model`.
-    if not model_path:
-        print("stt-worker: STT_WORKER_MODEL_PATH is required -- refusing to start", file=sys.stderr)
+    if not local_enabled and remote_run is None:
+        # The only unrecoverable chain: remote asked for, no base URL to
+        # reach, and no local transcription behind it to fall back to.
+        print(
+            "stt-worker: STT_CHAIN=remote needs STT_WORKER_REMOTE_BASE_URL, and there is no local "
+            "provider to fall back to -- refusing to start",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    await_model(model_path)
+
+    redis_client = _build_redis_client()
+    heartbeat = heartbeat_module.build(redis_client)
+
+    if local_enabled:
+        # Off-grid means pre-staged, never download-on-first-boot (design
+        # doc §8), so an unset path is a misconfiguration with nothing to
+        # wait for. A *set* path that isn't there yet is the recoverable
+        # case -- see `await_model`. A chain without `local` skips both:
+        # a remote-only deployment has no reason to own a ggml model, and
+        # blocking it here is what left stt-worker with no heartbeat and
+        # no transcripts on a box that was never going to have one.
+        if not model_path:
+            print("stt-worker: STT_WORKER_MODEL_PATH is required -- refusing to start", file=sys.stderr)
+            sys.exit(1)
+        await_model(model_path, heartbeat=heartbeat)
 
     work_dir = Path(os.environ.get("STT_WORKER_WORK_DIR", str(DEFAULT_WORK_DIR)))
     language = os.environ.get("STT_WORKER_LANGUAGE", whispercpp.DEFAULT_LANGUAGE)
@@ -137,7 +172,6 @@ def main() -> None:
         os.environ.get("STT_WORKER_REMOTE_BUDGET_SECONDS", DEFAULT_REMOTE_BUDGET_SECONDS)
     )
 
-    redis_client = _build_redis_client()
     subscriber = CaptureSubscriber(connect_addr)
     worker = TranscriptionWorker(
         model_path,
@@ -146,19 +180,29 @@ def main() -> None:
         binary=binary,
         language=language,
         initial_prompt=initial_prompt,
-        remote_run=_build_remote_run(),
+        local_enabled=local_enabled,
+        remote_run=remote_run,
         remote_budget_seconds=remote_budget_seconds,
     )
-    heartbeat = heartbeat_module.build(redis_client)
-    print(f"stt-worker: subscribed to {connect_addr}, model={model_path}", flush=True)
+    chain_label = ",".join(sorted(chain))
+    model_label = Path(model_path).name if local_enabled and model_path else "none (remote only)"
+    print(f"stt-worker: subscribed to {connect_addr}, chain={chain_label}, model={model_label}", flush=True)
     try:
         while True:
             if heartbeat is not None:
-                heartbeat.beat(model=Path(model_path).name, chain=os.environ.get("STT_CHAIN", "local"))
+                heartbeat.beat(model=model_label, chain=chain_label)
             payload = subscriber.recv(timeout_ms=1000)
             if payload is None:
                 continue
-            worker.handle_capture(payload)
+            try:
+                worker.handle_capture(payload)
+            except Exception as exc:
+                # One bad capture -- a remote endpoint that 500s, a WAV
+                # that vanished from the shared volume -- must not take the
+                # worker down and drop every *later* capture with it. The
+                # audio is still on disk and the header still reached
+                # fusion, so the loss is one transcript, not an alert.
+                print(f"stt-worker: capture failed: {exc}", file=sys.stderr, flush=True)
     except KeyboardInterrupt:
         pass
     finally:

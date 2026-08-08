@@ -1,0 +1,5 @@
+# A couple of the TS sources join on a NUL separator (`store.ts`'s
+# `healthKey`, `filters.ts`'s site-list comparison), which is enough for
+# git to classify the whole file as binary and stop diffing it. They are
+# text; diff them as text.
+*.ts diff
