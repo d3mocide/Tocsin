@@ -105,6 +105,7 @@ body {
   align-items: start;
 }
 
+.main-column,
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -120,10 +121,8 @@ body {
   min-width: 0;
 }
 
-.panel-feed {
-  position: sticky;
-  top: 4.25rem;
-}
+/* Not sticky any more: the feed shares its column with the audio and
+   activity panels, so pinning it would slide it over its own siblings. */
 
 .panel-head {
   display: flex;
@@ -243,7 +242,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  max-height: calc(100vh - 14rem);
+  /* Capped so the activity panel below it stays reachable without
+     scrolling past an unbounded feed; the feed scrolls internally. */
+  max-height: 62vh;
   overflow-y: auto;
 }
 
@@ -643,9 +644,28 @@ body {
 
 /* ---- streams ------------------------------------------------------ */
 
+/* A grid, not a stack: in the wide left column three mounts sit side by
+   side instead of three tall players pushing the alert feed down the page. */
+.stream-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.6rem;
+}
+
 .stream {
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 0.55rem 0.65rem;
+  background: var(--panel-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+/* Pushed to the bottom of the card so the players line up across the row
+   even when one mount carries an extra badge and wraps to two lines. */
+.stream .stream-audio {
+  margin-top: auto;
 }
 
 .stream-header {
@@ -726,8 +746,11 @@ footer {
     padding: 0.75rem;
   }
 
+  /* Alerts lead on a phone. Audio sits above the feed on desktop to
+     balance the two columns, but on one narrow column that would push
+     the thing you opened the page for below the fold. */
   .panel-feed {
-    position: static;
+    order: -1;
   }
 
   .alert-feed {

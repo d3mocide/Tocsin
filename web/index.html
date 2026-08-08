@@ -17,17 +17,29 @@
     </header>
 
     <main class="layout">
-      <section class="panel panel-feed" aria-labelledby="alerts-heading">
-        <div class="panel-head">
-          <h2 id="alerts-heading">Alert feed</h2>
-        </div>
-        <div id="filters" class="filters"></div>
-        <!-- Announced politely: a new alert arriving should reach a screen
-             reader without stealing focus from whatever is being read. -->
-        <div id="alerts" class="alert-feed" aria-live="polite" aria-busy="false">
-          <p class="empty">Loading…</p>
-        </div>
-      </section>
+      <div class="main-column">
+        <section class="panel panel-streams" aria-labelledby="streams-heading">
+          <div class="panel-head"><h2 id="streams-heading">Live audio</h2></div>
+          <div id="streams"></div>
+        </section>
+
+        <section class="panel panel-feed" aria-labelledby="alerts-heading">
+          <div class="panel-head">
+            <h2 id="alerts-heading">Alert feed</h2>
+          </div>
+          <div id="filters" class="filters"></div>
+          <!-- Announced politely: a new alert arriving should reach a screen
+               reader without stealing focus from whatever is being read. -->
+          <div id="alerts" class="alert-feed" aria-live="polite" aria-busy="false">
+            <p class="empty">Loading…</p>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="activity-heading">
+          <div class="panel-head"><h2 id="activity-heading">Activity</h2></div>
+          <div id="activity"></div>
+        </section>
+      </div>
 
       <div class="sidebar">
         <section class="panel" aria-labelledby="stats-heading">
@@ -56,16 +68,6 @@
             <select id="spectrum-site-select" class="filter-select" aria-label="Spectrum site"></select>
           </div>
           <canvas id="spectrum-canvas" width="640" height="260"></canvas>
-        </section>
-
-        <section class="panel" aria-labelledby="streams-heading">
-          <div class="panel-head"><h2 id="streams-heading">Live audio</h2></div>
-          <div id="streams"></div>
-        </section>
-
-        <section class="panel" aria-labelledby="activity-heading">
-          <div class="panel-head"><h2 id="activity-heading">Activity</h2></div>
-          <div id="activity"></div>
         </section>
       </div>
     </main>

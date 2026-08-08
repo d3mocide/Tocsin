@@ -24,6 +24,20 @@ No CDN, no webfont, no external asset of any kind. That's the offgrid rule
 `fonts.googleapis.com` renders a degraded page on exactly the deployment
 this system exists for.
 
+## Layout
+
+Two columns on desktop. The left carries **Live audio**, the **alert feed**, and the
+**activity log**; the right carries system health, services, dispatch, RF channels, and the
+spectrum. Audio and activity started on the right and moved because five stacked panels
+there against a lone feed on the left left the page visibly lopsided.
+
+The audio players lay out as a responsive grid rather than a stack, so the wide left column
+is used horizontally and three mounts don't push the alert feed down the page.
+
+Below 900px everything collapses to one column and the alert feed is reordered to the top:
+audio above the feed balances two columns, but on one narrow column it would push the thing
+you opened the page for below the fold.
+
 ## What's on the page
 
 - **Alert feed** (`views/alerts.ts`) -- expandable cards. Collapsed shows
