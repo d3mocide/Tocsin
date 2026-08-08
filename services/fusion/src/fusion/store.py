@@ -19,30 +19,19 @@ often it matters.
 
 from __future__ import annotations
 
-import json
 import uuid
-from dataclasses import asdict
 from datetime import datetime, timedelta
-from enum import Enum
 from typing import Protocol
 
 from .confidence import compute_confidence
 from .correlator import DEFAULT_TIME_TOLERANCE, matches
 from .mapping import EventMapping
 from .models import Alert, AlertSource, AlertState, ApiSource, CapAlertIn, RFSource, SameEventIn
+from .serialize import alert_to_json
 
 
 class AlertSink(Protocol):
     def record(self, alert: Alert) -> None: ...
-
-
-class _AlertJSONEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, datetime):
-            return o.isoformat()
-        if isinstance(o, Enum):
-            return o.value
-        return super().default(o)
 
 
 class LoggingAlertSink:
@@ -52,7 +41,7 @@ class LoggingAlertSink:
     service's `LoggingXSink`."""
 
     def record(self, alert: Alert) -> None:
-        print(json.dumps(asdict(alert), cls=_AlertJSONEncoder), flush=True)
+        print(alert_to_json(alert), flush=True)
 
 
 class AlertStore:

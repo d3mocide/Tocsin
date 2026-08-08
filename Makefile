@@ -65,3 +65,4 @@ test:
 	cd services/stt_worker && uv sync && uv run pytest
 	cd services/nws_poller && uv sync && uv run pytest
 	cd services/fusion && uv sync && uv run pytest
+	cd services/dispatcher && uv sync && uv run pytest

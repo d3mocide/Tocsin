@@ -30,7 +30,7 @@ completion of the phase's actual exit criteria.
 | 3 | Live audio | Done | 2026-08-08 |
 | 4 | Segment capture + local STT | In Progress | 2026-08-08 |
 | 5 | NWS poller + fusion | In Progress | 2026-08-08 |
-| 6 | Dispatcher stage 1 | Not Started | — |
+| 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
 | 7 | Dispatcher stage 2 + remote STT | Not Started | — |
 | 8 | API + web UI | Not Started | — |
 
@@ -531,7 +531,105 @@ without it, which is what actually happened here.
 
 ## Phase 6 — Dispatcher stage 1
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- same build-order exception as Phases 4-5: built at the
+user's explicit direction to keep pushing toward a whole-stack MVP, ahead of Phase 2's
+real-audio proof. Depends on Phase 5's `tocsin:alerts` output, which itself is fully proven
+against its own exit criteria already (see Phase 5's notes) -- so the only genuinely open
+dependency chain left is Phase 2's real-SAME-decode confirmation, plus this phase's own
+hardware requirement (a real Meshtastic node) that no phase before it needed.
+
+**Done:**
+- `services/fusion` gained the producer half of the handoff this phase needed:
+  `redis_sink.py` (`RedisStreamAlertSink`, publishes every canonical `Alert` to
+  `tocsin:alerts`), wired as `main()`'s sink (previously `LoggingAlertSink`-only, since
+  nothing consumed it yet). Extracted the JSON serialization logic that used to live inline
+  in `store.py`'s `LoggingAlertSink` into `serialize.py` so both sinks share one definition
+  of the wire shape. 3 new tests, 36 total in fusion (up from 33).
+- `services/dispatcher`, a new uv-managed service -- stage 1 only (template message, serial
+  Meshtastic, idempotency, rate limiting); stage 2 (LLM enrichment) and the Meshtastic MQTT
+  ack-fallback leg are Phase 7, per roadmap.md's own phase split:
+  - `fips.py`: loads `data/fips.csv` for county/state names, strips SAME's `PSSCCC`
+    subdivision digit down to the plain 5-digit FIPS the file keys on. This is the first
+    phase to actually read `fips.csv` for its stated purpose (templating) rather than just
+    carrying it as unused reference data.
+  - `message.py`: the deterministic stage-1 template (design doc §7) -- verified it renders
+    the design doc's own example string byte-for-byte
+    (`TOR WARN | Multnomah,Clackamas OR | exp 2145Z | RF`), plus a ≤140-byte truncation path
+    exercised against a synthetic 31-FIPS SAME header (the format's actual maximum). A FIPS
+    code outside `fips.csv`'s seeded Portland-WFO area falls back to showing the raw code
+    rather than dropping the county silently.
+  - `dedup.py`/`rate_limit.py`: near-duplicate suppression and a ~6/hr-burst-3 token bucket
+    per design doc §7's airtime budget, same TTL-eviction shape as `same_decoder.dedup`.
+  - `idempotency.py`: Redis-persisted `SET NX` claim so a dispatcher restart doesn't
+    re-send. SAME carries no ETN, so the design doc's example key
+    `(event, fips_set, etn, stage)` substitutes the SAME header's own `raw_header` for the
+    ETN slot (it already uniquely encodes event/FIPS/purge/issue-time/callsign as one
+    string) rather than threading a new field through `same_decoder`/`fusion` to reconstruct
+    an equivalent tuple by hand.
+  - `meshtastic_serial.py`: a thin injectable wrapper around the real `meshtastic` PyPI
+    package's `SerialInterface.sendText`. Verified against the library's actual installed
+    source in this session (`inspect.signature` against the real package, not just
+    documentation) rather than assumed: `sendText(text, wantAck=True, onResponse=...)`
+    matches exactly, and the library has no built-in blocking "wait N seconds for ack"
+    primitive, so this wrapper builds one with a `threading.Event` to match the design
+    doc's explicit "wait 15s for ack" behavior. Tests cover ack, nak, timeout, and a
+    response genuinely fired from a background thread (`threading.Timer`), not just a
+    synchronous callback.
+  - `redis_bus.py`: consumer-group durability over `tocsin:alerts`, same pattern (and the
+    same tested crash-replay behavior) as `fusion.redis_bus`.
+  - `service.py`: `Stage1Dispatcher` wires tier gating -> dedup -> rate limit -> idempotency
+    claim -> send, in that specific order -- documented and tested as a deliberate choice,
+    not arbitrary: idempotency is claimed *last*, immediately before the send, because its
+    24h Redis claim is a one-way door. Claiming it earlier and then having a later gate
+    reject the alert would permanently strand a real alert as "already sent" for 24h despite
+    it never having actually gone out -- a bug class this ordering (and a dedicated test)
+    rules out by construction.
+  - `__init__.py`: env-configured (`TOCSIN_DATA_DIR`, `DISPATCHER_REDIS_URL`,
+    `DISPATCHER_CONSUMER_NAME`, `MESHTASTIC_SERIAL_DEV_PATH`); fails loudly and exits 1 (not
+    a raw traceback) if the FIPS table can't load or the Meshtastic serial interface can't
+    open, mirroring `sdr_rx`/`stt_worker`'s established startup-assertion pattern for a
+    missing hardware/config dependency.
+  - 45 tests: every module above plus an end-to-end `Stage1Dispatcher` suite (Tier
+    A/B/C gating, near-duplicate suppression before a rate-limit token is spent, a burst of
+    3 sending followed by a 4th being rate-limited, a send exception not propagating while
+    still correctly claiming idempotency, and -- the roadmap's stated exit criteria in
+    miniature -- a second identical header not being resent even across a fresh
+    `Stage1Dispatcher` instance sharing the same fake Redis, simulating a restart).
+- `compose.yaml`: added `dispatcher` (both profiles, per design doc §2's architecture table
+  -- stage 1 is deterministic and zero-dependency by design, so it runs identically
+  off-grid). Single serial device passthrough (`MESHTASTIC_SERIAL_DEVICE`, defaults
+  `/dev/ttyUSB0`), unlike `sdr-rx`'s whole-USB-bus passthrough -- a Meshtastic node
+  enumerates as one stable serial device, not a bus-relative path that shifts across
+  replugs. `restart: on-failure`, matching `segment-capture`'s precedent for "missing
+  required hardware/mount is a real, retriable failure," not `sdr-rx`'s "deliberately
+  supported absence" pattern. `Makefile`'s `test` target and `.env.example` updated.
+- 292 tests passing across all eight implemented services (`make test`), up from 244.
+
+**Not started / open:**
+- No MQTT ack-fallback (Phase 7) -- a serial send exception or ack timeout isn't retried by
+  any other path yet; the idempotency key is still claimed at that point (deliberately, see
+  `service.py`'s docstring), so a transient serial failure means that exact alert won't be
+  retried until its 24h claim expires. Accepted as this phase's scope boundary, not missed.
+- Tier B alerts (`data/same_event_codes.yaml`: "MQTT only") have no MQTT egress path at all
+  yet -- not clearly scoped to a named phase in `docs/design/roadmap.md` as written (Phase 7
+  only names the Meshtastic MQTT *ack-fallback* leg specifically, not a general Tier-B
+  broadcast). Worth a design-doc/roadmap clarification pass before Phase 7, not a dispatcher
+  bug.
+- A SAME header whose FIPS codes span more than one state only shows the first state seen in
+  the stage-1 message (`message.py`) -- Portland WFO's real OR+WA coverage means this could
+  actually happen, not just a theoretical edge case.
+- Live-hardware verification (roadmap's actual exit criteria: "a decoded SAME event reaches
+  a real Meshtastic node over serial... and a dispatcher restart does not re-send it") is
+  entirely open -- no Meshtastic node, no Docker daemon, and no Redis instance in this
+  authoring sandbox this session. `meshtastic_serial.py`'s wrapper was checked against the
+  real package's actual signatures (not just docs) specifically because this gap exists and
+  couldn't be closed by running the real hardware path.
+
+**Depends on:** Phase 5 (needs `tocsin:alerts`, which is fully proven against its own exit
+criteria already) and, per roadmap.md, Phase 2 (a real decoded SAME header to dispatch in the
+first place) -- both still open for the same reason every phase since 2 has flagged: no real
+RF has been decoded in this repo's history yet, only real *voice* audio (Phase 1/3's
+live-hardware verification).
 
 ---
 
@@ -706,3 +804,23 @@ without it, which is what actually happened here.
   both are plain `python:3.11-slim` + `uv sync`, no apt/from-source step, but not the same
   as verified); also not yet run against a real Redis instance or real `api.weather.gov`
   traffic. See Phase 5's section above for the full done/open breakdown.
+- **2026-08-08** — Continued the same MVP push into Phase 6: `fusion` gained
+  `redis_sink.py` publishing every canonical `Alert` to `tocsin:alerts` (extracted its JSON
+  serialization into a shared `serialize.py` in the process), and `services/dispatcher` (new)
+  implements stage 1 in full -- deterministic template message, near-duplicate suppression,
+  a token-bucket rate limiter, Redis-persisted idempotency (keyed on the SAME header's own
+  `raw_header` since SAME carries no ETN), and a `meshtastic` PyPI wrapper checked against
+  the real installed package's actual signatures (`inspect.signature`, not just
+  documentation) since no physical Meshtastic node exists in this sandbox to verify against
+  directly. Found a real design bug while writing `service.py` and fixed it before it ever
+  shipped: an early draft claimed the idempotency key as the *first* gate for simplicity,
+  which would have permanently stranded any alert that got that far and then failed a later
+  gate (rate limit, dedup) as "already sent" for 24h despite never actually being
+  transmitted -- reordered so idempotency is claimed *last*, immediately before the send,
+  and added a dedicated test (`test_send_exception_does_not_propagate_and_idempotency_is_
+  still_claimed`) that would fail if that ordering ever regressed. `compose.yaml` gained the
+  `dispatcher` service (both profiles, single serial-device passthrough, `restart:
+  on-failure`). 292 tests passing (`make test`), up from 244. Entirely unverified against
+  real hardware or a real Redis this session -- no Meshtastic node, no Docker daemon, no
+  Redis instance available; see Phase 6's section above for the complete breakdown of what
+  that leaves open.

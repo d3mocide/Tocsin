@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .mapping import EventMapping
 from .redis_bus import StreamConsumer
+from .redis_sink import RedisStreamAlertSink
 from .store import AlertStore
 
 DEFAULT_REDIS_URL = "redis://redis:6379/0"
@@ -49,7 +50,13 @@ def main() -> None:
     import redis as redis_lib
 
     redis_client = redis_lib.from_url(redis_url, decode_responses=True)
-    store = AlertStore(mapping, mode)
+    # Always the Redis sink here, not LoggingAlertSink's fallback -- fusion
+    # already hard-requires Redis to consume its own input streams, so
+    # there's no "no Redis configured" case left to preserve stdout-only
+    # behavior for (unlike same_decoder/nws_poller, where Redis is
+    # optional). AlertStore's own default stays LoggingAlertSink, for
+    # tests and any non-compose use.
+    store = AlertStore(mapping, mode, sink=RedisStreamAlertSink(redis_client))
     consumer = StreamConsumer(redis_client, store, consumer_name)
 
     print(f"fusion: mode={mode}, consuming as {consumer_name!r} from {redis_url}", flush=True)

@@ -199,9 +199,35 @@ services:
       - redis
     profiles: [offgrid, hybrid]
 
-  # dispatcher:                # milestone 6-7
-  #   build: ./services/dispatcher
-  #   profiles: [offgrid, hybrid]
+  dispatcher:
+    build: ./services/dispatcher
+    # on-failure, not unless-stopped: a missing/unattached Meshtastic node
+    # is a real, retriable failure (main() fails loudly and exits 1 rather
+    # than crash with a raw traceback -- same posture as segment-capture's
+    # ring-buffer-mount check) -- worth retrying once the node is plugged
+    # in, unlike sdr-rx's deliberate "no devices configured" clean exit.
+    restart: on-failure
+    environment:
+      TOCSIN_DATA_DIR: /app/data
+      DISPATCHER_REDIS_URL: redis://redis:6379/0
+      # Empty (unset) by default -> meshtastic-python autodetects the
+      # device; only needed if more than one serial device is attached.
+      MESHTASTIC_SERIAL_DEV_PATH: ${MESHTASTIC_SERIAL_DEV_PATH:-}
+    volumes:
+      - ./data:/app/data:ro
+    # A single device node, not the whole USB bus like sdr-rx's
+    # /dev/bus/usb passthrough -- a Meshtastic node enumerates as one
+    # stable serial device (standard USB-serial/CDC-ACM, unlike an RTL-SDR
+    # dongle's bus-relative path), and meshtastic-python talks to it
+    # directly by path rather than doing its own bus enumeration.
+    devices:
+      - ${MESHTASTIC_SERIAL_DEVICE:-/dev/ttyUSB0}:${MESHTASTIC_SERIAL_DEVICE:-/dev/ttyUSB0}
+    depends_on:
+      - redis
+      - fusion
+    # both: stage 1 is deterministic and zero-dependency by design (§7) --
+    # it works identically off-grid.
+    profiles: [offgrid, hybrid]
 
   # api:                       # milestone 8
   #   build: ./services/api

@@ -7,7 +7,9 @@ sources -- one `Alert` with a `sources[]` array and an `RF_ONLY` /
 `API_ONLY` / `CONFIRMED` state. Confidence is mode-relative (design doc
 §5): deployment mode is an input to the confidence calculation, not just
 to which sources are active. Runs in both `offgrid` and `hybrid` --
-off-grid, every alert simply stays `RF_ONLY` by design.
+off-grid, every alert simply stays `RF_ONLY` by design. Publishes every
+canonical Alert to the `tocsin:alerts` Redis Stream (`redis_sink.py`) for
+`dispatcher` (Phase 6) to consume.
 
 ## Status
 
@@ -15,8 +17,9 @@ Implemented and unit tested: the event-code -> CAP-event-text mapping
 loader (`mapping.py`), the pure correlation predicate -- event-code match
 AND FIPS overlap AND time-window match (`correlator.py`), mode-relative
 confidence (`confidence.py`), the in-memory correlation state machine
-(`store.py`), and the Redis Streams consumer-group wiring
-(`redis_bus.py`), including crash-recovery replay tested against a
+(`store.py`), the Redis Streams consumer-group wiring for both inbound
+streams (`redis_bus.py`), and the outbound `tocsin:alerts` producer
+(`redis_sink.py`) -- including crash-recovery replay tested against a
 faithful in-memory fake (no real Redis in the authoring sandbox). Test
 fixtures (`tests/fixtures.py`) cover true matches, near-misses (right
 event/wrong county, wrong event/right county, outside the time-window
