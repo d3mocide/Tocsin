@@ -79,7 +79,7 @@ services:
       SAME_DECODER_REDIS_URL: redis://redis:6379/0
       LIVE_AUDIO_ZMQ_CONNECT: tcp://localhost:5555
       ICECAST_HOST: icecast
-      ICECAST_PORT: "8000"
+      ICECAST_PORT: ${ICECAST_PORT:-8000}
       ICECAST_SOURCE_USER: source
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:-hackme}
       ICECAST_STREAM_NAME_TEMPLATE: ${ICECAST_STREAM_NAME_TEMPLATE:-Tocsin {site} {channel}}
@@ -133,8 +133,19 @@ services:
   icecast:
     build: ./deploy/icecast
     restart: unless-stopped
+    environment:
+      # Drives the <listen-socket> port inside the container (rendered
+      # from icecast.xml's ${ICECAST_PORT} by deploy/icecast/entrypoint.sh),
+      # not just what other services dial.
+      ICECAST_PORT: ${ICECAST_PORT:-8000}
     ports:
-      - "8000:8000"
+      # Host port and container port deliberately move together, unlike
+      # api's below: the browser reaches a mount by the *host* port while
+      # live-audio and api reach it by the *container* port, and both are
+      # ICECAST_PORT. Mapping them to different numbers would silently
+      # break the web UI's playback URLs for any deployment that hasn't
+      # also set ICECAST_PUBLIC_URL.
+      - "${ICECAST_PORT:-8000}:${ICECAST_PORT:-8000}"
     profiles: [offgrid, hybrid]
 
   stt-worker:
@@ -286,7 +297,7 @@ services:
       API_POSTGRES_DSN: postgresql://tocsin:${POSTGRES_PASSWORD}@timescaledb:5432/tocsin
       API_REDIS_URL: redis://redis:6379/0
       API_HOST: 0.0.0.0
-      API_PORT: "8000"
+      API_PORT: ${API_PORT:-8000}
       # Surfaced to the browser via GET /system. The UI cannot describe an
       # empty CAP column honestly without it: no API source means "offgrid
       # doesn't poll NWS at all" here and "the poller is broken" under
@@ -301,7 +312,7 @@ services:
       # especially, where stt_worker deliberately dropped the text.
       API_CAPTURES_DIR: /var/lib/segment_capture/captures
       ICECAST_HOST: icecast
-      ICECAST_PORT: "8000"
+      ICECAST_PORT: ${ICECAST_PORT:-8000}
       # What the *browser* should use to reach Icecast, which is not
       # `icecast:8000` -- that only resolves inside this network. Unset by
       # default so the page falls back to its own hostname on the Icecast
@@ -314,9 +325,12 @@ services:
       # container) is the only writer.
       - segment-captures:/var/lib/segment_capture/captures:ro
     ports:
-      # Was web/nginx's port before that container merged in here -- kept
-      # at 8080 so the bring-up runbook (README.md) doesn't change.
-      - "8080:8000"
+      # Was web/nginx's port before that container merged in here -- still
+      # 8080 by default so the bring-up runbook (README.md) doesn't change.
+      # TOCSIN_WEB_PORT is the one to change when 8080 is already taken on
+      # the host; API_PORT only moves uvicorn's bind inside the container,
+      # which nothing outside compose ever sees.
+      - "${TOCSIN_WEB_PORT:-8080}:${API_PORT:-8000}"
     depends_on:
       - redis
       - timescaledb

@@ -35,7 +35,7 @@ is not yet verified -- see the repo root README's bring-up runbook.
 |---|---|---|
 | `LIVE_AUDIO_ZMQ_CONNECT` | `tcp://localhost:5555` | Address to connect to sdr-rx's ZMQ PUB socket -- `localhost`, since both run in the same container now (see above). |
 | `ICECAST_HOST` | `icecast` | Icecast server hostname. |
-| `ICECAST_PORT` | `8000` | Icecast server port. |
+| `ICECAST_PORT` | `8000` | Icecast server port. Compose sets this from the top-level `ICECAST_PORT` in `.env`, which also drives Icecast's own listen socket and the published host port -- see the root README's "Ports". |
 | `ICECAST_SOURCE_USER` | `source` | Icecast source-client username (Icecast's convention: always `source`). |
 | `ICECAST_SOURCE_PASSWORD` | `hackme` | Must match `<source-password>` in `deploy/icecast/icecast.xml`. |
 | `ICECAST_STREAM_NAME_TEMPLATE` | `Tocsin {site} {channel}` | Stream name shown on Icecast's status page and in players. `{site}`/`{channel}` are substituted with the mount's site/channel -- or their display-name overrides, see `LIVE_AUDIO_METADATA_CONFIG` below. |
@@ -44,7 +44,8 @@ is not yet verified -- see the repo root README's bring-up runbook.
 | `LIVE_AUDIO_METADATA_CONFIG` | *(none)* | Path to an optional YAML file with `site_names`/`channel_names` display-name overrides used by `ICECAST_STREAM_NAME_TEMPLATE` above, e.g. showing the `home` site from `SDR_RX_DEVICES` as "Portland Home Station" instead of `home`:<br>`site_names:`<br>`  home: Portland Home Station`<br>`channel_names:`<br>`  WX5: Channel 5` |
 | `LIVE_AUDIO_REDIS_URL` | *(unset)* | Optional, heartbeat only. When set, publishes liveness to `tocsin:status:live_audio` (with the current mount list) so `api`'s `GET /services` and `GET /streams` can see this process. Audio still goes to Icecast, never through Redis. |
 
-Each active channel appears at `http://<icecast-host>:8000/<site>-<channel>.ogg`.
+Each active channel appears at `http://<icecast-host>:<ICECAST_PORT>/<site>-<channel>.ogg`
+(`8000` unless you changed it).
 
 ## Development
 
