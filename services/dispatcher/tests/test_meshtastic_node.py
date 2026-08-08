@@ -1,6 +1,6 @@
 import threading
 
-from dispatcher.egress.meshtastic_serial import MeshtasticSerialClient
+from dispatcher.egress.meshtastic_node import MeshtasticNodeClient
 
 
 class FakeInterfaceAcksImmediately:
@@ -34,7 +34,7 @@ class FakeInterfaceRespondsOnAThread:
 
 
 def _client(interface):
-    return MeshtasticSerialClient(interface_factory=lambda dev_path: interface, ack_timeout_seconds=1.0)
+    return MeshtasticNodeClient(interface_factory=lambda: interface, ack_timeout_seconds=1.0)
 
 
 def test_ack_success():
@@ -50,8 +50,8 @@ def test_nak_is_not_acked():
 
 
 def test_no_response_times_out():
-    client = MeshtasticSerialClient(
-        interface_factory=lambda dev_path: FakeInterfaceNeverResponds(),
+    client = MeshtasticNodeClient(
+        interface_factory=lambda: FakeInterfaceNeverResponds(),
         ack_timeout_seconds=0.05,
     )
     result = client.send_text("hello")

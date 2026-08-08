@@ -28,9 +28,10 @@ idempotency claim -> send, in that specific order -- see `service.py`'s
 own docstring for why idempotency is claimed last, not first).
 
 **Egress (`egress/`):** a thin injectable wrapper around the real
-`meshtastic` PyPI package's serial interface (`meshtastic_serial.py`,
-verified against the library's actual installed source for `sendText`'s
-`onResponse` callback shape, not guessed), a Meshtastic MQTT downlink
+`meshtastic` PyPI package's node interfaces (`meshtastic_node.py` --
+serial and TCP behind one client, verified against the library's actual
+installed source for `sendText`'s `onResponse` callback shape and both
+constructor signatures, not guessed), a Meshtastic MQTT downlink
 publisher (`meshtastic_mqtt.py`, verified against Meshtastic's real MQTT
 integration docs -- the `msh/{region}/2/json/mqtt/` topic and JSON schema
 are exact, not approximated), and `dispatch.py`'s `DualPathSender`
@@ -101,7 +102,10 @@ a delivered message into a crashed poll cycle.
 | `DISPATCHER_REDIS_URL` | `redis://redis:6379/0` | Redis connection URL (stream consumption, idempotency keys, circuit breaker state). |
 | `DISPATCHER_CONSUMER_NAME` | `dispatcher` | Redis consumer-group consumer name. Fixed, not hostname-derived -- see `__init__.py`'s comment (same reasoning as `fusion`'s). |
 | `MESHTASTIC_ENABLED` | `true` (unset), `false` via `compose.yaml` | `false` runs with no Meshtastic node attached -- see "Running without a mesh node" below. Also reported on the liveness heartbeat as `mesh`. |
-| `MESHTASTIC_SERIAL_DEV_PATH` | *(unset -- autodetect)* | Serial device path, e.g. `/dev/ttyUSB0`. Only needed if more than one serial device is attached to the host. |
+| `MESHTASTIC_TRANSPORT` | `serial` | `serial` (USB) or `tcp` (node on the network) -- see "Reaching the node over the network". Anything else is a startup error. |
+| `MESHTASTIC_SERIAL_DEV_PATH` | *(unset -- autodetect)* | Serial device path, e.g. `/dev/ttyUSB0`. Only needed if more than one serial device is attached to the host. Ignored when transport is `tcp`. |
+| `MESHTASTIC_TCP_HOST` | *(unset)* | Hostname/IP of the node. Required when transport is `tcp`; missing is a startup error, not a silent fall back to serial. |
+| `MESHTASTIC_TCP_PORT` | `4403` | Meshtastic's default network API port. |
 | `MESHTASTIC_GATEWAY_NODE_ID` | *(unset -- MQTT fallback disabled)* | Decimal node ID of the Meshtastic node that will relay MQTT-injected messages onto the mesh. |
 | `MQTT_HOST` / `MQTT_PORT` | `mosquitto` / `1883` | The local MQTT broker (`compose.yaml`'s `mosquitto` service). |
 | `MESHTASTIC_MQTT_REGION` | `US` | Region segment of the `msh/{region}/2/json/mqtt/` topic -- must match the gateway node's configured region. |
@@ -110,6 +114,44 @@ a delivered message into a crashed poll cycle.
 | `DISPATCHER_LITELLM_MODEL` | `gpt-4o-mini` | Model name passed to the chat-completions request. |
 | `DISPATCHER_CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive LiteLLM failures before the breaker opens. |
 | `DISPATCHER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `300` | How long the breaker stays open before allowing another attempt. |
+
+## Reaching the node over the network
+
+Design doc §7's flow is `sendText(wantAck=True)` **over serial/TCP**, so the node
+does not have to be on a USB cable. A node reachable over WiFi/Ethernet works
+the same way, with the same 15s ack wait and the same MQTT fallback behind it.
+
+In `.env`:
+
+```sh
+COMPOSE_FILE=compose.yaml          # no USB device to map, so skip the overlay
+MESHTASTIC_ENABLED=true            # the overlay would normally set this
+MESHTASTIC_TRANSPORT=tcp
+MESHTASTIC_TCP_HOST=192.168.1.50   # hostname or IP of the node
+MESHTASTIC_TCP_PORT=4403           # optional; 4403 is the Meshtastic default
+```
+
+`MESHTASTIC_ENABLED=true` is explicit here because `compose.mesh.yaml` -- the
+overlay that normally turns transmit on -- exists only to map a USB device, and
+a networked node has none to map. Adding it would demand a `/dev` path that
+isn't there.
+
+This is a LAN link, not an internet one, so it stays valid under
+`TOCSIN_MODE=offgrid`: design doc §8's four network-gated components cover the
+MQTT *fallback* leg (which does need an internet-connected gateway), not the
+link to your own node.
+
+Two operational notes. The node's network API must be enabled and reachable from
+inside the container -- Docker's default bridge network can reach LAN addresses,
+but a node on a different VLAN or behind a host firewall may not be. And the
+interface is opened once at startup and never re-dialed in-process, so if the
+node reboots or the LAN drops, dispatcher exits 1 and `restart: on-failure`
+reconnects it; that is the reconnect mechanism, deliberately, rather than
+in-process retry logic that could mask a genuinely dead link.
+
+The dispatch log names whichever transport actually carried the message
+(`tcp` / `tcp_no_ack` rather than `serial` / `serial_no_ack`), so `GET
+/dispatches` and the web UI show the real path.
 
 ## Running without a mesh node
 

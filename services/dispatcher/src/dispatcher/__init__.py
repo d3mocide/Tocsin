@@ -25,7 +25,12 @@ from .circuit_breaker import CircuitBreaker, DEFAULT_COOLDOWN_SECONDS, DEFAULT_F
 from .dedup import AlertDeduplicator
 from .egress.dispatch import DualPathSender
 from .egress.meshtastic_mqtt import DEFAULT_REGION, MeshtasticMqttClient
-from .egress.meshtastic_serial import MeshtasticSerialClient
+from .egress.meshtastic_node import (
+    DEFAULT_TCP_PORT,
+    MeshtasticNodeClient,
+    serial_interface_factory,
+    tcp_interface_factory,
+)
 from .fips import FipsTable
 from .heartbeat import Heartbeat
 from .idempotency import IdempotencyStore
@@ -52,7 +57,7 @@ _FALSEY = {"false", "0", "no", "off"}
 def _build_mqtt_client() -> MeshtasticMqttClient | None:
     """`None` when no gateway node is configured -- there's nothing to
     publish to. Safe to build even in `offgrid` mode: unlike
-    `MeshtasticSerialClient`, this doesn't open any connection at
+    `MeshtasticNodeClient`, this doesn't open any connection at
     construction time (see its own docstring), and `DualPathSender`'s
     `mode` check is what actually decides whether it's ever used."""
     gateway_node_id = os.environ.get("MESHTASTIC_GATEWAY_NODE_ID")
@@ -70,33 +75,62 @@ def _mesh_enabled() -> bool:
     return os.environ.get("MESHTASTIC_ENABLED", "true").strip().lower() not in _FALSEY
 
 
-def _build_serial_client() -> MeshtasticSerialClient | None:
-    """`None` when `MESHTASTIC_ENABLED` is false -- running with no
-    Meshtastic node attached at all is supported (see
-    `egress/dispatch.py`), so this is the one path where failing to open
-    the serial interface is deliberate rather than fatal.
-
-    With mesh enabled, a node that won't open is still fatal (exit 1 under
-    `restart: on-failure`): someone who configured a radio and lost it
-    wants to know immediately, not to discover a silently muted station
-    mid-event."""
-    if not _mesh_enabled():
-        print("dispatcher: MESHTASTIC_ENABLED=false -- mesh transmit disabled", flush=True)
-        return None
-    # None -> meshtastic-python's SerialInterface autodetects the device;
-    # set explicitly when more than one serial device is attached.
-    dev_path = os.environ.get("MESHTASTIC_SERIAL_DEV_PATH") or None
-    try:
-        return MeshtasticSerialClient(dev_path=dev_path)
-    except Exception as exc:
+def _node_transport() -> str:
+    transport = os.environ.get("MESHTASTIC_TRANSPORT", "serial").strip().lower()
+    if transport not in ("serial", "tcp"):
         print(
-            f"dispatcher: could not open Meshtastic serial interface: {exc}\n"
-            "If no node is attached, set MESHTASTIC_ENABLED=false (and drop "
-            "compose.mesh.yaml from COMPOSE_FILE) to run without one -- see "
-            "services/dispatcher/README.md.",
+            f"dispatcher: MESHTASTIC_TRANSPORT={transport!r} is not 'serial' or 'tcp'.",
             file=sys.stderr,
         )
         sys.exit(1)
+    return transport
+
+
+def _build_node_client(transport: str) -> MeshtasticNodeClient | None:
+    """`None` when `MESHTASTIC_ENABLED` is false -- running with no
+    Meshtastic node attached at all is supported (see
+    `egress/dispatch.py`), so this is the one path where failing to reach
+    the node is deliberate rather than fatal.
+
+    Otherwise a node that won't open is fatal (exit 1 under
+    `restart: on-failure`): someone who configured a radio and lost it
+    wants to know immediately, not to discover a silently muted station
+    mid-event. That applies to TCP too -- `restart: on-failure` plus a
+    hard exit is also what gets a networked node reconnected after the
+    node reboots or the LAN drops, since the interface is opened once at
+    startup and never re-dialed in-process."""
+    if not _mesh_enabled():
+        print("dispatcher: MESHTASTIC_ENABLED=false -- mesh transmit disabled", flush=True)
+        return None
+
+    if transport == "tcp":
+        host = os.environ.get("MESHTASTIC_TCP_HOST", "").strip()
+        if not host:
+            print(
+                "dispatcher: MESHTASTIC_TRANSPORT=tcp requires MESHTASTIC_TCP_HOST "
+                "(hostname or IP of the node on your network).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        port = int(os.environ.get("MESHTASTIC_TCP_PORT", DEFAULT_TCP_PORT))
+        factory = tcp_interface_factory(host, port)
+        target = f"tcp://{host}:{port}"
+    else:
+        factory = serial_interface_factory(os.environ.get("MESHTASTIC_SERIAL_DEV_PATH") or None)
+        target = os.environ.get("MESHTASTIC_SERIAL_DEV_PATH") or "autodetected serial device"
+
+    try:
+        client = MeshtasticNodeClient(factory)
+    except Exception as exc:
+        print(
+            f"dispatcher: could not open Meshtastic node at {target}: {exc}\n"
+            "If no node is attached, set MESHTASTIC_ENABLED=false to run without "
+            "one -- see services/dispatcher/README.md.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"dispatcher: Meshtastic node connected over {transport} ({target})", flush=True)
+    return client
 
 
 def _build_stage2_dispatcher(redis_client, egress: DualPathSender, log) -> Stage2Dispatcher | None:
@@ -138,8 +172,14 @@ def main() -> None:
         print(f"dispatcher: could not load FIPS table: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    serial_client = _build_serial_client()
-    egress = DualPathSender(serial_client=serial_client, mqtt_client=_build_mqtt_client(), mode=mode)
+    transport = _node_transport()
+    node_client = _build_node_client(transport)
+    egress = DualPathSender(
+        node_client=node_client,
+        mqtt_client=_build_mqtt_client(),
+        mode=mode,
+        node_transport=transport,
+    )
 
     import redis as redis_lib
 
@@ -183,7 +223,12 @@ def main() -> None:
             # `mesh` rides along so the status board can distinguish "no
             # alerts tonight" from "transmit is off" -- otherwise a
             # deliberately mesh-less station looks identical to a broken one.
-            heartbeat.beat(mode=mode, stage2=stage2 is not None, mesh=serial_client is not None)
+            heartbeat.beat(
+                mode=mode,
+                stage2=stage2 is not None,
+                mesh=node_client is not None,
+                transport=transport,
+            )
             for consumer in consumers:
                 consumer.poll_once()
         except Exception as exc:

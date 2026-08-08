@@ -1389,3 +1389,23 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   active -- so the bare `docker compose down` matched zero services and exited 0 while the
   stack kept running (user-reported, confirmed with `docker compose config --services`).
   Now names both profiles explicitly and adds `--remove-orphans`.
+
+- **2026-08-08:** Implemented the TCP half of design doc §7's "sendText(wantAck=True) over
+  **serial/TCP**" -- the spec has always allowed a networked node, but only `SerialInterface`
+  was ever wired up, so a node on WiFi/Ethernet was unreachable. Asked for by the user
+  ("how do we configure .env to use a networked mesh node over a serial connection").
+  `SerialInterface` and `TCPInterface` both derive from `MeshInterface` and expose identical
+  `sendText`/`close` (verified against the installed library, along with the
+  `TCPInterface(hostname, portNumber=4403)` signature), so the ack-wait logic is
+  transport-agnostic: `meshtastic_serial.py` became `meshtastic_node.py` with one
+  `MeshtasticNodeClient` behind an `interface_factory` seam and two factories. That is the
+  one deliberate deviation from §9's suggested `egress/meshtastic_serial.py` filename --
+  naming the module after a single transport would be the misleading half of the spec, and
+  it's noted in `egress/__init__.py`. Selected with `MESHTASTIC_TRANSPORT=serial|tcp` plus
+  `MESHTASTIC_TCP_HOST`/`_PORT`; a TCP node needs no `devices:` mapping, so it runs on
+  `compose.yaml` alone with `MESHTASTIC_ENABLED=true` set by hand rather than via the
+  `compose.mesh.yaml` overlay. `EgressResult.path` now carries the actual transport
+  (`tcp`/`tcp_no_ack`), so the dispatch log stops calling a network link "serial";
+  `node_transport` defaults to `serial`, leaving every existing log value unchanged. A LAN
+  node is not an internet dependency and stays valid offgrid -- §8's four gated components
+  cover the MQTT fallback leg, not the link to your own node.

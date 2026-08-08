@@ -16,7 +16,7 @@ not covered here. For the phase-by-phase build plan and current status, see
 
 | Mode | Hardware | Network |
 |---|---|---|
-| `offgrid` | Raspberry Pi 5 (or low-power x86), RTL-SDR, Meshtastic node on serial | None |
+| `offgrid` | Raspberry Pi 5 (or low-power x86), RTL-SDR, Meshtastic node on serial or LAN | None |
 | `hybrid` | Same, plus internet | NWS API, remote STT, LiteLLM, MQTT bridge available |
 
 Both modes run from one `compose.yaml` using Docker Compose profiles, selected by a single
@@ -32,6 +32,10 @@ COMPOSE_FILE=compose.yaml
 
 Dispatcher still runs stage 1 in full and logs what it would have transmitted. See
 `services/dispatcher/README.md`'s "Running without a mesh node".
+
+A Meshtastic node reachable over WiFi/Ethernet works instead of a USB one -- set
+`MESHTASTIC_TRANSPORT=tcp` and `MESHTASTIC_TCP_HOST`, and drop the same overlay since there
+is no device to map. See that README's "Reaching the node over the network".
 
 ## Hardware bring-up
 
@@ -104,7 +108,7 @@ tocsin/
 │   ├── stt_worker/              # whisper.cpp transcription + hallucination guards
 │   ├── nws_poller/
 │   ├── fusion/
-│   ├── dispatcher/              # egress/{meshtastic_serial,meshtastic_mqtt,mqtt}.py
+│   ├── dispatcher/              # egress/{meshtastic_node,meshtastic_mqtt,mqtt}.py
 │   └── api/
 ├── web/
 ├── data/

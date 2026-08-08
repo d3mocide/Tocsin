@@ -231,6 +231,13 @@ services:
       # Those two must agree -- enabling transmit without the device
       # mapping is a loud exit-1 at startup, not a degraded run.
       MESHTASTIC_ENABLED: ${MESHTASTIC_ENABLED:-false}
+      # serial | tcp (design doc §7: "sendText(wantAck=True) over
+      # serial/TCP"). A tcp node needs no device mapping, so it runs on
+      # this file alone -- set MESHTASTIC_ENABLED=true explicitly rather
+      # than adding compose.mesh.yaml, which exists only for the USB case.
+      MESHTASTIC_TRANSPORT: ${MESHTASTIC_TRANSPORT:-serial}
+      MESHTASTIC_TCP_HOST: ${MESHTASTIC_TCP_HOST:-}
+      MESHTASTIC_TCP_PORT: ${MESHTASTIC_TCP_PORT:-4403}
       # MQTT fallback (design doc §7): only ever attempted under
       # TOCSIN_MODE=hybrid (see DualPathSender), and only if a gateway
       # node ID is actually configured -- both empty by default.
