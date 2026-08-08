@@ -1359,3 +1359,13 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   alert card that shows RF and CAP provenance side by side. First browser render in this
   repo's history (headless Chromium against a stub API), which caught two real bugs. 466
   tests green, up from 395. See the Phase 8 notes above for the full reasoning.
+
+- **2026-08-08:** Remote model selection is now settable from `.env` for both hybrid-only
+  LLM/STT paths, at the user's request. `DISPATCHER_LITELLM_MODEL` and
+  `STT_WORKER_REMOTE_MODEL` were already read by their services' `__init__.py` and
+  documented in the service READMEs, but `STT_WORKER_REMOTE_MODEL` was never passed
+  through `compose.yaml` -- so under Docker (the only supported deployment) the remote STT
+  model was pinned to `whisper-1` with no way to change it short of editing source. Added
+  the compose passthrough, documented both selectors in `.env.example` (neither was there),
+  and covered the env-to-client wiring with tests in both services, which had tested the
+  clients' `model` argument but never that anything actually supplied it.

@@ -163,6 +163,7 @@ services:
       STT_CHAIN: ${STT_CHAIN:-local}
       STT_WORKER_REMOTE_BASE_URL: ${STT_WORKER_REMOTE_BASE_URL:-}
       STT_WORKER_REMOTE_API_KEY: ${STT_WORKER_REMOTE_API_KEY:-}
+      STT_WORKER_REMOTE_MODEL: ${STT_WORKER_REMOTE_MODEL:-whisper-1}
     volumes:
       - segment-captures:/var/lib/segment_capture/captures
       - ./models:/models:ro
