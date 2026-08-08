@@ -74,11 +74,29 @@ crash-before-ack replay scenario).
   -- verified against fixtures and fakes only (none of that infrastructure
   exists in this authoring sandbox).
 
+## Dispatch log
+
+Every stage-1 and stage-2 decision is published to the `tocsin:dispatches`
+Redis Stream (`redis_sink.py`), which `api` consumes into Postgres and
+serves at `GET /dispatches`.
+
+The negative outcomes are the point. `skipped_not_tier_a`,
+`skipped_duplicate`, `skipped_rate_limited`, `skipped_already_sent`,
+`serial_no_ack`, and `skipped_circuit_open` are all cases where an alert
+exists and nothing reached the mesh -- until this stream they were a line
+on stdout and nothing else, which made "did that warning actually go out?"
+unanswerable without reading container logs.
+
+Both stages share one log, so the stream is a single ordered record rather
+than two feeds to interleave. A write failure here is swallowed: `record()`
+runs *after* the send, so letting an audit-log failure propagate would turn
+a delivered message into a crashed poll cycle.
+
 ## Configuration
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `TOCSIN_MODE` | `offgrid` | Gates the MQTT fallback leg (design doc §8) -- `hybrid` required for it to ever fire. |
+| `TOCSIN_MODE` | `offgrid` | Gates the MQTT fallback leg (design doc §8) -- `hybrid` required for it to ever fire. Also reported on this service's liveness heartbeat (`tocsin:status:dispatcher`), alongside whether stage 2 is enabled. |
 | `TOCSIN_DATA_DIR` | repo-root `data/` | Directory containing `fips.csv`. |
 | `DISPATCHER_REDIS_URL` | `redis://redis:6379/0` | Redis connection URL (stream consumption, idempotency keys, circuit breaker state). |
 | `DISPATCHER_CONSUMER_NAME` | `dispatcher` | Redis consumer-group consumer name. Fixed, not hostname-derived -- see `__init__.py`'s comment (same reasoning as `fusion`'s). |

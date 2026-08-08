@@ -103,3 +103,30 @@ def test_feed_uses_given_metadata_config():
     streamer.feed("home", "WX5", 16000, b"\x00\x00")
     command = FakeFeeder.instances[0].command
     assert command[command.index("-ice_name") + 1] == "Tocsin Portland Home Station WX5"
+
+
+def test_mounts_reports_a_live_feeder():
+    streamer = Streamer(ICECAST, feeder_factory=FakeFeeder)
+    streamer.feed("home", "WX1", 22050, b"\x00\x00")
+
+    assert streamer.mounts() == [
+        {"site": "home", "channel": "WX1", "mount": "/home-WX1.ogg", "alive": True}
+    ]
+
+
+def test_mounts_still_reports_a_feeder_that_died():
+    """Icecast stops listing a mount whose source disconnected, which is
+    the one moment you most want to see the channel -- so live_audio
+    reports its own view, including the feeders it has given up on."""
+    streamer = Streamer(ICECAST, feeder_factory=FakeFeeder)
+    streamer.feed("home", "WX1", 22050, b"\x00\x00")
+    FakeFeeder.instances[0].alive = False
+    streamer.feed("home", "WX1", 22050, b"\x00\x00")  # notices the death
+
+    assert streamer.mounts() == [
+        {"site": "home", "channel": "WX1", "mount": "/home-WX1.ogg", "alive": False}
+    ]
+
+
+def test_mounts_of_a_streamer_that_has_fed_nothing_is_empty():
+    assert Streamer(ICECAST, feeder_factory=FakeFeeder).mounts() == []

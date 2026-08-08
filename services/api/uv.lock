@@ -40,6 +40,8 @@ source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pyyaml" },
     { name = "redis" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -55,6 +57,8 @@ dev = [
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "redis", specifier = ">=5.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]

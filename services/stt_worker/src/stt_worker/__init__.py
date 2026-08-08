@@ -19,7 +19,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import remote_http, whispercpp
+from . import heartbeat as heartbeat_module, remote_http, whispercpp
 from .service import DEFAULT_REMOTE_BUDGET_SECONDS, TranscriptionWorker
 from .subscriber import CaptureSubscriber
 
@@ -27,18 +27,26 @@ DEFAULT_ZMQ_CONNECT = "tcp://sdr-rx:5556"
 DEFAULT_WORK_DIR = Path("/tmp/stt_worker")
 
 
-def _build_sink():
-    """`None` falls back to `TranscriptionWorker`'s own default
-    (`LoggingTranscriptSink`) -- same seam pattern as
-    `same_decoder._build_sink`/`nws_poller._build_sink`."""
+def _build_redis_client():
+    """Built once in `main()` and shared by the transcript sink and the
+    liveness heartbeat rather than each opening its own connection."""
     redis_url = os.environ.get("STT_WORKER_REDIS_URL")
     if not redis_url:
         return None
     import redis as redis_lib
 
+    return redis_lib.from_url(redis_url)
+
+
+def _build_sink(redis_client):
+    """`None` falls back to `TranscriptionWorker`'s own default
+    (`LoggingTranscriptSink`) -- same seam pattern as
+    `same_decoder._build_sink`/`nws_poller._build_sink`."""
+    if redis_client is None:
+        return None
     from .redis_sink import RedisStreamTranscriptSink
 
-    return RedisStreamTranscriptSink(redis_lib.from_url(redis_url))
+    return RedisStreamTranscriptSink(redis_client)
 
 
 def _build_remote_run():
@@ -92,20 +100,24 @@ def main() -> None:
         os.environ.get("STT_WORKER_REMOTE_BUDGET_SECONDS", DEFAULT_REMOTE_BUDGET_SECONDS)
     )
 
+    redis_client = _build_redis_client()
     subscriber = CaptureSubscriber(connect_addr)
     worker = TranscriptionWorker(
         model_path,
         work_dir,
-        sink=_build_sink(),
+        sink=_build_sink(redis_client),
         binary=binary,
         language=language,
         initial_prompt=initial_prompt,
         remote_run=_build_remote_run(),
         remote_budget_seconds=remote_budget_seconds,
     )
+    heartbeat = heartbeat_module.build(redis_client)
     print(f"stt-worker: subscribed to {connect_addr}, model={model_path}", flush=True)
     try:
         while True:
+            if heartbeat is not None:
+                heartbeat.beat(model=Path(model_path).name, chain=os.environ.get("STT_CHAIN", "local"))
             payload = subscriber.recv(timeout_ms=1000)
             if payload is None:
                 continue

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 
+from . import heartbeat as heartbeat_module
 from .metadata import DEFAULT_DESCRIPTION, DEFAULT_GENRE, DEFAULT_NAME_TEMPLATE, MetadataConfig, load_site_and_channel_names
 from .service import IcecastConfig, Streamer
 from .subscriber import StreamAudioSubscriber
@@ -21,6 +22,19 @@ DEFAULT_ZMQ_CONNECT = "tcp://localhost:5555"
 DEFAULT_ICECAST_HOST = "icecast"
 DEFAULT_ICECAST_PORT = 8000
 DEFAULT_ICECAST_USER = "source"
+
+
+def _build_redis_client():
+    """Redis is optional here and used only for the liveness heartbeat (and
+    the mount list it carries) -- this service's real output is the Icecast
+    stream itself, so an unset `LIVE_AUDIO_REDIS_URL` costs nothing but a
+    row on the status board."""
+    redis_url = os.environ.get("LIVE_AUDIO_REDIS_URL")
+    if not redis_url:
+        return None
+    import redis as redis_lib
+
+    return redis_lib.from_url(redis_url)
 
 
 def main() -> None:
@@ -42,9 +56,12 @@ def main() -> None:
 
     subscriber = StreamAudioSubscriber(connect_addr)
     streamer = Streamer(icecast, metadata)
+    heartbeat = heartbeat_module.build(_build_redis_client())
     print(f"live-audio: subscribed to {connect_addr}, pushing to {icecast.host}:{icecast.port}", flush=True)
     try:
         while True:
+            if heartbeat is not None:
+                heartbeat.beat(mounts=streamer.mounts())
             received = subscriber.recv(timeout_ms=1000)
             if received is None:
                 continue

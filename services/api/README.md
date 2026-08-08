@@ -6,13 +6,16 @@ TimescaleDB -- every prior phase's alert/health work deliberately stood
 in with a `Logging*Sink`/Redis-only path because standing up a real
 Postgres schema wasn't that phase's dependency; this is where it happens.
 
-Consumes `fusion`'s `tocsin:alerts` and `sdr_rx`'s `tocsin:health` Redis
-Streams via consumer groups, upserting/inserting into Postgres and (for
-alerts) fanning out live to any connected `/alerts/stream` SSE client.
-Spectrum data is read straight from `sdr_rx`'s per-site
-`tocsin:spectrum:<site>` Redis key on request -- no Postgres involved,
-since a waterfall display only ever wants the latest snapshot, not
-history (see `spectrum.py`'s docstring).
+Consumes four Redis Streams via consumer groups -- `fusion`'s
+`tocsin:alerts`, `sdr_rx`'s `tocsin:health`, `stt_worker`'s
+`tocsin:transcripts`, and `dispatcher`'s `tocsin:dispatches` -- writing
+each to Postgres and fanning all four out live to any connected `/events`
+SSE client as named events. Spectrum data is read straight from
+`sdr_rx`'s per-site `tocsin:spectrum:<site>` Redis key on request -- no
+Postgres involved, since a waterfall display only ever wants the latest
+snapshot, not history (see `spectrum.py`'s docstring). Per-service
+liveness comes from the `tocsin:status:<service>` keys each service
+SETEXes from its own main loop (`status.py`).
 
 Also serves `web/`'s built SPA -- formerly its own nginx container, now
 a build stage in this service's `Dockerfile` (a `node:22` stage builds
@@ -30,31 +33,36 @@ directory that's actually there).
 | Endpoint | Purpose |
 |---|---|
 | `GET /alerts?limit=&state=` | Recent alerts from Postgres, newest first, optionally filtered by state. |
-| `GET /alerts/stream` | SSE feed of newly ingested/updated alerts, live. |
+| `GET /events` | SSE feed carrying named `alert`, `health`, `transcript`, and `dispatch` events. Clients use `addEventListener(name, ...)`; `onmessage` only fires for unnamed events. |
 | `GET /health` | Latest RF health sample per `(site, channel)`. |
+| `GET /health/history?since_seconds=&buckets=` | Down-sampled RF health per `(site, channel)` for sparklines. Bucketed in Postgres via `time_bucket`; `dead` is `BOOL_OR`'d, never averaged. |
+| `GET /transcripts?limit=&raw_header=` | Stored transcripts. `raw_header` is the only identifier shared between an alert's RF source and a transcript, so it's how the UI attaches one to the other. |
+| `GET /dispatches?limit=&raw_header=` | What `dispatcher` decided, including every negative outcome (`skipped_rate_limited`, `serial_no_ack`, ...). |
 | `GET /spectrum` | Sites with a current spectrum snapshot. |
 | `GET /spectrum/{site}` | Latest 48-bin spectrum snapshot for one site (404 if none yet). |
-| `GET /stats` | Alert state counts and the `RF_ONLY`/`API_ONLY` divergence rate (design doc §5's stated system health metric). |
+| `GET /stats` | Alert state counts, the `RF_ONLY`/`API_ONLY` divergence rate (design doc §5's stated system health metric), and a sent-vs-skipped dispatch summary. |
+| `GET /services` | Per-service liveness from the heartbeat keys, compared against the set expected *in this mode* -- a crashed service is reported `down`, not omitted. |
+| `GET /system` | `TOCSIN_MODE` and the browser-facing Icecast URL. |
+| `GET /streams` | Icecast mountpoints, merged from Icecast's `status-json.xsl` and `live_audio`'s heartbeat. |
+| `GET /reference` | `data/`'s SAME event codes (name + tier) and FIPS -> county table, served once for the UI to resolve client-side. |
+| `GET /captures/{name}` | One finished capture WAV. Basename only, re-checked to be inside `API_CAPTURES_DIR` after resolution -- `wav_path` reaches this from a Redis payload, so trusting it as a filesystem path would make this an arbitrary-file read. |
 
 ## Status
 
 Implemented and unit tested: the Postgres schema (`schema.sql`, applied
 idempotently at startup) and query functions (`db.py`), the Redis
-consumer-group wiring for both inbound streams (`redis_bus.py`, async
+consumer-group wiring for all four inbound streams (`redis_bus.py`, async
 version of the same crash-replay pattern `fusion`/`dispatcher` use, tested
 against a hand-written async fake of Redis's stream semantics), the
 ingestion-to-Postgres-plus-SSE-fan-out wiring (`ingest.py`), the SSE
 broadcast hub (`sse.py`), the spectrum snapshot reader (`spectrum.py`),
-and every REST route (`app.py`, tested via FastAPI's `TestClient` against
-fake Postgres/Redis -- no real database or Redis instance in this
-authoring sandbox).
+the heartbeat reader (`status.py`), the Icecast status merge
+(`streams.py`), the reference-data loader (`reference.py`), and every REST
+route (`app.py`, tested via FastAPI's `TestClient` against fake
+Postgres/Redis -- no real database or Redis instance in this authoring
+sandbox).
 
 **Known gaps, not yet handled:**
-- No transcript storage yet -- design doc §9 lists "transcripts" alongside
-  alerts/health as TimescaleDB's job, but nothing consumes
-  `tocsin:transcripts` into Postgres (only `dispatcher`'s stage 2 reads
-  it, ephemerally, off the stream). Worth a `transcripts` table + a third
-  consumer once the UI actually wants to show transcript text.
 - No auth (design doc §9 names "reverse proxy + Argon2id local backend
   auth" -- out of scope for this phase, which is about the data path, not
   the deploy-behind-Caddy story).
@@ -72,6 +80,11 @@ authoring sandbox).
 | `API_CONSUMER_NAME` | `api` | Redis consumer-group consumer name (fixed, not hostname-derived -- same reasoning as `fusion`/`dispatcher`). |
 | `API_HOST` / `API_PORT` | `0.0.0.0` / `8000` | uvicorn bind address. |
 | `API_STATIC_DIR` | `/app/static` | Directory containing `web/`'s built `dist/`. Mounted at `/` if it exists; set to empty to disable the SPA mount entirely. |
+| `TOCSIN_MODE` | `offgrid` | Reported by `GET /system` and used to decide which services `GET /services` expects (`nws_poller` is hybrid-only). |
+| `TOCSIN_DATA_DIR` | *(unset)* | Directory holding `same_event_codes.yaml` and `fips.csv` for `GET /reference`. Unset or missing degrades to an empty reference rather than refusing to start -- unlike every other service, where a missing tier table would mean mis-tiering a real warning. |
+| `API_CAPTURES_DIR` | *(unset)* | `segment_capture`'s output directory. Unset makes `GET /captures/{name}` a 404. |
+| `ICECAST_HOST` / `ICECAST_PORT` | `icecast` / `8000` | Where *this process* reaches Icecast to read its status page. |
+| `ICECAST_PUBLIC_URL` | *(unset)* | Where the *browser* should reach Icecast. Unset means the page falls back to its own hostname on `ICECAST_PORT`, which is right for a LAN deployment; set it behind a reverse proxy. |
 
 ## Development
 

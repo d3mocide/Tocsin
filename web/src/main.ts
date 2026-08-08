@@ -1,94 +1,198 @@
-import { fetchAlerts, fetchHealth, fetchSpectrum, fetchSpectrumSites, fetchStats, subscribeToAlerts } from "./api";
+import {
+  fetchAlerts,
+  fetchDispatches,
+  fetchHealth,
+  fetchHealthHistory,
+  fetchReference,
+  fetchServices,
+  fetchSpectrum,
+  fetchSpectrumSites,
+  fetchStats,
+  fetchStreams,
+  fetchSystem,
+  fetchTranscripts,
+  subscribeToEvents,
+} from "./api";
+import { byId, el, replaceChildren } from "./dom";
+import { isActive, tierOf } from "./format";
+import { healthKey, Store } from "./store";
+import { renderActivity } from "./views/activity";
 import { AlertFeedView } from "./views/alerts";
-import { renderHealthTable } from "./views/health";
-import { renderSpectrum } from "./views/spectrum";
+import { mountFilters } from "./views/filters";
+import { renderHealth } from "./views/health";
+import { WaterfallView } from "./views/spectrum";
 import { renderStats } from "./views/stats";
+import { renderConnection, renderDispatchSummary, renderModeChip, renderServices } from "./views/status";
+import { renderStreams } from "./views/streams";
 
-const POLL_INTERVAL_MS = 5000;
+// What still polls, and why. Alerts, health, transcripts, and dispatches
+// arrive over SSE now and are not polled at all. These three have no push
+// feed to ride on: spectrum is a Redis snapshot key sdr_rx overwrites in
+// place, and services/streams are point-in-time reads of heartbeat keys
+// and Icecast's status page.
+const SPECTRUM_POLL_MS = 1000;
+const SERVICES_POLL_MS = 10_000;
+const STREAMS_POLL_MS = 15_000;
+const SITES_POLL_MS = 30_000;
+const STATS_POLL_MS = 30_000;
+// Relative timestamps ("2m ago") and the active/expired split are both
+// derived from the clock, so the page has to repaint on a timer even when
+// no data changes -- otherwise an expired warning keeps claiming to
+// expire "in 2 minutes" indefinitely.
+const CLOCK_TICK_MS = 15_000;
 
-function byId<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`missing #${id}`);
-  return el as T;
-}
+const store = new Store();
 
-function setConnectionStatus(connected: boolean): void {
-  const el = byId<HTMLDivElement>("connection-status");
-  el.textContent = connected ? "live" : "reconnecting…";
-  el.className = `status ${connected ? "status-live" : "status-reconnecting"}`;
-}
-
-async function refreshHealth(): Promise<void> {
-  const tbody = byId<HTMLTableSectionElement>("rf-health").querySelector("tbody");
-  if (!tbody) return;
-  try {
-    renderHealthTable(tbody, await fetchHealth());
-  } catch (err) {
-    console.error("failed to refresh health", err);
-  }
-}
-
-async function refreshStats(): Promise<void> {
-  try {
-    renderStats(byId("stats"), await fetchStats());
-  } catch (err) {
-    console.error("failed to refresh stats", err);
-  }
-}
-
-let currentSpectrumSite: string | null = null;
-
-async function refreshSpectrumSiteList(): Promise<void> {
-  const select = byId<HTMLSelectElement>("spectrum-site-select");
-  try {
-    const sites = await fetchSpectrumSites();
-    const previousSelection = select.value;
-    select.innerHTML = sites.map((site) => `<option value="${site}">${site}</option>`).join("");
-    if (sites.includes(previousSelection)) {
-      select.value = previousSelection;
-    }
-    currentSpectrumSite = select.value || sites[0] || null;
-  } catch (err) {
-    console.error("failed to list spectrum sites", err);
-  }
-}
-
-async function refreshSpectrum(): Promise<void> {
-  if (!currentSpectrumSite) return;
-  const canvas = byId<HTMLCanvasElement>("spectrum-canvas");
-  try {
-    renderSpectrum(canvas, await fetchSpectrum(currentSpectrumSite));
-  } catch (err) {
-    console.error("failed to refresh spectrum", err);
-  }
+function poll(fn: () => void, intervalMs: number): void {
+  fn();
+  setInterval(fn, intervalMs);
 }
 
 async function main(): Promise<void> {
-  const alertsView = new AlertFeedView(byId<HTMLUListElement>("alerts"));
+  const alertsView = new AlertFeedView(byId("alerts"), store);
+  const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
+  const refreshFilterSites = mountFilters(byId("filters"), store);
 
-  try {
-    alertsView.setInitial(await fetchAlerts());
-  } catch (err) {
-    console.error("failed to load initial alerts", err);
-  }
+  const render = () => {
+    renderModeChip(byId("mode-chip"), store);
+    renderConnection(byId("connection-status"), store);
+    renderStats(byId("stats"), store);
+    renderServices(byId("services"), store);
+    renderDispatchSummary(byId("dispatch"), store);
+    renderHealth(byId("rf-health"), store);
+    renderStreams(byId("streams"), store);
+    renderActivity(byId("activity"), store);
+    alertsView.render();
+    refreshFilterSites();
+    updateDocumentTitle();
+  };
+  store.subscribe(render);
 
-  subscribeToAlerts(
-    (alert) => alertsView.upsert(alert),
-    (connected) => setConnectionStatus(connected),
-  );
-
-  byId<HTMLSelectElement>("spectrum-site-select").addEventListener("change", (event) => {
-    currentSpectrumSite = (event.target as HTMLSelectElement).value;
+  const siteSelect = byId<HTMLSelectElement>("spectrum-site-select");
+  siteSelect.addEventListener("change", () => {
+    store.update((state) => {
+      state.spectrumSite = siteSelect.value || null;
+    });
+    // The waterfall's history belongs to one site; carrying it across a
+    // switch would splice two different receivers into one image.
+    waterfall.clear();
     void refreshSpectrum();
   });
 
-  await refreshSpectrumSiteList();
-  await Promise.all([refreshHealth(), refreshStats(), refreshSpectrum()]);
+  // Reference data first and awaited: county names and tier badges are
+  // needed to render an alert correctly, and a feed that paints raw FIPS
+  // codes for a moment and then reflows is worse than one that waits.
+  await store.load("system", fetchReference, (reference, state) => {
+    state.reference = reference;
+  });
 
-  setInterval(refreshHealth, POLL_INTERVAL_MS);
-  setInterval(refreshStats, POLL_INTERVAL_MS);
-  setInterval(refreshSpectrum, POLL_INTERVAL_MS);
-  setInterval(refreshSpectrumSiteList, POLL_INTERVAL_MS * 6);
+  await Promise.all([
+    store.load("system", fetchSystem, (system, state) => {
+      state.system = system;
+    }),
+    store.load("alerts", () => fetchAlerts(200), (alerts, state) => {
+      for (const alert of alerts) state.alerts.set(alert.id, alert);
+    }),
+    store.load("health", fetchHealth, (samples, state) => {
+      for (const sample of samples) state.health.set(healthKey(sample.site, sample.channel), sample);
+    }),
+    // Seeds the sparklines from stored history so a freshly opened tab
+    // shows an hour of trend immediately. Without this the trend column
+    // stays blank until enough live SSE samples have accumulated, which
+    // is the opposite of useful -- the moment you open this page is
+    // exactly when you want to know what the last hour looked like.
+    store.load("health", () => fetchHealthHistory(3600, 60), (points, state) => {
+      for (const point of points) {
+        const key = healthKey(point.site, point.channel);
+        const series = state.healthHistory.get(key) ?? [];
+        series.push(point.rms);
+        state.healthHistory.set(key, series);
+      }
+    }),
+    store.load("activity", () => fetchTranscripts(100), (transcripts, state) => {
+      state.transcripts = transcripts;
+    }),
+    store.load("activity", () => fetchDispatches(100), (dispatches, state) => {
+      state.dispatches = dispatches;
+    }),
+  ]);
+
+  subscribeToEvents({
+    onAlert: (alert) => store.upsertAlert(alert),
+    onHealth: (sample) => store.applyHealth(sample),
+    onTranscript: (transcript) => store.prependTranscript(transcript),
+    onDispatch: (dispatch) => store.prependDispatch(dispatch),
+    onStatusChange: (connected) =>
+      store.update((state) => {
+        state.connected = connected;
+      }),
+  });
+
+  poll(() => void refreshSpectrumSites(), SITES_POLL_MS);
+  poll(() => void refreshSpectrum(), SPECTRUM_POLL_MS);
+  poll(
+    () =>
+      void store.load("services", fetchServices, (services, state) => {
+        state.services = services;
+      }),
+    SERVICES_POLL_MS,
+  );
+  poll(
+    () =>
+      void store.load("streams", fetchStreams, (streams, state) => {
+        state.streams = streams;
+      }),
+    STREAMS_POLL_MS,
+  );
+  poll(
+    () =>
+      void store.load("stats", fetchStats, (stats, state) => {
+        state.stats = stats;
+      }),
+    STATS_POLL_MS,
+  );
+  setInterval(() => store.notify(), CLOCK_TICK_MS);
+
+  render();
+
+  async function refreshSpectrumSites(): Promise<void> {
+    await store.load("spectrum", fetchSpectrumSites, (sites, state) => {
+      state.spectrumSites = sites;
+      if (!state.spectrumSite || !sites.includes(state.spectrumSite)) {
+        state.spectrumSite = sites[0] ?? null;
+      }
+    });
+    const { spectrumSites, spectrumSite } = store.state;
+    const current = siteSelect.value;
+    if (spectrumSites.join(" ") !== [...siteSelect.options].map((o) => o.value).join(" ")) {
+      replaceChildren(siteSelect, ...spectrumSites.map((site) => el("option", { text: site, attrs: { value: site } })));
+    }
+    siteSelect.value = spectrumSite ?? current;
+  }
+
+  async function refreshSpectrum(): Promise<void> {
+    const site = store.state.spectrumSite;
+    if (!site) {
+      waterfall.push(null);
+      return;
+    }
+    await store.load("spectrum", () => fetchSpectrum(site), (snapshot, state) => {
+      state.spectrum = snapshot;
+    });
+    waterfall.push(store.state.spectrum);
+  }
+}
+
+/** An active Tier A alert in the tab title, so a backgrounded tab still
+ * says something is wrong. Tier A is the set that reaches the mesh
+ * immediately (design doc §4) -- the same threshold the feed uses for its
+ * loudest treatment. */
+function updateDocumentTitle(): void {
+  const now = new Date();
+  const urgent = [...store.state.alerts.values()].filter(
+    (alert) => isActive(alert, now) && tierOf(alert, store.state.reference) === "A",
+  );
+  document.title = urgent.length > 0 ? `(${urgent.length}) ⚠ Tocsin` : "Tocsin";
 }
 
 void main();

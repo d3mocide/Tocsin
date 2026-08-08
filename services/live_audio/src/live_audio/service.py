@@ -58,6 +58,16 @@ class Streamer:
     def mount_urls(self, icecast_public_url: str) -> dict[tuple[str, str], str]:
         return {key: f"{icecast_public_url}{mount_name(*key)}" for key in self._feeders}
 
+    def mounts(self) -> list[dict]:
+        """Every (site, channel) this process has ever fed, with whether
+        its ffmpeg is still alive. Reported on the liveness heartbeat so
+        the UI can list playable streams without querying Icecast's admin
+        interface -- and, more usefully, can still show a channel whose
+        feeder died, which Icecast itself would simply stop listing."""
+        live = [{"site": s, "channel": c, "mount": mount_name(s, c), "alive": True} for s, c in sorted(self._feeders)]
+        dead = [{"site": s, "channel": c, "mount": mount_name(s, c), "alive": False} for s, c in sorted(self._dead)]
+        return live + dead
+
     def close(self) -> None:
         for feeder in self._feeders.values():
             feeder.close()

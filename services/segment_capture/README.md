@@ -65,6 +65,7 @@ authoring sandbox, so the full path isn't exercised end to end here -- see
 | `SEGMENT_CAPTURE_OUTPUT_DIR` | `/var/lib/segment_capture/captures` | Where finished WAV files are written -- a volume shared with stt-worker. |
 | `SEGMENT_CAPTURE_PREROLL_SECONDS` | `10` | How much already-buffered ring-buffer audio to grab when a message starts. |
 | `SEGMENT_CAPTURE_HARD_TIMEOUT_SECONDS` | `300` | Force-finalize a capture that never sees an EOM (design doc §4). |
+| `SEGMENT_CAPTURE_REDIS_URL` | *(unset)* | Optional, heartbeat only. When set, publishes liveness to `tocsin:status:segment_capture` for `api`'s `GET /services`. Captures still go out over ZMQ, never through Redis. |
 
 ## Development
 

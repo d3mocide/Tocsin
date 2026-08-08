@@ -15,6 +15,7 @@ import sys
 import time
 from pathlib import Path
 
+from .heartbeat import Heartbeat
 from .mapping import EventMapping
 from .redis_bus import StreamConsumer
 from .redis_sink import RedisStreamAlertSink
@@ -58,10 +59,12 @@ def main() -> None:
     # tests and any non-compose use.
     store = AlertStore(mapping, mode, sink=RedisStreamAlertSink(redis_client))
     consumer = StreamConsumer(redis_client, store, consumer_name)
+    heartbeat = Heartbeat(redis_client)
 
     print(f"fusion: mode={mode}, consuming as {consumer_name!r} from {redis_url}", flush=True)
     while True:
         try:
+            heartbeat.beat(mode=mode)
             consumer.poll_once()
         except Exception as exc:
             # A single bad poll cycle (Redis blip, malformed payload) must

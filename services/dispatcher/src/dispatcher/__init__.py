@@ -27,11 +27,13 @@ from .egress.dispatch import DualPathSender
 from .egress.meshtastic_mqtt import DEFAULT_REGION, MeshtasticMqttClient
 from .egress.meshtastic_serial import MeshtasticSerialClient
 from .fips import FipsTable
+from .heartbeat import Heartbeat
 from .idempotency import IdempotencyStore
 from .litellm_client import DEFAULT_MODEL, LiteLLMClient
 from .models import parse_rf_source, parse_transcript
 from .rate_limit import TokenBucket
 from .redis_bus import AlertStreamConsumer, TRANSCRIPTS_STREAM_NAME
+from .redis_sink import RedisStreamDispatchLog
 from .service import Stage1Dispatcher, Stage2Dispatcher
 
 DEFAULT_REDIS_URL = "redis://redis:6379/0"
@@ -62,7 +64,7 @@ def _build_mqtt_client() -> MeshtasticMqttClient | None:
     )
 
 
-def _build_stage2_dispatcher(redis_client, egress: DualPathSender) -> Stage2Dispatcher | None:
+def _build_stage2_dispatcher(redis_client, egress: DualPathSender, log) -> Stage2Dispatcher | None:
     base_url = os.environ.get("DISPATCHER_LITELLM_BASE_URL")
     if not base_url:
         return None
@@ -85,6 +87,7 @@ def _build_stage2_dispatcher(redis_client, egress: DualPathSender) -> Stage2Disp
         circuit_breaker=circuit_breaker,
         litellm_client=litellm_client,
         egress=egress,
+        log=log,
     )
 
 
@@ -114,14 +117,19 @@ def main() -> None:
     import redis as redis_lib
 
     redis_client = redis_lib.from_url(redis_url, decode_responses=True)
+    # Both stages share one log, so `api`'s /dispatches is a single
+    # ordered record of everything dispatcher decided, not two feeds to
+    # interleave client-side.
+    dispatch_log = RedisStreamDispatchLog(redis_client)
     stage1 = Stage1Dispatcher(
         fips_table=fips_table,
         idempotency=IdempotencyStore(redis_client),
         dedup=AlertDeduplicator(),
         rate_limiter=TokenBucket(),
         egress=egress,
+        log=dispatch_log,
     )
-    stage2 = _build_stage2_dispatcher(redis_client, egress)
+    stage2 = _build_stage2_dispatcher(redis_client, egress, dispatch_log)
 
     def handle_alert(payload: dict) -> None:
         rf_alert = parse_rf_source(payload)
@@ -141,9 +149,11 @@ def main() -> None:
     else:
         print("dispatcher: DISPATCHER_LITELLM_BASE_URL not set -- stage 2 disabled", flush=True)
 
+    heartbeat = Heartbeat(redis_client)
     print(f"dispatcher: consuming as {consumer_name!r} from {redis_url}", flush=True)
     while True:
         try:
+            heartbeat.beat(mode=mode, stage2=stage2 is not None)
             for consumer in consumers:
                 consumer.poll_once()
         except Exception as exc:
