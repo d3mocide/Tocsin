@@ -41,22 +41,65 @@ services:
 
   sdr-rx:
     build: ./services/sdr_rx
-    restart: unless-stopped
+    # on-failure, not unless-stopped: with no SDR_RX_DEVICES configured (a
+    # deliberately supported state -- see the README's bring-up runbook),
+    # main() reports that and exits 0. unless-stopped restarts on ANY exit
+    # including that one, crash-looping a container that isn't actually
+    # crashing (confirmed against a real build). on-failure only restarts
+    # the exit-1 path (bad serial / device error), which is the case that
+    # actually warrants a retry.
+    restart: on-failure
     environment:
       TOCSIN_MODE: *mode
-    # SoapySDR needs the host USB device and udev rules; not yet wired up
-    # (milestone 1 is channelizer-standalone only -- see this service's
-    # README). Left minimal on purpose rather than guessing device mappings
-    # ahead of live-hardware verification.
+      SDR_RX_DEVICES: ${SDR_RX_DEVICES:-}
+      SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
+      SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
+    tmpfs:
+      - /run/sdr_rx_ring
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    # /dev/bus/usb gives the container the whole USB bus rather than one
+    # device node, because RTL-SDR dongles enumerate under a bus-relative
+    # path that isn't stable across replugs -- device selection happens in
+    # the app layer by serial (SDR_RX_DEVICES), not by bind-mounting one
+    # /dev/bus/usb/BBB/DDD path. The host also needs the udev rule in
+    # deploy/udev/ so the dongle is group-readable without running the
+    # container privileged -- see this service's README for the full
+    # bring-up sequence (blacklist, udev rule, `make sdr-devices`).
     profiles: [offgrid, hybrid]
 
-  # same-decoder:            # milestone 2 (docs/design/master-prompt.md §10, §4)
-  #   build: ./services/same_decoder
-  #   profiles: [offgrid, hybrid]
+  same-decoder:
+    build: ./services/same_decoder
+    restart: unless-stopped
+    environment:
+      SAME_DECODER_ZMQ_CONNECT: tcp://sdr-rx:5555
+      TOCSIN_DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      - sdr-rx
+    profiles: [offgrid, hybrid]
 
-  # live-audio:               # milestone 3
-  #   build: ./services/live_audio
-  #   profiles: [offgrid, hybrid]
+  icecast:
+    build: ./deploy/icecast
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    profiles: [offgrid, hybrid]
+
+  live-audio:
+    build: ./services/live_audio
+    restart: unless-stopped
+    environment:
+      LIVE_AUDIO_ZMQ_CONNECT: tcp://sdr-rx:5555
+      ICECAST_HOST: icecast
+      ICECAST_PORT: "8000"
+      ICECAST_SOURCE_USER: source
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:-hackme}
+    depends_on:
+      - sdr-rx
+      - icecast
+    profiles: [offgrid, hybrid]
 
   # segment-capture:          # milestone 4
   #   build: ./services/segment_capture

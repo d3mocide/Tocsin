@@ -1,0 +1,19 @@
+# Host-side udev rule for RTL-SDR dongles (docs/design/master-prompt.md §3,
+# "Host prerequisite"). Install on the HOST, not in a container:
+#
+#   sudo cp deploy/udev/60-rtlsdr.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   sudo usermod -aG plugdev "$USER"   # log out/in (or reboot) to pick this up
+#
+# Grants the `plugdev` group read/write access to the dongle so
+# SoapySDR can open it without running the container as root. This is the
+# standard rtl-sdr/osmocom rule set; if `lsusb` shows a vendor:product pair
+# not listed here, add a matching line (same ATTRS{idVendor}/idProduct
+# pattern) rather than widening one of these.
+#
+# This does NOT replace the dvb_usb_rtl28xxu blacklist -- both are required
+# (see README.md "Host prerequisite"); this rule only fixes permissions
+# once the kernel DVB driver is no longer claiming the device first.
+
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", GROUP="plugdev", MODE="0666", SYMLINK+="rtl_sdr"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", GROUP="plugdev", MODE="0666", SYMLINK+="rtl_sdr"

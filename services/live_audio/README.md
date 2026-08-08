@@ -1,0 +1,41 @@
+# live-audio
+
+Subscribes to `sdr-rx`'s `stt.<site>.<channel>` ZMQ topic (16 kHz s16le
+mono -- the same rate contract `stt-worker` will use) and pushes each
+channel as its own Ogg/Vorbis stream to Icecast via ffmpeg, so a channel can
+be confirmed by ear (tuning, antenna, gain) without waiting on SAME decode
+or STT.
+
+Icecast over MediaMTX for this v1 -- see `feeder.py`'s docstring for the
+tradeoff.
+
+## Status
+
+Implemented and unit tested: mount-name/source-URL building and the ffmpeg
+subprocess wrapper (`feeder.py`), the per-(site, channel) streaming
+orchestration including lazy feeder creation and not retrying a feeder that
+died (`service.py`), and the ZMQ subscriber (`subscriber.py`). ffmpeg and a
+real Icecast server aren't available in the authoring sandbox, so
+`feeder.py`'s subprocess plumbing is tested against a Python stand-in
+rather than real ffmpeg -- see its test file. The full path (ffmpeg
+actually encoding to a real Icecast mountpoint, a browser playing it back)
+is not yet verified -- see the repo root README's bring-up runbook.
+
+## Configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `LIVE_AUDIO_ZMQ_CONNECT` | `tcp://sdr-rx:5555` | Address to connect to sdr-rx's ZMQ PUB socket. |
+| `ICECAST_HOST` | `icecast` | Icecast server hostname. |
+| `ICECAST_PORT` | `8000` | Icecast server port. |
+| `ICECAST_SOURCE_USER` | `source` | Icecast source-client username (Icecast's convention: always `source`). |
+| `ICECAST_SOURCE_PASSWORD` | `hackme` | Must match `<source-password>` in `deploy/icecast/icecast.xml`. |
+
+Each active channel appears at `http://<icecast-host>:8000/<site>-<channel>.ogg`.
+
+## Development
+
+```sh
+uv sync
+uv run pytest
+```
