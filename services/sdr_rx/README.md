@@ -75,9 +75,25 @@ multi-service sequence. The `sdr-rx`-specific prerequisites it walks through:
 |---|---|---|
 | `SDR_RX_DEVICES` | *(none)* | `site:serial,site2:serial2` -- one dongle per transmitter site, addressed by serial number (never by index; see `capture.py`). Empty means no capture; the process reports that and exits. |
 | `SDR_RX_LIST_DEVICES` | *(unset)* | If set (any value), enumerate visible rtlsdr devices and exit instead of starting capture -- see `make sdr-devices`. `entrypoint.sh` special-cases this: it `exec`s straight into sdr-rx's own listing codepath and skips starting same_decoder/live_audio/segment_capture entirely, so `make sdr-devices` stays a quick one-shot diagnostic. |
+| `SDR_RX_GAIN_DB` | `30` (`capture.DEFAULT_GAIN_DB`) | Manual RTL-SDR gain in dB, applied to every configured device (design doc §3: AGC oscillates on a constant carrier, so this stays manual). 30 dB is a starting point, not a universal value -- antenna, cable loss, and distance to the transmitter all shift what's correct for a given site; see the root README's "Tweak from there" bring-up step. |
 | `SDR_RX_ZMQ_BIND` | `tcp://0.0.0.0:5555` | ZMQ PUB bind address for the `same.<site>.<channel>` / `stt.<site>.<channel>` topics (see `bus.py`). same_decoder/live_audio/segment_capture connect to this over `localhost` now that they run in this same container -- see their own READMEs. |
 | `SDR_RX_RING_BUFFER_DIR` | `/tmp/sdr_rx_ring` | Base directory for the per-site, per-channel tmpfs ring buffers -- mount this on tmpfs in production. |
 | `SDR_RX_REDIS_URL` | *(unset -- logs in-process only)* | Redis connection URL. When set, health samples publish to the `tocsin:health` stream and spectrum snapshots to `tocsin:spectrum:<site>` for `api` (Phase 8). |
+
+Tuner frequency (`channels.LO_HZ`, 162.4875 MHz) and sample rate
+(`capture.SAMPLE_RATE_HZ`, 1.2 MSPS) are deliberately **not** env-configurable,
+unlike gain: they're not per-site tuning knobs, they're the channelizer's
+own load-bearing assumptions. `LO_HZ` is a bin *edge*, chosen so all seven
+nationally-standardized NWR frequencies (162.400-162.550 MHz, fixed
+everywhere in the US, not just locally) land inside one capture window at
+predictable bin indices (`channels.py`'s odd-stacked math); `SAMPLE_RATE_HZ`
+is tied 1:1 to `NUM_BINS * CHANNEL_SPACING_HZ`. Changing either without
+also updating the channelizer's bin math would silently mislabel which
+channel is which, or break decode outright -- see CLAUDE.md's
+"Signal-processing correctness" section on why the channelizer's
+implementation hazards aren't optional. What genuinely varies by site
+(which of the seven WX channels you can actually hear) isn't a setting at
+all -- sdr-rx always monitors all seven simultaneously.
 
 ## Container
 

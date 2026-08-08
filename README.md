@@ -68,9 +68,8 @@ part against); step 4's `make up-offgrid` came up clean.
      Required Weekly Test (RWT) on a schedule (and RMT monthly); when one airs, you should
      see a JSON event line with `"event_code": "RWT"`. You don't have to wait for a real
      warning to confirm the whole pipeline works end to end.
-8. **Tweak from there.** Gain (`sdr_rx.capture.DEFAULT_GAIN_DB`, currently a fixed 30 dB per
-   the design doc), which of the seven WX channels you expect to hear locally, and the
-   local transmitter frequency assumption (design doc §12 open item) are the things most
+8. **Tweak from there.** Gain (`SDR_RX_GAIN_DB` in `.env`, 30 dB by default per the design
+   doc -- see `services/sdr_rx/README.md`'s Configuration table) is the one thing most
    likely to need adjusting against your actual RF environment.
 
 None of steps 5-8 have been verified against real hardware yet in this repo's history --

@@ -57,6 +57,12 @@ services:
     environment:
       TOCSIN_MODE: *mode
       SDR_RX_DEVICES: ${SDR_RX_DEVICES:-}
+      # Manual gain in dB (design doc §3: "Auto gain oscillates on a
+      # constant carrier"). 30 dB is a starting point for a typical setup,
+      # not a universal value -- antenna, cable loss, and distance to the
+      # transmitter all shift what's correct for a given site; see the
+      # root README's "Tweak from there" bring-up step.
+      SDR_RX_GAIN_DB: ${SDR_RX_GAIN_DB:-30}
       SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
       SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
       # Publishes RF health (tocsin:health) and per-site spectrum snapshots

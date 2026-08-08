@@ -16,7 +16,7 @@ import threading
 from pathlib import Path
 
 from .bus import Publisher
-from .capture import SoapySDRDevice, enumerate_devices, parse_device_config
+from .capture import DEFAULT_GAIN_DB, SoapySDRDevice, enumerate_devices, parse_device_config
 from .channels import nwr_bins
 from .health import HealthTracker
 from .pipeline import DevicePipeline
@@ -84,6 +84,11 @@ def main() -> None:
 
     bind_addr = os.environ.get("SDR_RX_ZMQ_BIND", DEFAULT_ZMQ_BIND)
     ring_dir = Path(os.environ.get("SDR_RX_RING_BUFFER_DIR", str(DEFAULT_RING_BUFFER_DIR)))
+    # Manual gain, not AGC (design doc §3: "Auto gain oscillates on a
+    # constant carrier") -- 30 dB is a starting point for a typical
+    # setup, not a universal value; antenna, cable loss, and distance to
+    # the transmitter all shift what's correct for a given site.
+    gain_db = float(os.environ.get("SDR_RX_GAIN_DB", DEFAULT_GAIN_DB))
     publisher = Publisher(bind_addr)
 
     redis_client = _build_redis_client()
@@ -99,7 +104,7 @@ def main() -> None:
     threads: list[threading.Thread] = []
     for device_config in devices:
         try:
-            device = SoapySDRDevice(device_config.serial)
+            device = SoapySDRDevice(device_config.serial, gain_db=gain_db)
         except RuntimeError as exc:
             print(f"sdr-rx: site {device_config.site!r} ({device_config.serial}): {exc}", file=sys.stderr)
             continue

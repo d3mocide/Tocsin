@@ -144,6 +144,20 @@ part of the stated exit criteria, which are now all met):
   All four stay fully separate uv projects with their own tests; see the Session Log entry
   this date for the full reasoning and `services/sdr_rx/README.md`'s "Container" section for
   the mechanics.
+- **2026-08-08:** Manual RTL-SDR gain is now `SDR_RX_GAIN_DB` (`.env`/`compose.yaml`,
+  default 30 dB), threaded through `main()` into `SoapySDRDevice(gain_db=...)`, at the
+  user's request -- previously only changeable by editing `capture.DEFAULT_GAIN_DB` in
+  source, despite the design doc and this repo's own README already flagging it as "the
+  thing most likely to need adjusting against your actual RF environment." Tuner frequency
+  (`channels.LO_HZ`) and sample rate (`capture.SAMPLE_RATE_HZ`) deliberately stayed fixed --
+  both are load-bearing channelizer assumptions (the national NWR channel plan and the
+  48-bin odd-stacked math), not per-site tuning knobs; see `services/sdr_rx/README.md`'s
+  Configuration section for the reasoning. Two new tests
+  (`test_main_passes_sdr_rx_gain_db_through_to_the_device`,
+  `test_main_defaults_gain_db_when_sdr_rx_gain_db_is_unset`) using a fake `SoapySDRDevice`
+  that records its `gain_db` and fails fast, the same shape `main()` already handles for
+  "bindings not installed" -- avoids `thread.join()` blocking forever the way a fake that
+  actually started a capture thread would. 83 tests passing in `sdr_rx`, up from 81.
 
 ---
 
