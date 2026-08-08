@@ -11,16 +11,23 @@ called.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import db, spectrum as spectrum_module
 from .sse import Broadcaster
 
 
-def create_app(pool: db.PoolLike, redis_client, broadcaster: Broadcaster | None = None) -> FastAPI:
+def create_app(
+    pool: db.PoolLike,
+    redis_client,
+    broadcaster: Broadcaster | None = None,
+    static_dir: Path | None = None,
+) -> FastAPI:
     app = FastAPI(title="Tocsin API")
     app.state.pool = pool
     app.state.redis = redis_client
@@ -81,5 +88,14 @@ def create_app(pool: db.PoolLike, redis_client, broadcaster: Broadcaster | None 
                 app.state.broadcaster.unsubscribe(queue)
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    # Mounted last and at "/": FastAPI/Starlette match routes in
+    # registration order, so every route declared above (e.g. GET /alerts)
+    # still wins over this catch-all for its exact path -- only requests
+    # that don't match an API route fall through to the built web/ SPA
+    # (design doc §9's "Vite + TypeScript UI", formerly its own nginx
+    # container -- see web/README.md).
+    if static_dir is not None and static_dir.is_dir():
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
 
     return app

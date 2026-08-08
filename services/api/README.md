@@ -14,6 +14,17 @@ Spectrum data is read straight from `sdr_rx`'s per-site
 since a waterfall display only ever wants the latest snapshot, not
 history (see `spectrum.py`'s docstring).
 
+Also serves `web/`'s built SPA -- formerly its own nginx container, now
+a build stage in this service's `Dockerfile` (a `node:22` stage builds
+`web/`'s `dist/`, copied into this image's `static/`). `create_app`
+mounts it at `/` via `StaticFiles`, registered after every API route
+below so an exact-path route always wins over the catch-all (e.g. `GET
+/alerts` never falls through to the SPA). Set `API_STATIC_DIR` to
+override where it looks, or leave it unset/empty to disable the mount
+entirely (`config.py`'s default, `/app/static`, simply won't exist in
+plain `uv run api` dev use, which is fine -- `create_app` only mounts a
+directory that's actually there).
+
 ## Endpoints
 
 | Endpoint | Purpose |
@@ -60,6 +71,7 @@ authoring sandbox).
 | `API_REDIS_URL` | `redis://redis:6379/0` | Redis connection URL. |
 | `API_CONSUMER_NAME` | `api` | Redis consumer-group consumer name (fixed, not hostname-derived -- same reasoning as `fusion`/`dispatcher`). |
 | `API_HOST` / `API_PORT` | `0.0.0.0` / `8000` | uvicorn bind address. |
+| `API_STATIC_DIR` | `/app/static` | Directory containing `web/`'s built `dist/`. Mounted at `/` if it exists; set to empty to disable the SPA mount entirely. |
 
 ## Development
 

@@ -181,43 +181,42 @@ services:
       - redis
     profiles: [offgrid, hybrid]
 
-  nws-poller:
-    build: ./services/nws_poller
-    restart: unless-stopped
-    environment:
-      # Empty by default, not `:?`-required: compose interpolates every
-      # service's environment during `config` regardless of which
-      # --profile was selected, so a hard-required var here would block
-      # `offgrid` startup too even though nws-poller (hybrid-only) never
-      # runs there -- exactly the regression CLAUDE.md's connectivity rule
-      # warns about. Same pattern as SDR_RX_DEVICES: nws_poller's own
-      # __init__.py already fails loudly and exits 1 if this is unset,
-      # which only matters (and only restart-loops) under the hybrid
-      # profile where the container actually starts.
-      NWS_POLLER_USER_AGENT: ${NWS_POLLER_USER_AGENT:-}
-      NWS_POLLER_AREAS: ${NWS_POLLER_AREAS:-OR,WA}
-      NWS_POLLER_INTERVAL_SECONDS: ${NWS_POLLER_INTERVAL_SECONDS:-60}
-      NWS_POLLER_REDIS_URL: redis://redis:6379/0
-    depends_on:
-      - redis
-    # hybrid only (design doc §8: nws-poller is one of the four
-    # network-dependent components offgrid disables entirely) -- this
-    # profile gate is the actual "disabled off-grid" mechanism, since
-    # there's no in-process TOCSIN_MODE branch to speak of: the process
-    # simply never starts under the offgrid profile.
-    profiles: [hybrid]
-
   fusion:
-    build: ./services/fusion
+    # Build context is the repo root, not services/fusion/ -- this image
+    # also installs nws_poller (formerly its own container; see
+    # entrypoint.sh) as a second, independent uv project/venv alongside
+    # fusion's.
+    build:
+      context: .
+      dockerfile: services/fusion/Dockerfile
     restart: unless-stopped
     environment:
       TOCSIN_MODE: *mode
       TOCSIN_DATA_DIR: /app/data
       FUSION_REDIS_URL: redis://redis:6379/0
+      # nws-poller's own env (was its own compose service, gated by
+      # `profiles: [hybrid]`; entrypoint.sh now gates it on TOCSIN_MODE at
+      # container start instead -- see that file). Empty by default, not
+      # `:?`-required, same reasoning as before the merge: a hard-required
+      # var here would block `offgrid` startup too, even though this
+      # entire block is skipped there -- exactly the regression
+      # CLAUDE.md's connectivity rule warns about. nws_poller's own
+      # __init__.py still fails loudly and exits 1 (retried by
+      # entrypoint.sh) if this is unset, which only matters under
+      # TOCSIN_MODE=hybrid where entrypoint.sh actually starts it.
+      NWS_POLLER_USER_AGENT: ${NWS_POLLER_USER_AGENT:-}
+      NWS_POLLER_AREAS: ${NWS_POLLER_AREAS:-OR,WA}
+      NWS_POLLER_INTERVAL_SECONDS: ${NWS_POLLER_INTERVAL_SECONDS:-60}
+      NWS_POLLER_REDIS_URL: redis://redis:6379/0
     volumes:
       - ./data:/app/data:ro
     depends_on:
       - redis
+    # both, unlike nws-poller's old hybrid-only profile: fusion itself
+    # always runs (offgrid alerts simply stay RF_ONLY -- see fusion's
+    # README), and the nws-poller half of this container now self-gates
+    # on TOCSIN_MODE inside entrypoint.sh rather than never starting the
+    # whole container under offgrid.
     profiles: [offgrid, hybrid]
 
   dispatcher:
@@ -268,7 +267,13 @@ services:
     profiles: [offgrid, hybrid]
 
   api:
-    build: ./services/api
+    # Build context is the repo root, not services/api/ -- the Dockerfile's
+    # first stage builds web/ (formerly its own nginx container; see
+    # web/README.md and services/api/app.py's static mount) before the
+    # Python runtime stage.
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
     # on-failure: a missing/malformed API_POSTGRES_DSN is main()'s own
     # loud-fail-and-exit-1 check (see services/api/README.md) -- worth
     # retrying since timescaledb itself may just not be ready yet on a
@@ -280,18 +285,13 @@ services:
       API_REDIS_URL: redis://redis:6379/0
       API_HOST: 0.0.0.0
       API_PORT: "8000"
+    ports:
+      # Was web/nginx's port before that container merged in here -- kept
+      # at 8080 so the bring-up runbook (README.md) doesn't change.
+      - "8080:8000"
     depends_on:
       - redis
       - timescaledb
-    profiles: [offgrid, hybrid]
-
-  web:
-    build: ./web
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    depends_on:
-      - api
     profiles: [offgrid, hybrid]
 
 volumes:

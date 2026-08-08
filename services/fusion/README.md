@@ -1,5 +1,10 @@
 # fusion
 
+Ships in the same container image as `nws_poller` (see "Container" below),
+but the two remain fully independent uv projects -- nothing in this
+package imports `nws_poller` or vice versa, only Redis Streams connect
+them, same as if they were still two containers.
+
 Correlates SAME/NWR events (from `same_decoder`, via the `tocsin:same_events`
 Redis Stream) with NWS CAP alerts (from `nws_poller`, via `tocsin:cap_alerts`)
 using the mapping in `data/same_to_cap.yaml`, without hard-merging the two
@@ -38,6 +43,20 @@ docstrings for the full reasoning):
   losing an alert"), not silently ignored.
 - Not verified against real Redis, or a live `same-decoder`/`nws-poller`
   pair -- verified against fixtures and a faithful in-memory fake only.
+
+## Container
+
+`Dockerfile` (build context: repo root, not this directory -- see
+`compose.yaml`) builds this project and `../nws_poller` into two separate
+venvs in one image. `entrypoint.sh` runs `fusion` as the container's
+foreground process (`exec`, so it's PID 1 and owns the container's exit
+status), and only starts `nws_poller` -- in a self-restarting background
+loop, so a bad `NWS_POLLER_USER_AGENT`/`NWS_POLLER_AREAS` retries in
+place instead of taking this process down -- when `TOCSIN_MODE=hybrid`.
+That replaces `nws_poller`'s old `profiles: [hybrid]` compose-level gate
+(design doc §8: hybrid-only, disabled entirely off-grid) with the same
+runtime `TOCSIN_MODE` check every other network-gated component in this
+repo uses.
 
 ## Configuration
 

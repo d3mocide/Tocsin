@@ -504,6 +504,11 @@ real-audio gap for the RF side.
 - `Makefile`: `test` target now also runs `nws_poller` and `fusion`. `.env.example`:
   documented the two new hybrid-only vars.
 - 244 tests passing across all seven implemented services (`make test`), up from 191.
+- **2026-08-08:** `nws-poller` no longer has its own `compose.yaml` service or Dockerfile --
+  it now ships inside `fusion`'s container image as a second process, launched by
+  `services/fusion/entrypoint.sh` only under `TOCSIN_MODE=hybrid`. Still a fully separate uv
+  project with its own tests (`make test` unchanged); see the Session Log entry this date for
+  the full reasoning.
 
 **Not started / open:**
 - Neither new Dockerfile is build-verified -- no Docker daemon in this authoring sandbox
@@ -845,6 +850,11 @@ FastAPI service, and the first TypeScript in this repo.
   list was missing every service added since Phase 4.
 - 395 tests passing across all nine implemented Python services (`make test`), up from 350,
   plus `web`'s clean type-check-and-build.
+- **2026-08-08:** `web` no longer has its own `compose.yaml` service, Dockerfile, or nginx
+  container -- `services/api`'s Dockerfile now builds it as a stage and `app.py` serves the
+  built `dist/` as static files at `/`, mounted after every API route so the route table is
+  unchanged. `web/src/api.ts`'s default base URL moved from `/api` to same-origin unprefixed
+  accordingly. See the Session Log entry this date for the full reasoning.
 
 **Not started / open:**
 - No transcript storage (design doc §9 names "transcripts" alongside alerts/health as
@@ -1103,3 +1113,55 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   Python services (`make test`), up from 350, plus a clean `web` type-check-and-build
   confirmed against the live npm registry. Nothing in this phase ran against a real Postgres,
   Redis, or browser -- see Phase 8's section above for the complete breakdown.
+- **2026-08-08** — At the user's request, consolidated `compose.yaml` from 14 containers to
+  12 under the `hybrid` profile (13 to 12 under `offgrid`, where only the `web` merge counts
+  -- `nws-poller` was already hybrid-only, so it was never one of `offgrid`'s 13 to begin
+  with). Confirmed against real resolved service lists, not just arithmetic: `docker compose
+  --profile offgrid config --services` and `--profile hybrid config --services` both list
+  exactly the same 12 names now (`api`, `dispatcher`, `fusion`, `icecast`, `live-audio`,
+  `mosquitto`, `redis`, `same-decoder`, `sdr-rx`, `segment-capture`, `stt-worker`,
+  `timescaledb`) -- the offgrid/hybrid split that used to show up as `nws-poller`
+  existing-or-not now lives entirely inside `fusion`'s container instead. Two merges, both
+  deployment-only -- no service's own Python package was touched, and neither
+  crosses a service boundary with a Python import (CLAUDE.md's "communicate over ZMQ, Redis,
+  MQTT, HTTP, not imports" rule still holds): (1) `web` merged into `api` -- `services/api`'s
+  Dockerfile gained a `node:22` build stage for `web/` (build context moved to the repo root
+  so it can reach both directories) and `app.py`'s `create_app` now optionally mounts the
+  built `dist/` as static files at `/`, registered after every API route so explicit routes
+  still win their exact path; `web/src/api.ts`'s default `API_BASE_URL` changed from `/api`
+  to same-origin unprefixed now that there's no nginx proxy stripping that prefix. Removed
+  `web/Dockerfile` and `web/nginx.conf`. (2) `nws-poller` merged into `fusion` -- both stay
+  fully independent `uv` projects/venvs (own `pyproject.toml`, own tests, still run
+  separately via `make test`), built into one image by `services/fusion`'s Dockerfile (also
+  now repo-root-context) and launched as two OS processes by a new `entrypoint.sh`: fusion
+  runs via `exec` as the container's foreground/PID-1 process (so it still owns the
+  container's exit status and receives `docker stop`'s SIGTERM directly), while nws-poller
+  runs in a self-restarting background loop, started only when `TOCSIN_MODE=hybrid` --
+  replacing the old `profiles: [hybrid]` compose-level gate with the exact kind of runtime
+  `TOCSIN_MODE` branch CLAUDE.md's connectivity contract asks for, so a bad/missing
+  `NWS_POLLER_USER_AGENT` under hybrid retries in place instead of taking fusion down with
+  it. `compose.yaml`'s `api` service kept its host port at 8080 (now mapped straight to
+  the container's 8000 instead of nginx's 80) so the bring-up runbook in the root README
+  didn't need to change. Added `API_STATIC_DIR` config plus 4 new tests to `services/api`
+  covering the static mount (root 404s with no static dir configured, serves `index.html`
+  when one is, and API routes still win over it) and its config default/override/disable --
+  40 tests passing there, up from 36; `services/fusion` and `services/nws_poller` untouched
+  internally, still passing their existing suites (36 and 19 respectively). A Docker daemon
+  turned out to be reachable in this session (same as the 2026-08-08 entry above that first
+  found one) -- used it to actually build and run both merged images, not just resolve
+  `docker compose config`. `docker top` on the merged `fusion` container confirmed
+  `nws-poller` is genuinely absent under `TOCSIN_MODE=offgrid` and present under `hybrid`;
+  with `NWS_POLLER_USER_AGENT` deliberately left unset under hybrid, confirmed `nws-poller`
+  retry-loops in place ("retrying in 5s") while `fusion`'s own process stays up throughout --
+  the exact failure-isolation behavior the merge was designed to preserve. For the merged
+  `api` container, ran it against real `redis` and `timescaledb` containers and confirmed
+  with `curl`: `GET /` returns the built SPA's `index.html`, its JS asset resolves with
+  `content-type: application/javascript`, and `GET /alerts`, `/health`, `/stats` all still
+  return the expected JSON -- static mount and API routes coexisting for real, not just
+  argued about in a docstring. (Building required trusting this sandbox's TLS-intercepting
+  proxy CA inside the build -- a local-only workaround via a scratch Dockerfile/cert copy,
+  same pattern as this file's very first 2026-08-08 entry; nothing from that workaround was
+  committed.) Went no further than these two: folding `same-decoder`/`segment-capture` into `sdr-rx` or
+  `dispatcher` was considered and rejected, since it would give up the independent
+  `on-failure`/`unless-stopped` restart policies and device-passthrough isolation those
+  services are deliberately built around.

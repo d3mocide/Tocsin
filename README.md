@@ -142,7 +142,9 @@ still open, and don't read "implemented" below as "verified."
    over a real TimescaleDB-backed alert store (the first thing in this repo to actually
    write to Postgres), RF health + spectrum display, `RF_ONLY`/`API_ONLY` divergence rate.
    `web/`'s TypeScript type-checks and builds cleanly; not run against a real browser/backend
-   in this sandbox.
+   in this sandbox. `web/` builds into `api`'s own container image and is served from there
+   (`GET /` and below) rather than running as a separate container -- see
+   `services/api/README.md`.
 
 Phases 5-8 were built ahead of Phase 2's real-audio proof, at the user's explicit direction,
 to reach a whole-stack MVP faster -- see `docs/design/tracking.md`'s per-phase notes for the
