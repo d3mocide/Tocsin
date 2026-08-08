@@ -1,3 +1,4 @@
+from live_audio.metadata import MetadataConfig
 from live_audio.service import IcecastConfig, Streamer
 
 ICECAST = IcecastConfig(host="icecast", port=8000, user="source", password="hackme")
@@ -87,3 +88,18 @@ def test_close_closes_every_feeder():
     streamer.feed("home", "WX1", 16000, b"\x00\x00")
     streamer.close()
     assert all(f.closed for f in FakeFeeder.instances)
+
+
+def test_feed_builds_default_metadata_into_the_ffmpeg_command():
+    streamer = Streamer(ICECAST, feeder_factory=FakeFeeder)
+    streamer.feed("home", "WX5", 16000, b"\x00\x00")
+    command = FakeFeeder.instances[0].command
+    assert command[command.index("-ice_name") + 1] == "Tocsin home WX5"
+
+
+def test_feed_uses_given_metadata_config():
+    metadata = MetadataConfig(site_names={"home": "Portland Home Station"})
+    streamer = Streamer(ICECAST, metadata, feeder_factory=FakeFeeder)
+    streamer.feed("home", "WX5", 16000, b"\x00\x00")
+    command = FakeFeeder.instances[0].command
+    assert command[command.index("-ice_name") + 1] == "Tocsin Portland Home Station WX5"

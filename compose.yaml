@@ -96,6 +96,16 @@ services:
       ICECAST_PORT: "8000"
       ICECAST_SOURCE_USER: source
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:-hackme}
+      ICECAST_STREAM_NAME_TEMPLATE: ${ICECAST_STREAM_NAME_TEMPLATE:-Tocsin {site} {channel}}
+      ICECAST_STREAM_DESCRIPTION: ${ICECAST_STREAM_DESCRIPTION:-Tocsin NOAA Weather Radio relay}
+      ICECAST_STREAM_GENRE: ${ICECAST_STREAM_GENRE:-weather}
+      # Empty by default -- only set LIVE_AUDIO_METADATA_CONFIG (and uncomment
+      # the matching volume below) once you actually have a metadata.yaml
+      # with site_names/channel_names display-name overrides to mount; see
+      # services/live_audio/README.md.
+      LIVE_AUDIO_METADATA_CONFIG: ${LIVE_AUDIO_METADATA_CONFIG:-}
+    # volumes:
+    #   - ./deploy/live_audio/metadata.yaml:/app/metadata.yaml:ro
     depends_on:
       - sdr-rx
       - icecast

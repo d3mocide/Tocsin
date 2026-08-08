@@ -373,4 +373,35 @@ and unit tested," not "verified against real audio."
   `parse_device_config`, prints one clear message naming the offending value and the
   expected `site:serial` format plus the `make sdr-devices` pointer, and exits 1 (still a
   real failure, distinct from the intentional "no devices configured" exit 0 path) instead
-  of dumping a traceback. Added `tests/test_main.py` covering this path. 116 tests passing.
+  of dumping a traceback. Added `tests/test_main.py` covering this path. Also added a
+  `make help` target (and made it `.DEFAULT_GOAL`) since a bare `make` previously ran
+  `up-offgrid` (`docker compose up --build`) silently -- now it lists targets instead.
+  116 tests passing.
+- **2026-08-08** — First real end-to-end hardware run, reported by the user: containers up,
+  Icecast reachable, NOAA weather radio audibly decoding through the SDR. Two follow-ups
+  came out of that: Icecast's status page showing "Unspecified name/description" for every
+  mount, and whether a reverse proxy belongs in front of the stack. The reverse proxy is
+  already scoped -- master-prompt.md §9 calls for "Docker Compose behind Caddy or NPM" as
+  part of Phase 8 (API + web UI, not started, no `api`/`web` service exists yet to proxy
+  to) -- so no code changed there, just confirmed the plan isn't lost. Icecast metadata
+  was genuinely missing and is now in scope: `services/live_audio` gained a `metadata.py`
+  module (`MetadataConfig`/`StreamMetadata`, a `{site}`/`{channel}` name template plus
+  global description/genre) and `feeder.py`'s `build_ffmpeg_command` now passes
+  `-ice_name`/`-ice_description`/`-ice_genre` to ffmpeg's icecast protocol when given.
+  Configurable via env vars (`ICECAST_STREAM_NAME_TEMPLATE`, `ICECAST_STREAM_DESCRIPTION`,
+  `ICECAST_STREAM_GENRE`) for the common case, plus an optional YAML file
+  (`LIVE_AUDIO_METADATA_CONFIG`) with `site_names`/`channel_names` display-name overrides
+  (e.g. the `home` site from `SDR_RX_DEVICES` showing as "Portland Home Station") for
+  friendlier per-deployment labels -- mirrors `same_decoder/tiers.py`'s existing
+  YAML-for-structured-config, env-var-for-the-rest split. Added `pyyaml` to `live_audio`'s
+  deps, wired the new env vars (with a commented-out volume mount example) into
+  `compose.yaml`, and confirmed with `POSTGRES_PASSWORD=x docker compose --profile offgrid
+  config` that the `{site}`/`{channel}` braces in the template's shell-default syntax
+  (`${VAR:-Tocsin {site} {channel}}`) resolve correctly rather than confusing compose's
+  brace matching. 12 new tests (`test_metadata.py` plus feeder/service additions), 128
+  tests passing (`make test`). Not verified: an actual ffmpeg push showing the new name on
+  a real Icecast status page -- this sandbox's Docker build can reach the daemon but not
+  PyPI through its proxy without extra CA setup, so the `live-audio` image itself wasn't
+  rebuilt here. The unit tests fully cover the ffmpeg-argument-building and config-loading
+  logic; real end-to-end confirmation is on the user's already-working hardware host, not
+  this sandbox.
