@@ -7,8 +7,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 DEFAULT_REDIS_URL = "redis://redis:6379/0"
+DEFAULT_POSTGRES_HOST = "timescaledb"
+DEFAULT_POSTGRES_PORT = "5432"
+DEFAULT_POSTGRES_USER = "tocsin"
+DEFAULT_POSTGRES_DB = "tocsin"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 DEFAULT_CONSUMER_NAME = "api"
@@ -20,6 +25,31 @@ DEFAULT_STATIC_DIR = "/app/static"
 DEFAULT_MODE = "offgrid"
 DEFAULT_ICECAST_HOST = "icecast"
 DEFAULT_ICECAST_PORT = 8000
+
+
+def _postgres_dsn_from_env() -> str | None:
+    """`API_POSTGRES_DSN` wins when it's set (deployments that point api at
+    an existing database keep giving it one string), but compose passes the
+    parts instead and lets this assemble them.
+
+    The parts are the safe form: a DSN interpolated in YAML as
+    `postgresql://tocsin:${POSTGRES_PASSWORD}@...` silently becomes a
+    *different* DSN the moment the password contains `@`, `:`, `/`, `?`, or
+    `#` -- the URL parser splits on those first, so the connection fails
+    with "password authentication failed" while the password in `.env` is
+    in fact the right one. Percent-encoding each part removes that class of
+    failure entirely."""
+    dsn = os.environ.get("API_POSTGRES_DSN")
+    if dsn:
+        return dsn
+    password = os.environ.get("API_POSTGRES_PASSWORD")
+    if not password:
+        return None
+    user = quote(os.environ.get("API_POSTGRES_USER", DEFAULT_POSTGRES_USER), safe="")
+    host = os.environ.get("API_POSTGRES_HOST", DEFAULT_POSTGRES_HOST)
+    port = os.environ.get("API_POSTGRES_PORT", DEFAULT_POSTGRES_PORT)
+    database = quote(os.environ.get("API_POSTGRES_DB", DEFAULT_POSTGRES_DB), safe="")
+    return f"postgresql://{user}:{quote(password, safe='')}@{host}:{port}/{database}"
 
 
 @dataclass(frozen=True)
@@ -49,7 +79,7 @@ class ApiConfig:
         data_dir = os.environ.get("TOCSIN_DATA_DIR")
         captures_dir = os.environ.get("API_CAPTURES_DIR")
         return cls(
-            postgres_dsn=os.environ.get("API_POSTGRES_DSN"),
+            postgres_dsn=_postgres_dsn_from_env(),
             redis_url=os.environ.get("API_REDIS_URL", DEFAULT_REDIS_URL),
             consumer_name=os.environ.get("API_CONSUMER_NAME", DEFAULT_CONSUMER_NAME),
             host=os.environ.get("API_HOST", DEFAULT_HOST),

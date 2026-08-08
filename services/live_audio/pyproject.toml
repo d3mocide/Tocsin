@@ -7,6 +7,11 @@ requires-python = ">=3.11"
 dependencies = [
     "pyzmq>=25.1",
     "pyyaml>=6.0",
+    # Only the liveness heartbeat uses it (imported lazily in
+    # `_build_redis_client`), but a lazy import is still a hard dependency
+    # at runtime: without it the service crash-loops on the *first* call
+    # instead of starting and running heartbeat-less.
+    "redis>=5.0",
 ]
 
 [project.scripts]

@@ -9,6 +9,10 @@ dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
     "pyyaml>=6.0",
+    # Heartbeat-only, and imported lazily -- but a lazy import is still a
+    # hard runtime dependency: without it the service crash-loops on the
+    # first call instead of starting and running heartbeat-less.
+    "redis>=5.0",
 ]
 
 [project.scripts]

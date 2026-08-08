@@ -37,6 +37,15 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - timescale-data:/var/lib/postgresql/data
+    # api waits on this (`condition: service_healthy`) rather than racing a
+    # database that accepts TCP connections a few seconds before it has
+    # finished first-boot initialization.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     profiles: [offgrid, hybrid]
 
   sdr-rx:
@@ -150,11 +159,12 @@ services:
 
   stt-worker:
     build: ./services/stt_worker
-    # on-failure: a missing model file (STT_WORKER_MODEL_PATH) is a real,
-    # static misconfiguration -- but unlike SDR_RX_DEVICES's old bug, main()
-    # already prints one clear line and exits before any traceback, and the
-    # very next restart picks up a model dropped into ./models/ with no
-    # manual intervention, which is worth the restart loop in the meantime.
+    # on-failure covers real crashes (ZMQ, whisper-cli). A missing model
+    # file at STT_WORKER_MODEL_PATH is no longer one of them: main() waits
+    # for the file instead of exiting 1, so dropping a model into ./models/
+    # is still picked up with no manual intervention, without the restart
+    # loop that used to reprint the same line every few seconds into the
+    # shared `docker compose logs` stream (see stt_worker's await_model).
     restart: on-failure
     environment:
       # sdr-rx, not segment-capture -- segment-capture no longer has its
@@ -287,14 +297,28 @@ services:
     build:
       context: .
       dockerfile: services/api/Dockerfile
-    # on-failure: a missing/malformed API_POSTGRES_DSN is main()'s own
-    # loud-fail-and-exit-1 check (see services/api/README.md) -- worth
-    # retrying since timescaledb itself may just not be ready yet on a
-    # cold start, not a permanent misconfiguration the way it would be if
-    # this were a required-but-plausibly-absent var like NWS_POLLER_USER_AGENT.
+    # on-failure: an unconfigured connection (neither API_POSTGRES_PASSWORD
+    # nor API_POSTGRES_DSN) is main()'s own loud-fail-and-exit-1 check --
+    # see services/api/README.md. A *slow* database is no longer part of
+    # this policy's job: api waits for timescaledb to be healthy below and
+    # then retries the connection itself, and it exits with one legible
+    # block (not a repeating traceback) on the failures retrying can't fix,
+    # e.g. a password that doesn't match the volume's.
     restart: on-failure
     environment:
-      API_POSTGRES_DSN: postgresql://tocsin:${POSTGRES_PASSWORD}@timescaledb:5432/tocsin
+      # Passed as parts, not as a single interpolated
+      # `postgresql://tocsin:${POSTGRES_PASSWORD}@timescaledb:5432/tocsin`
+      # URL: a password containing `@`, `:`, `/`, `?`, or `#` makes that
+      # string parse as some *other* DSN and fail with "password
+      # authentication failed" while .env is in fact correct. api
+      # percent-encodes these itself (see config.py). API_POSTGRES_DSN is
+      # still honored if set, for deployments pointing at their own
+      # database.
+      API_POSTGRES_HOST: timescaledb
+      API_POSTGRES_PORT: "5432"
+      API_POSTGRES_USER: tocsin
+      API_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      API_POSTGRES_DB: tocsin
       API_REDIS_URL: redis://redis:6379/0
       API_HOST: 0.0.0.0
       API_PORT: ${API_PORT:-8000}
@@ -332,12 +356,19 @@ services:
       # which nothing outside compose ever sees.
       - "${TOCSIN_WEB_PORT:-8080}:${API_PORT:-8000}"
     depends_on:
-      - redis
-      - timescaledb
+      redis:
+        condition: service_started
+      # service_healthy, not service_started: Postgres binds its port before
+      # first-boot initialization finishes, so "started" is not "ready" here
+      # and api would otherwise spend its startup window retrying a database
+      # that isn't listening for real queries yet.
+      timescaledb:
+        condition: service_healthy
       # Not a hard requirement -- /streams degrades to live-audio's own
       # heartbeat view when Icecast is unreachable rather than erroring --
       # but starting it first avoids a pointless failed fetch on boot.
-      - icecast
+      icecast:
+        condition: service_started
     profiles: [offgrid, hybrid]
 
 volumes:

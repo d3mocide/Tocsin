@@ -84,7 +84,7 @@ to end here -- see `docs/design/tracking.md`.
 | Env var | Default | Purpose |
 |---|---|---|
 | `STT_WORKER_ZMQ_CONNECT` | `tcp://sdr-rx:5556` | Address to connect to segment-capture's capture-ready ZMQ PUB socket. `sdr-rx`'s hostname, not `segment-capture`'s -- segment_capture ships inside sdr-rx's container now (see `services/sdr_rx/README.md`'s "Container" section) and no longer has a container/hostname of its own, though it still binds the same port there. |
-| `STT_WORKER_MODEL_PATH` | *(required)* | Path to a ggml model file (see `make fetch-models`). Startup fails loudly if missing or not a file -- off-grid means pre-staged, never downloaded on first boot (design doc §8). |
+| `STT_WORKER_MODEL_PATH` | *(required)* | Path to a ggml model file (see `make fetch-models`). Unset is a misconfiguration and exits 1; set-but-not-yet-present makes the worker log once and wait, polling every 15s, so a model dropped into `./models/` later starts it with no restart needed. Never downloaded on first boot -- off-grid means pre-staged (design doc §8). |
 | `STT_WORKER_WORK_DIR` | `/tmp/stt_worker` | Scratch directory for trimmed WAV copies. |
 | `STT_WORKER_LANGUAGE` | `en` | Passed to whisper-cli's `-l`. |
 | `STT_WORKER_INITIAL_PROMPT` | *(none)* | Passed to whisper-cli's `--prompt` -- design doc §6 recommends seeding local county/place names, since NWR's synthesized voices fail almost exclusively on proper nouns. |

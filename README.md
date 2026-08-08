@@ -116,6 +116,55 @@ The api container's internal bind port (`API_PORT`, default `8000`) is separatel
 configurable but rarely worth changing: compose maps `TOCSIN_WEB_PORT` onto it, so it never
 appears in a URL you type.
 
+## Troubleshooting
+
+### The web UI won't load at `http://<host>:8080/`
+
+The UI is served by the `api` container, so it is unreachable whenever `api` isn't
+running. Check that first:
+
+```sh
+docker compose ps api
+docker compose logs --tail=20 api
+```
+
+`Restarting` there means `api` is failing at startup, and the last lines say why. The two
+common ones:
+
+**`Postgres rejected the password for user 'tocsin'`** -- `POSTGRES_PASSWORD` in `.env`
+doesn't match what the `timescale-data` volume was initialized with. Postgres reads
+`POSTGRES_PASSWORD` **only** when it creates an empty data directory, so changing it in
+`.env` after the first `up` has no effect on the stored password and every later start
+fails. Either put the original value back in `.env`, or change the stored one to match:
+
+```sh
+docker compose exec timescaledb psql -U tocsin -c "ALTER USER tocsin PASSWORD 'the-value-in-your-.env'"
+docker compose up -d api
+```
+
+`docker compose down -v` also resolves it, by deleting the volume and everything recorded
+in it (alert history, transcripts, RF health series).
+
+**`Postgres ... was still unreachable`** -- `timescaledb` itself isn't up.
+`docker compose ps timescaledb` and its logs are the next step. `api` waits out a normal
+cold start (compose gates it on `timescaledb`'s healthcheck, then retries for 60s beyond
+that), so this means something more than slow startup.
+
+### `stt-worker` says it's waiting for a model file
+
+Expected until you have staged one -- off-grid means model weights are pre-fetched, never
+downloaded on first boot. Run `make fetch-models` (needs network), and the worker picks the
+file up within ~15s without a restart. Everything except transcription works meanwhile;
+SAME decode, the alert log, dispatch, and the web UI are unaffected.
+
+### `sdr-rx` logs `usb_claim_interface error -6` or `[R82XX] PLL not locked!`
+
+These come from librtlsdr during device enumeration and tuning, not from Tocsin. If the
+log goes on to `Using format CF32` and `Allocating 15 zero-copy buffers`, the dongle opened
+and you can ignore them. If instead `error -6` (device busy) repeats with no successful
+open, something else on the host is holding the device -- usually the kernel's DVB driver,
+which is what step 1 of Hardware bring-up blacklists.
+
 ## Repository layout
 
 ```

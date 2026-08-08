@@ -1431,3 +1431,64 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   Icecast on a non-default port, since no Docker daemon is available in this sandbox (same
   standing gap as the rest of the compose stack). Unprivileged `icecast2` caps
   `ICECAST_PORT` above 1024; noted in the Dockerfile and `.env.example`.
+
+- **2026-08-08:** Fixed three startup failures a user hit on a real deployment (pasted
+  `docker compose` logs: `api` and `stt-worker` restart-looping, `sdr-rx`'s live-audio and
+  segment-capture crash-looping, web UI unreachable).
+  1. `live_audio` and `segment_capture` import `redis` for their liveness heartbeat but
+     never declared it -- both `pyproject.toml`s were missing `redis>=5.0`, so every start
+     died with `ModuleNotFoundError` inside `_build_redis_client()`. The lazy import is
+     what hid it: nothing at import time touches `redis`, so the container built clean and
+     every unit test passed. Added the dependency (locks regenerated) plus a
+     `test_redis_client.py` in each service that calls `_build_redis_client()` with a URL
+     set -- `from_url` connects lazily, so it needs no live Redis and fails exactly when
+     the dependency goes missing again. `same_decoder` (same container) already declared it,
+     which is why only two of the four processes were down.
+  2. `api` could not authenticate to Postgres, which is why the web UI was unreachable at
+     all -- `api` serves the SPA, so `api` down means no front end. Two changes: compose now
+     passes `API_POSTGRES_HOST/PORT/USER/PASSWORD/DB` instead of interpolating
+     `postgresql://tocsin:${POSTGRES_PASSWORD}@...` in YAML, and `config.py` percent-encodes
+     the parts (verified round-trip through asyncpg's own DSN parser) -- a password
+     containing `@`, `:`, `/`, `?`, or `#` used to produce a *different* DSN and fail with
+     "password authentication failed" while `.env` was correct. `API_POSTGRES_DSN` still
+     wins when set. New `connect.py` then splits transient failures (connection refused,
+     `57P03`) from permanent ones: the first are retried for 60s, the second raise
+     `PostgresStartupError` with an operator-facing message and exit 1, instead of an
+     asyncpg traceback reprinted every few seconds by `restart: on-failure`. The stale-volume
+     cause gets named explicitly, since it is the likely one here: Postgres reads
+     `POSTGRES_PASSWORD` only when initializing an empty data dir, so editing `.env` after
+     the first `up` leaves the old password in the `timescale-data` volume. `timescaledb`
+     also gained a `pg_isready` healthcheck and `api` now waits on it
+     (`condition: service_healthy`) rather than racing a database that binds its port before
+     it is ready.
+  3. `stt-worker` exited 1 on a missing model file and let `restart: on-failure` retry,
+     reprinting the same line into the shared log stream every couple of seconds. It now
+     waits for the file (`await_model`, 15s poll, reminder every 5 min) -- identical
+     recovery when a model is dropped into `./models/`, without the noise. An *unset*
+     `STT_WORKER_MODEL_PATH` is still an immediate exit 1: nothing to wait for.
+
+  Also added a Troubleshooting section to the root README (UI won't load → check `api`;
+  the password fix, with the non-destructive `ALTER USER` form as well as `down -v`; the
+  stt-worker wait; librtlsdr's `usb_claim_interface error -6` / `PLL not locked`, which
+  appear in the user's log but are benign when the device goes on to open). Verified:
+  `docker compose config` on the offgrid profile, and full suites for `api` (100),
+  `stt_worker` (43), `live_audio` (33), `segment_capture` (48). Not verified: a real `up`
+  against a live Postgres, since this sandbox still has no Docker daemon -- the transient
+  vs. permanent split is covered by injected-`connect` unit tests raising real asyncpg
+  exception types.
+
+- **2026-08-08:** Restructured `.env.example` at the user's request ("full of comments and
+  the whole thing is all over the place"). Same variables, grouped into Core / Ports /
+  Radio / Transcription / Meshtastic / Hybrid-only sections and ordered by how often they
+  are touched, with the long-form reasoning cut down to one or two lines per var and a
+  pointer to the service README that already carries it in full (verified before deleting:
+  the networked-node recipe and the drop-the-overlay instructions are both in
+  `services/dispatcher/README.md`, the Icecast one-knob-three-uses explanation is in the
+  root README's "Ports", gain guidance is in `services/sdr_rx/README.md`). 143 lines to 108.
+  One variable added, `STT_WORKER_MODEL_FILE`: `compose.yaml` reads it and the Makefile
+  tells you to set it after `make fetch-models STT_MODEL=...`, but it was absent here.
+  `MESHTASTIC_ENABLED` deliberately stays out as an active line -- `compose.mesh.yaml`
+  reads it as `${MESHTASTIC_ENABLED:-true}`, so an explicit `false` in `.env` would silently
+  disable transmit while the device mapping stayed in place; it's mentioned only in the
+  `tcp` note where turning it on by hand is actually required. Verified by rendering
+  `docker compose config` from the new file with both compose files and the hybrid profile.

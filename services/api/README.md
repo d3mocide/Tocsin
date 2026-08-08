@@ -75,7 +75,10 @@ sandbox).
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `API_POSTGRES_DSN` | *(required)* | e.g. `postgresql://tocsin:<password>@timescaledb:5432/tocsin`. Refuses to start without it. |
+| `API_POSTGRES_PASSWORD` | *(required, unless `API_POSTGRES_DSN` is set)* | Password for `API_POSTGRES_USER`. Compose passes `POSTGRES_PASSWORD` through as this. |
+| `API_POSTGRES_HOST` / `API_POSTGRES_PORT` | `timescaledb` / `5432` | Where Postgres is. |
+| `API_POSTGRES_USER` / `API_POSTGRES_DB` | `tocsin` / `tocsin` | Role and database, matching `timescaledb`'s `POSTGRES_USER`/`POSTGRES_DB`. |
+| `API_POSTGRES_DSN` | *(unset)* | Full DSN, e.g. `postgresql://tocsin:<password>@timescaledb:5432/tocsin`. Overrides the parts above, for deployments pointing at their own database. Prefer the parts otherwise: they percent-encode, so a password containing `@`, `:`, `/`, `?`, or `#` can't silently produce a different DSN. Refuses to start if neither this nor `API_POSTGRES_PASSWORD` is set. |
 | `API_REDIS_URL` | `redis://redis:6379/0` | Redis connection URL. |
 | `API_CONSUMER_NAME` | `api` | Redis consumer-group consumer name (fixed, not hostname-derived -- same reasoning as `fusion`/`dispatcher`). |
 | `API_HOST` / `API_PORT` | `0.0.0.0` / `8000` | uvicorn bind address *inside the container*. Compose publishes it on the host as `TOCSIN_WEB_PORT` (default `8080`) -- see the root README's "Ports". |
@@ -85,6 +88,26 @@ sandbox).
 | `API_CAPTURES_DIR` | *(unset)* | `segment_capture`'s output directory. Unset makes `GET /captures/{name}` a 404. |
 | `ICECAST_HOST` / `ICECAST_PORT` | `icecast` / `8000` | Where *this process* reaches Icecast to read its status page. `ICECAST_PORT` is also what `GET /system` reports for the browser to build playback URLs from, so it must match the port Icecast is published on -- compose keeps the two sides equal on purpose. |
 | `ICECAST_PUBLIC_URL` | *(unset)* | Where the *browser* should reach Icecast. Unset means the page falls back to its own hostname on `ICECAST_PORT`, which is right for a LAN deployment; set it behind a reverse proxy. |
+
+## Startup and Postgres
+
+`connect.py` splits the two ways the initial connection fails, because they
+need opposite handling:
+
+- **Transient** -- connection refused, or `57P03 the database system is
+  starting up`. Normal on a cold `docker compose up`; retried every 2s for
+  up to 60s. (Compose also gates `api` on `timescaledb`'s healthcheck, so
+  this window is usually never entered.)
+- **Permanent** -- rejected password, unknown role, missing database. Retrying
+  cannot fix these, so `api` prints one block naming the likely cause and
+  exits 1 instead of re-raising an asyncpg traceback under
+  `restart: on-failure` every few seconds.
+
+The password case is worth calling out because it is easy to reach by
+accident: Postgres reads `POSTGRES_PASSWORD` **only** when it initializes an
+empty data directory, so editing it in `.env` after the first `up` leaves the
+`timescale-data` volume authenticating against the old value. See the root
+README's Troubleshooting section for the fix.
 
 ## Development
 
