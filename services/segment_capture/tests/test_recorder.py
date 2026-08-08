@@ -40,7 +40,7 @@ def test_finalize_concatenates_preroll_and_drained_audio(tmp_path):
     preroll = np.array([1.0, 2.0], dtype=np.float32)
     new_audio = [np.array([3.0, 4.0], dtype=np.float32)]
     reader = _FakeRingReader(preroll, new_audio)
-    recorder = SegmentRecorder("home", "WX5", _message_start(), reader, tmp_path)
+    recorder = SegmentRecorder("home", "WX5", _message_start(), reader, tmp_path, tier="A")
 
     recorder.poll()
     result = recorder.finalize(timed_out=False)
@@ -48,7 +48,9 @@ def test_finalize_concatenates_preroll_and_drained_audio(tmp_path):
     assert result.site == "home"
     assert result.channel == "WX5"
     assert result.event_code == "TOR"
+    assert result.tier == "A"
     assert result.fips_codes == ("017021",)
+    assert result.raw_header == "ZCZC-..."
     assert result.timed_out is False
     assert result.had_gap is False
     assert result.wav_path.exists()

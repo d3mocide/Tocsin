@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "pyzmq>=25.1",
+    "redis>=5.0",
+    "requests>=2.31",
 ]
 
 [project.scripts]

@@ -22,9 +22,23 @@ from .health import HealthTracker
 from .pipeline import DevicePipeline
 from .prerequisites import ConflictingKernelModuleError, assert_rtlsdr_module_not_loaded
 from .ring_buffer import ChannelRingBuffer
+from .spectrum import SpectrumTracker
 
 DEFAULT_ZMQ_BIND = "tcp://0.0.0.0:5555"
 DEFAULT_RING_BUFFER_DIR = Path("/tmp/sdr_rx_ring")
+
+
+def _build_redis_client():
+    """`None` when `SDR_RX_REDIS_URL` isn't set -- health/spectrum then
+    fall back to their in-process default sinks (`LoggingHealthSink`/
+    `LoggingSpectrumSink`), same optional-Redis seam every other service
+    in this repo uses."""
+    redis_url = os.environ.get("SDR_RX_REDIS_URL")
+    if not redis_url:
+        return None
+    import redis as redis_lib
+
+    return redis_lib.from_url(redis_url)
 
 
 def main() -> None:
@@ -71,7 +85,16 @@ def main() -> None:
     bind_addr = os.environ.get("SDR_RX_ZMQ_BIND", DEFAULT_ZMQ_BIND)
     ring_dir = Path(os.environ.get("SDR_RX_RING_BUFFER_DIR", str(DEFAULT_RING_BUFFER_DIR)))
     publisher = Publisher(bind_addr)
-    health = HealthTracker()
+
+    redis_client = _build_redis_client()
+    health_sink = None
+    if redis_client is not None:
+        from .redis_sink import RedisStreamHealthSink
+
+        health_sink = RedisStreamHealthSink(redis_client)
+    # One HealthTracker shared across every site -- safe now that it keys
+    # on (site, channel), not channel alone (see health.py's docstring).
+    health = HealthTracker(sink=health_sink)
 
     threads: list[threading.Thread] = []
     for device_config in devices:
@@ -84,7 +107,15 @@ def main() -> None:
         ring_buffers = {
             b.channel: ChannelRingBuffer(ring_dir / device_config.site, b.channel) for b in nwr_bins()
         }
-        pipeline = DevicePipeline(device_config.site, publisher, ring_buffers, health=health)
+        spectrum_sink = None
+        if redis_client is not None:
+            from .redis_sink import RedisSpectrumSink
+
+            spectrum_sink = RedisSpectrumSink(redis_client)
+        # One SpectrumTracker per site, unlike health -- each site's dongle
+        # has its own independent 48-bin spectrum (spectrum.py's docstring).
+        spectrum = SpectrumTracker(device_config.site, sink=spectrum_sink)
+        pipeline = DevicePipeline(device_config.site, publisher, ring_buffers, health=health, spectrum=spectrum)
         device.start()
         thread = threading.Thread(
             target=pipeline.run_forever, args=(device,), name=f"sdr-rx-{device_config.site}", daemon=True

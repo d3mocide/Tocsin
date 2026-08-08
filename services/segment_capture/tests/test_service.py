@@ -4,6 +4,7 @@ import time
 import numpy as np
 
 from segment_capture.service import SegmentCaptureService
+from segment_capture.tiers import TierTable
 
 
 class FakePublisher:
@@ -104,6 +105,38 @@ def test_tick_finalizes_a_capture_that_times_out(tmp_path):
 
     assert len(publisher.results) == 1
     assert publisher.results[0].timed_out is True
+    service.close()
+
+
+def test_tier_is_looked_up_from_the_injected_tier_table(tmp_path):
+    publisher = FakePublisher()
+    tiers = TierTable({"TOR": {"name": "Tornado Warning", "tier": "A"}})
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=publisher,
+        tiers=tiers,
+        multimon_command=_fake_multimon_command("EAS: ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-", "EAS: NNNN"),
+        ring_reader_factory=FakeRingReader,
+    )
+    _feed_until(service, [("home", "WX5")], lambda: len(publisher.results) >= 1)
+    assert publisher.results[0].tier == "A"
+    assert publisher.results[0].raw_header == "ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-"
+    service.close()
+
+
+def test_unrecognized_event_code_falls_back_to_tier_b(tmp_path):
+    publisher = FakePublisher()
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=publisher,
+        tiers=TierTable({}),
+        multimon_command=_fake_multimon_command("EAS: ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-", "EAS: NNNN"),
+        ring_reader_factory=FakeRingReader,
+    )
+    _feed_until(service, [("home", "WX5")], lambda: len(publisher.results) >= 1)
+    assert publisher.results[0].tier == "B"
     service.close()
 
 

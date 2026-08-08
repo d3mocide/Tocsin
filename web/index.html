@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tocsin</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Tocsin</h1>
+      <div id="connection-status" class="status status-unknown">connecting&hellip;</div>
+    </header>
+
+    <main>
+      <section id="stats-section" aria-labelledby="stats-heading">
+        <h2 id="stats-heading">System health</h2>
+        <div id="stats" class="stats-grid">
+          <p class="empty">Loading&hellip;</p>
+        </div>
+      </section>
+
+      <section id="alerts-section" aria-labelledby="alerts-heading">
+        <h2 id="alerts-heading">Alert feed</h2>
+        <ul id="alerts" class="alert-list">
+          <li class="empty">Loading&hellip;</li>
+        </ul>
+      </section>
+
+      <section id="rf-health-section" aria-labelledby="rf-health-heading">
+        <h2 id="rf-health-heading">RF channel health</h2>
+        <table id="rf-health">
+          <thead>
+            <tr>
+              <th scope="col">Site</th>
+              <th scope="col">Channel</th>
+              <th scope="col">RMS</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colspan="4" class="empty">Loading&hellip;</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="spectrum-section" aria-labelledby="spectrum-heading">
+        <h2 id="spectrum-heading">Spectrum</h2>
+        <label for="spectrum-site-select">Site</label>
+        <select id="spectrum-site-select"></select>
+        <canvas id="spectrum-canvas" width="960" height="200"></canvas>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        Tocsin is a monitoring, logging, and relay system, not a replacement for a
+        dedicated battery-backed SAME weather radio.
+      </p>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

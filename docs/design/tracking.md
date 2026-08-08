@@ -25,14 +25,14 @@ completion of the phase's actual exit criteria.
 | Phase | Description | Status | Last updated |
 |---|---|---|---|
 | 0 | Bootstrap | Done | 2026-08-07 |
-| 1 | Channelizer | In Progress | 2026-08-07 |
+| 1 | Channelizer | Done | 2026-08-08 |
 | 2 | SAME decode end to end | In Progress | 2026-08-07 |
-| 3 | Live audio | In Progress | 2026-08-07 |
-| 4 | Segment capture + local STT | Not Started | — |
-| 5 | NWS poller + fusion | Not Started | — |
-| 6 | Dispatcher stage 1 | Not Started | — |
-| 7 | Dispatcher stage 2 + remote STT | Not Started | — |
-| 8 | API + web UI | Not Started | — |
+| 3 | Live audio | Done | 2026-08-08 |
+| 4 | Segment capture + local STT | In Progress | 2026-08-08 |
+| 5 | NWS poller + fusion | In Progress | 2026-08-08 |
+| 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
+| 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-08 |
+| 8 | API + web UI | In Progress | 2026-08-08 |
 
 ---
 
@@ -394,25 +394,476 @@ criteria above still can't be met until Phase 2's own real-audio gap closes.
 
 ## Phase 5 — NWS poller + fusion
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- at the user's explicit direction, built ahead of
+Phase 2's real-audio confirmation to get the whole stack to an end-to-end MVP faster, same
+build-order exception as Phase 4. Unlike Phases 2-4, this phase's actual exit criteria
+(roadmap.md: "correlation logic verified against recorded fixtures... covering true
+matches, near-misses..., and each unmatched state") don't need real hardware or a running
+Redis at all -- so unlike those phases, this one **is** fully verified against its stated
+exit criteria already, not just unit tested ahead of hardware proof. What's still open is
+integration with the real, running system (live Redis, live `same-decoder`/`nws-poller`
+output, a real `api.weather.gov` response), which does depend on Phase 2's still-open
+real-audio gap for the RF side.
+
+**Done:**
+- `services/nws_poller`, a new uv-managed service:
+  - `client.py`: `NwsAlertsClient`, ETag-conditional GET against `api.weather.gov/alerts/active`.
+    Verified the actual API contract against the API's own published OpenAPI spec
+    (`api.weather.gov/openapi.json`) rather than assuming: confirmed `area` takes exactly
+    one state/marine-area code per request (not comma-separated, not repeatable -- `zone`
+    supports repetition, `area` doesn't), so polling multiple states means one request per
+    area, each with its own tracked ETag. Injectable GET callable, same testability pattern
+    as `same_decoder.multimon`'s injectable subprocess command.
+  - `parser.py`: GeoJSON feature -> `CapAlert` dataclass, including `geocode.SAME` (the
+    field that makes direct FIPS-set correlation against SAME headers possible with no
+    county-name lookup in between -- design doc §5) and `parameters.VTEC`.
+  - `tracker.py`: `(id, sent)` dedup -- `/alerts/active` returns the full active-alert
+    snapshot on every successful poll, not a delta, so without this every still-active
+    alert would be re-emitted to `fusion` on every single cycle for as long as it stays
+    active.
+  - `redis_sink.py`: publishes to Redis Stream `tocsin:cap_alerts`
+    (`RedisStreamCapAlertSink`), `LoggingCapAlertSink` fallback when no Redis URL is
+    configured -- same seam pattern as every other phase's `LoggingXSink`.
+  - `service.py`/`__init__.py`: polling loop wiring, env-configured
+    (`NWS_POLLER_USER_AGENT`, `NWS_POLLER_AREAS`, `NWS_POLLER_INTERVAL_SECONDS`,
+    `NWS_POLLER_REDIS_URL`); refuses to start with a clear message if the (API-required)
+    User-Agent or area list is missing, and a single bad poll cycle logs and continues
+    rather than crash-looping the process (network flakiness is the expected case for every
+    hybrid-only component, not exceptional -- design doc §8).
+  - 19 tests, all against a fake HTTP getter and a fake Redis client -- no real network or
+    Redis in this sandbox.
+- `services/same_decoder`: added `redis_sink.py` (`RedisStreamEventSink`, publishes to
+  `tocsin:same_events`) implementing the phase's actual durability requirement (design doc
+  §5: "Both paths write raw events to Redis Streams before fusion sees them") that earlier
+  phases explicitly deferred ("no Redis Streams/fusion consumer yet -- that's Phase 5", see
+  `LoggingEventSink`'s old docstring). `__init__.py` now picks the Redis sink when
+  `SAME_DECODER_REDIS_URL` is set, falling back to the existing `LoggingEventSink`
+  otherwise so local/test runs are unaffected. 1 new test, 29 total (up from 28).
+- `services/fusion`, a new uv-managed service -- the correlation logic itself:
+  - `mapping.py`: loads `data/same_to_cap.yaml`, reusing `same_decoder.tiers`'s
+    lazy-default-data-dir fix verbatim (a module-level `.parents[N]` constant crash-looped a
+    container once already this build -- see Phase 2's notes -- not repeating that here).
+  - `correlator.py`: the actual predicate from design doc §5 -- event-code match (via the
+    mapping) AND FIPS-set intersection AND issue-time overlap within a default ±5 min
+    tolerance. `SameEventIn.received_at` (decode-time UTC timestamp) stands in for SAME's
+    own year-less `JJJHHMM` issue time -- NWR is a live broadcast, so decode time and issue
+    time are seconds apart in practice, and this sidesteps year-boundary ambiguity
+    `JJJHHMM` alone can't resolve without more context.
+  - `confidence.py`: mode-relative confidence table (design doc §5's explicit requirement)
+    -- `RF_ONLY` scores high off-grid (the only possible state, not a warning sign) and
+    lower in hybrid (the API lagged or disagreed); `API_ONLY` is the reverse, and scores 0
+    off-grid as a defensive placeholder since `nws-poller` never runs there to produce one.
+  - `store.py`: `AlertStore`, an event-driven in-memory correlation state machine --
+    `ingest_same`/`ingest_cap` each scan currently-open alerts of the *opposite* source type
+    for a match (linear scan, deliberate: even a busy evening produces a handful of open
+    alerts, not thousands -- no index needed yet). A match promotes both to one `CONFIRMED`
+    `Alert` with both sources; no match opens a new `RF_ONLY`/`API_ONLY` alert. Explicitly
+    not handled yet (documented in the module's own docstring, not silently skipped): a
+    second SAME event or CAP update reissue for an already-`CONFIRMED` alert opens a new
+    Alert rather than attaching to the existing one -- multi-site RF-RF and CAP-update
+    correlation aren't part of the design doc's stated SAME<->CAP correlation key.
+  - `redis_bus.py`: `StreamConsumer`, consumer-group durability over both streams (design
+    doc §5: "If fusion crashes mid-event it resumes from the consumer group rather than
+    losing an alert"). Verified this actually works, not just plausible-sounding: wrote a
+    faithful in-memory fake of Redis's consumer-group semantics (`tests/fake_redis_streams.py`
+    -- `">"` delivers an entry exactly once per consumer, `"0"` replays that consumer's own
+    still-pending entries) and a test that has a handler genuinely raise mid-processing,
+    confirms the entry was never acked, reconnects a *second* `StreamConsumer` under the
+    same consumer name, and confirms the crash-orphaned entry gets replayed and processed.
+    Also confirmed a *different* consumer name does **not** see another consumer's pending
+    entries, which drove a real design decision: `FUSION_CONSUMER_NAME` defaults to a fixed
+    string (`"fusion"`), not a hostname -- a hostname-derived default would silently break
+    crash recovery across container *recreation* (new hostname each time), whereas a fixed
+    name survives it since Redis's pending-entries list persists in Redis, not the
+    container. Documented as an explicit "at least once, not exactly once" tradeoff
+    (matching the design doc's own stated acceptance of this) rather than building
+    duplicate-suppression that isn't asked for.
+  - `__init__.py`: env-configured (`TOCSIN_MODE`, `TOCSIN_DATA_DIR`, `FUSION_REDIS_URL`,
+    `FUSION_CONSUMER_NAME`); this is the first service in the repo to actually read
+    `TOCSIN_MODE` in code rather than only via compose profile selection.
+  - 33 tests. `tests/fixtures.py` builds realistic `SameEventIn`/`CapAlertIn` fixtures
+    (Multnomah/Clackamas FIPS, a real-shaped TOR SAME header, a real-shaped CAP Tornado
+    Warning payload) and `test_correlator.py`/`test_store.py` cover every case the
+    roadmap's stated exit criteria name: a true match, a near-miss on county, a near-miss on
+    event code, a near-miss on time-window tolerance, a SAME code with no CAP equivalent
+    (never matches, by construction), and both unmatched states (`RF_ONLY`, `API_ONLY`) in
+    both arrival orders (RF-first and CAP-first).
+- `compose.yaml`: wired `same-decoder`'s `SAME_DECODER_REDIS_URL`, added `nws-poller`
+  (hybrid-only profile, per design doc §8) and `fusion` (both profiles) services. Found and
+  fixed one real bug this surfaced: `NWS_POLLER_USER_AGENT`'s first draft used compose's
+  hard-required `${VAR:?message}` syntax, which correctly demanded a value under the
+  `hybrid` profile -- but compose interpolates every service's environment during `config`
+  resolution regardless of which `--profile` was actually selected, so it also blocked
+  `offgrid` startup even though `nws-poller` never runs there. Confirmed both ways with a
+  real `docker compose config` run (`POSTGRES_PASSWORD=x TOCSIN_MODE=offgrid docker compose
+  --profile offgrid config` failed before the fix, succeeded after). Fixed to the same
+  empty-default-plus-app-level-check pattern `SDR_RX_DEVICES` already established, since
+  that pattern is exactly what avoids this class of bug. `docker compose config` now
+  resolves cleanly for both profiles with no required-var footguns, confirmed with and
+  without every hybrid-only env var set.
+- `Makefile`: `test` target now also runs `nws_poller` and `fusion`. `.env.example`:
+  documented the two new hybrid-only vars.
+- 244 tests passing across all seven implemented services (`make test`), up from 191.
+
+**Not started / open:**
+- Neither new Dockerfile is build-verified -- no Docker daemon in this authoring sandbox
+  this session (unlike the 2026-08-08 session earlier in this log that had one). Both
+  Dockerfiles are plain `python:3.11-slim` + `uv sync` with no apt/from-source step (unlike
+  `sdr-rx`/`stt-worker`), so the risk profile is lower than those, but "lower risk" isn't
+  "verified."
+- Not verified against a real Redis instance, real `same-decoder`/`nws-poller` output, or a
+  real `api.weather.gov` response -- `nws_poller`'s response-shape assumptions come from the
+  API's own published OpenAPI spec, not a live call. Worth an early real-network check once
+  Redis and both producers are actually running together.
+- `AlertStore` doesn't yet persist anything -- `LoggingAlertSink` is the only sink, same "no
+  consumer yet" seam pattern as every prior phase's default sink. Phase 8's `api` service is
+  the eventual TimescaleDB-backed consumer.
+- The two deliberately-out-of-scope gaps named in `store.py`'s and `redis_bus.py`'s own
+  docstrings (no CONFIRMED-alert re-attachment; at-least-once redelivery can double-ingest
+  across a crash) are open items, not bugs -- revisit once real traffic shows how often they
+  matter.
+
+**Depends on:** Phase 2 (RF-side events) for full integration testing; per roadmap.md, the
+correlation logic itself was explicitly designed to be developed and proven against fixtures
+without it, which is what actually happened here.
 
 ---
 
 ## Phase 6 — Dispatcher stage 1
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- same build-order exception as Phases 4-5: built at the
+user's explicit direction to keep pushing toward a whole-stack MVP, ahead of Phase 2's
+real-audio proof. Depends on Phase 5's `tocsin:alerts` output, which itself is fully proven
+against its own exit criteria already (see Phase 5's notes) -- so the only genuinely open
+dependency chain left is Phase 2's real-SAME-decode confirmation, plus this phase's own
+hardware requirement (a real Meshtastic node) that no phase before it needed.
+
+**Done:**
+- `services/fusion` gained the producer half of the handoff this phase needed:
+  `redis_sink.py` (`RedisStreamAlertSink`, publishes every canonical `Alert` to
+  `tocsin:alerts`), wired as `main()`'s sink (previously `LoggingAlertSink`-only, since
+  nothing consumed it yet). Extracted the JSON serialization logic that used to live inline
+  in `store.py`'s `LoggingAlertSink` into `serialize.py` so both sinks share one definition
+  of the wire shape. 3 new tests, 36 total in fusion (up from 33).
+- `services/dispatcher`, a new uv-managed service -- stage 1 only (template message, serial
+  Meshtastic, idempotency, rate limiting); stage 2 (LLM enrichment) and the Meshtastic MQTT
+  ack-fallback leg are Phase 7, per roadmap.md's own phase split:
+  - `fips.py`: loads `data/fips.csv` for county/state names, strips SAME's `PSSCCC`
+    subdivision digit down to the plain 5-digit FIPS the file keys on. This is the first
+    phase to actually read `fips.csv` for its stated purpose (templating) rather than just
+    carrying it as unused reference data.
+  - `message.py`: the deterministic stage-1 template (design doc §7) -- verified it renders
+    the design doc's own example string byte-for-byte
+    (`TOR WARN | Multnomah,Clackamas OR | exp 2145Z | RF`), plus a ≤140-byte truncation path
+    exercised against a synthetic 31-FIPS SAME header (the format's actual maximum). A FIPS
+    code outside `fips.csv`'s seeded Portland-WFO area falls back to showing the raw code
+    rather than dropping the county silently.
+  - `dedup.py`/`rate_limit.py`: near-duplicate suppression and a ~6/hr-burst-3 token bucket
+    per design doc §7's airtime budget, same TTL-eviction shape as `same_decoder.dedup`.
+  - `idempotency.py`: Redis-persisted `SET NX` claim so a dispatcher restart doesn't
+    re-send. SAME carries no ETN, so the design doc's example key
+    `(event, fips_set, etn, stage)` substitutes the SAME header's own `raw_header` for the
+    ETN slot (it already uniquely encodes event/FIPS/purge/issue-time/callsign as one
+    string) rather than threading a new field through `same_decoder`/`fusion` to reconstruct
+    an equivalent tuple by hand.
+  - `meshtastic_serial.py`: a thin injectable wrapper around the real `meshtastic` PyPI
+    package's `SerialInterface.sendText`. Verified against the library's actual installed
+    source in this session (`inspect.signature` against the real package, not just
+    documentation) rather than assumed: `sendText(text, wantAck=True, onResponse=...)`
+    matches exactly, and the library has no built-in blocking "wait N seconds for ack"
+    primitive, so this wrapper builds one with a `threading.Event` to match the design
+    doc's explicit "wait 15s for ack" behavior. Tests cover ack, nak, timeout, and a
+    response genuinely fired from a background thread (`threading.Timer`), not just a
+    synchronous callback.
+  - `redis_bus.py`: consumer-group durability over `tocsin:alerts`, same pattern (and the
+    same tested crash-replay behavior) as `fusion.redis_bus`.
+  - `service.py`: `Stage1Dispatcher` wires tier gating -> dedup -> rate limit -> idempotency
+    claim -> send, in that specific order -- documented and tested as a deliberate choice,
+    not arbitrary: idempotency is claimed *last*, immediately before the send, because its
+    24h Redis claim is a one-way door. Claiming it earlier and then having a later gate
+    reject the alert would permanently strand a real alert as "already sent" for 24h despite
+    it never having actually gone out -- a bug class this ordering (and a dedicated test)
+    rules out by construction.
+  - `__init__.py`: env-configured (`TOCSIN_DATA_DIR`, `DISPATCHER_REDIS_URL`,
+    `DISPATCHER_CONSUMER_NAME`, `MESHTASTIC_SERIAL_DEV_PATH`); fails loudly and exits 1 (not
+    a raw traceback) if the FIPS table can't load or the Meshtastic serial interface can't
+    open, mirroring `sdr_rx`/`stt_worker`'s established startup-assertion pattern for a
+    missing hardware/config dependency.
+  - 45 tests: every module above plus an end-to-end `Stage1Dispatcher` suite (Tier
+    A/B/C gating, near-duplicate suppression before a rate-limit token is spent, a burst of
+    3 sending followed by a 4th being rate-limited, a send exception not propagating while
+    still correctly claiming idempotency, and -- the roadmap's stated exit criteria in
+    miniature -- a second identical header not being resent even across a fresh
+    `Stage1Dispatcher` instance sharing the same fake Redis, simulating a restart).
+- `compose.yaml`: added `dispatcher` (both profiles, per design doc §2's architecture table
+  -- stage 1 is deterministic and zero-dependency by design, so it runs identically
+  off-grid). Single serial device passthrough (`MESHTASTIC_SERIAL_DEVICE`, defaults
+  `/dev/ttyUSB0`), unlike `sdr-rx`'s whole-USB-bus passthrough -- a Meshtastic node
+  enumerates as one stable serial device, not a bus-relative path that shifts across
+  replugs. `restart: on-failure`, matching `segment-capture`'s precedent for "missing
+  required hardware/mount is a real, retriable failure," not `sdr-rx`'s "deliberately
+  supported absence" pattern. `Makefile`'s `test` target and `.env.example` updated.
+- 292 tests passing across all eight implemented services (`make test`), up from 244.
+
+**Not started / open:**
+- No MQTT ack-fallback (Phase 7) -- a serial send exception or ack timeout isn't retried by
+  any other path yet; the idempotency key is still claimed at that point (deliberately, see
+  `service.py`'s docstring), so a transient serial failure means that exact alert won't be
+  retried until its 24h claim expires. Accepted as this phase's scope boundary, not missed.
+- Tier B alerts (`data/same_event_codes.yaml`: "MQTT only") have no MQTT egress path at all
+  yet -- not clearly scoped to a named phase in `docs/design/roadmap.md` as written (Phase 7
+  only names the Meshtastic MQTT *ack-fallback* leg specifically, not a general Tier-B
+  broadcast). Worth a design-doc/roadmap clarification pass before Phase 7, not a dispatcher
+  bug.
+- A SAME header whose FIPS codes span more than one state only shows the first state seen in
+  the stage-1 message (`message.py`) -- Portland WFO's real OR+WA coverage means this could
+  actually happen, not just a theoretical edge case.
+- Live-hardware verification (roadmap's actual exit criteria: "a decoded SAME event reaches
+  a real Meshtastic node over serial... and a dispatcher restart does not re-send it") is
+  entirely open -- no Meshtastic node, no Docker daemon, and no Redis instance in this
+  authoring sandbox this session. `meshtastic_serial.py`'s wrapper was checked against the
+  real package's actual signatures (not just docs) specifically because this gap exists and
+  couldn't be closed by running the real hardware path.
+
+**Depends on:** Phase 5 (needs `tocsin:alerts`, which is fully proven against its own exit
+criteria already) and, per roadmap.md, Phase 2 (a real decoded SAME header to dispatch in the
+first place) -- both still open for the same reason every phase since 2 has flagged: no real
+RF has been decoded in this repo's history yet, only real *voice* audio (Phase 1/3's
+live-hardware verification).
 
 ---
 
 ## Phase 7 — Dispatcher stage 2 + remote STT
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- same build-order exception as Phases 4-6: built at
+the user's explicit direction to finish Phase 7 before moving to Phase 8, ahead of Phase 2's
+real-audio proof. Verified against its own stated exit criteria already, the same way Phase 5
+was: roadmap.md's literal wording ("killing the LiteLLM endpoint mid-run degrades stage 2
+silently with stage 1 still delivered" and "circuit breaker opens after N consecutive
+failures and recovers") is exercised directly in `services/dispatcher/tests/
+test_stage2_dispatcher.py`, not just plausible by design.
+
+**Done:**
+- Closed a real gap discovered while scoping this phase: `stt_worker`'s `GuardedTranscript`
+  carried `event_code`/`fips_codes` but not the SAME header's own `raw_header` or a `tier`
+  value -- stage 1 gets both for free via `fusion`, but `segment_capture` runs its own
+  independent SAME-header parse (Phase 4's deliberate design) that never touched either.
+  Without them, stage 2 would have needed a fuzzy, collision-prone way to match a transcript
+  back to "which alert does this enrich." Fixed at the source instead of working around it in
+  `dispatcher`:
+  - `services/segment_capture` gained `tiers.py` (mirrors `same_decoder/tiers.py` exactly,
+    including its lazy-default-data-dir fix) and now threads `tier` (looked up from its own
+    parsed event code) and `raw_header` (`boundary.MessageStart.raw`, previously captured
+    but dropped at the `CaptureResult` boundary) through `CaptureResult` ->
+    `CapturePublisher`'s JSON payload. `SegmentCaptureService` takes an optional `TierTable`
+    now (`None` falls back to an empty table, i.e. Tier B for everything -- safe default for
+    existing callers/tests written before this). 8 new tests, 46 total (up from 38).
+  - `services/stt_worker`'s `GuardedTranscript` gained `tier`/`raw_header`, passed straight
+    through from the capture payload in `handle_capture`.
+- `services/stt_worker`, the two other Phase 7 deliverables the roadmap names for this
+  service:
+  - **Redis Streams producer:** `redis_sink.py` (`RedisStreamTranscriptSink`, publishes to
+    `tocsin:transcripts`), the same optional-Redis-URL seam `same_decoder`/`nws_poller`
+    already established.
+  - **`remote_http` provider + `STT_CHAIN` race:** `transcript.py` extracts the
+    provider-agnostic `Transcript`/`Segment` types out of `whispercpp.py` (which now
+    re-exports them for backward compatibility) now that there's a second real provider to
+    share them with -- CLAUDE.md's own stated exception to "stay concrete." `remote_http.py`
+    implements the OpenAI-compatible `POST /v1/audio/transcriptions` shape design doc §6
+    names explicitly. `service.py`'s `TranscriptionWorker._transcribe` implements "race,
+    don't chain": local always runs to completion (the floor); on Tier A captures only, when
+    a remote provider is configured, both run concurrently via a `ThreadPoolExecutor`, and
+    remote wins if it returns non-empty text within a budget measured *from the start of the
+    race* (not restarted after local finishes). Deliberately simplified from the design
+    doc's literal "with a better score" wording -- a real cross-provider confidence
+    comparison isn't implementable against a generic OpenAI-compatible endpoint, whose
+    standard response is just `{"text": ...}` with none of whisper.cpp's
+    `no_speech_prob`/`avg_logprob` guaranteed (documented explicitly in both `service.py`'s
+    and `README.md`'s text, not silently assumed away). A real bug avoided during
+    implementation, not found after the fact: an early draft used a `with
+    ThreadPoolExecutor(...)` block, whose implicit `shutdown(wait=True)` on exit would have
+    blocked the caller until the *slow* remote thread actually finished even after the code
+    had already "given up" waiting via the budget timeout -- silently turning
+    `remote_budget_seconds` into a lie. Fixed by managing the pool explicitly with
+    `shutdown(wait=False)`, with a test (`test_local_wins_when_remote_exceeds_budget`) that
+    asserts on wall-clock elapsed time to prove the caller isn't blocked.
+  - 13 new tests, 38 total (up from 25).
+- `services/fusion` gained the producer half of the handoff this phase needed:
+  `redis_sink.py` (`RedisStreamAlertSink`, publishes every canonical `Alert` to
+  `tocsin:alerts`), wired as `main()`'s sink. Extracted the JSON serialization logic that
+  used to live inline in `store.py`'s `LoggingAlertSink` into `serialize.py` so both sinks
+  share one definition. 3 new tests, 36 total (up from 33). *(Landed alongside Phase 6's own
+  work, listed here since it's this phase's actual dependency, not Phase 6's.)*
+- `services/dispatcher`, completing both of design doc §7's remaining pieces:
+  - **`egress/` package** (introduced now that there are two real egress mechanisms to
+    group, matching design doc §9's suggested layout): `meshtastic_serial.py` moved here
+    unchanged from Phase 6; `meshtastic_mqtt.py` (new) publishes Meshtastic's real MQTT
+    downlink JSON schema to `msh/{region}/2/json/mqtt/` -- verified against Meshtastic's own
+    MQTT integration docs this session (topic format, required channel named "mqtt" with
+    downlink enabled, `{"from", "type": "sendtext", "payload"}` schema), not guessed;
+    `dispatch.py`'s `DualPathSender` implements the design doc's serial-primary,
+    MQTT-fallback flow, gated on `TOCSIN_MODE=hybrid` (design doc §8's connectivity contract
+    -- `dispatcher` is the second service in this repo, after `fusion`, to actually read
+    `TOCSIN_MODE` in code). `Stage1Dispatcher` was refactored to send through `DualPathSender`
+    instead of the serial client directly; its own tests and outcome-reason vocabulary
+    updated to match ("serial"/"mqtt_fallback"/"serial_no_ack"/"mqtt_fallback_failed"
+    replacing Phase 6's placeholder "sent"/"no_ack").
+  - **Stage 2**: `litellm_client.py` (LiteLLM's real OpenAI-compatible chat-completions
+    contract, verified against LiteLLM's own docs -- `/chat/completions`, `Authorization:
+    Bearer`, `choices[0].message.content`; hard 3s timeout per the design doc),
+    `circuit_breaker.py` (Redis-persisted consecutive-failure counter; opens for a cooldown
+    after N failures; recovery is TTL-driven, not a dedicated half-open state -- once the
+    open marker's Redis TTL lapses, the next call is simply allowed to try again),
+    `stage2_guard.py` (length/ASCII/no-newline validation on LiteLLM's *output*, distinct
+    from `stt_worker.guard`'s hallucination guard on its *input*), and `Stage2Dispatcher` in
+    `service.py` wiring: tier gate -> transcript-guard gate -> cheap `already_claimed()` peek
+    (avoids paying for an LLM call re-enriching something already fully dispatched) ->
+    circuit-breaker gate -> LiteLLM call -> output guard -> the real, side-effecting
+    `idempotency.claim()` (last, immediately before the send, same "claim last" principle
+    Phase 6 established for stage 1 and this module's own docstring explains again for
+    stage 2's slightly different gate shape).
+  - `models.py` gained `TranscriptIn`/`parse_transcript` alongside the existing
+    `RFAlertIn`/`parse_rf_source`; `redis_bus.py`'s `AlertStreamConsumer` (already generic
+    over `stream=`) now also serves `tocsin:transcripts`, reusing the exact same
+    crash-replay-tested class rather than writing a second one.
+  - `__init__.py`: stage 2 is built only when `DISPATCHER_LITELLM_BASE_URL` is set: unset
+    means `tocsin:transcripts` is never even consumed (chose design doc §8's "omitted
+    entirely" option for offgrid over its "template-only" alternative, since the former
+    needs zero additional code).
+  - 27 new tests (circuit breaker, LiteLLM client, stage-2 guard, `Stage2Dispatcher`, the
+    MQTT client, `DualPathSender`, plus `Stage1Dispatcher`'s tests updated for the egress
+    refactor), 82 total in `dispatcher` (up from 45).
+- `compose.yaml`: `segment-capture` and `stt-worker` gained `TOCSIN_DATA_DIR`/data mount and
+  `STT_WORKER_REDIS_URL`/`STT_CHAIN`/remote-provider env vars respectively; `dispatcher`
+  gained `TOCSIN_MODE`, MQTT gateway env vars, and LiteLLM env vars, plus a `mosquitto`
+  dependency. `docker compose config` confirmed resolving cleanly for both profiles, with
+  minimal env and with every new hybrid-only var set at once (a lesson learned from
+  Phase 5's `NWS_POLLER_USER_AGENT` bug: every new var here uses the same
+  empty-default-plus-app-level-check pattern, none use compose's hard-required `:?`).
+- 350 tests passing across all eight implemented services (`make test`), up from 292.
+
+**Not started / open:**
+- Everything named in the three services' own READMEs as unverified: no real Meshtastic
+  node, no real MQTT gateway configuration, no real LiteLLM/OpenAI-compatible endpoint, no
+  real remote STT endpoint, no real Redis instance, and no Docker daemon in this sandbox this
+  session -- every wire contract in this phase was verified against real published specs
+  (Meshtastic's MQTT docs, LiteLLM's docs, the OpenAI API shape) rather than guessed, but
+  "spec-verified" isn't "live-verified."
+- Tier B's general MQTT broadcast path (distinct from the ack-fallback leg this phase does
+  build) is still unscoped in roadmap.md, called out again in `dispatcher/README.md`.
+- A SAME header spanning more than one state still only shows the first state in stage-1's
+  message (carried over from Phase 6, unchanged).
+
+**Depends on:** Phase 4 (transcript) and Phase 6 (stage 1) per roadmap.md -- both already
+built in this repo (see their own sections), so this phase's only remaining real-world
+dependency is the same one every phase since 2 has: no real SAME header has been decoded from
+actual RF in this repo's history yet.
 
 ---
 
 ## Phase 8 — API + web UI
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- same build-order exception as Phases 5-7: built at
+the user's explicit direction ("finish 7 and then move to 8") ahead of Phase 2's real-audio
+proof. The largest single phase so far -- the first to touch TimescaleDB at all, the first
+FastAPI service, and the first TypeScript in this repo.
+
+**Done:**
+- Found and fixed a real bug in `sdr_rx` while wiring health data into the UI, not introduced
+  by this phase: `HealthTracker` was shared across every site's `DevicePipeline` in a
+  multi-dongle setup but keyed samples on `channel` alone -- two sites' `WX5` would silently
+  collide, the same bug class already fixed once for `sdr_rx.bus`'s ZMQ topics (this doc,
+  2026-08-07). Fixed by keying on `(site, channel)` throughout `health.py`, with a regression
+  test reproducing the exact collision.
+- `services/sdr_rx` gained `spectrum.py`: the 41 non-NWR bins (design doc §3: "the 41 unused
+  bins feed the spectrum/waterfall display as free occupancy data") computed from the
+  channelizer's already-full 48-bin output that `DevicePipeline.process()` was previously
+  discarding -- genuinely free, no new DSP work, just reading what was already being thrown
+  away. Correctly reindexes raw FFT columns to odd-stacked bin order via the same `k %
+  NUM_BINS` mapping `DevicePipeline` already used per-NWR-bin (tested explicitly for both a
+  positive-k and a negative-k wraparound case, since getting this silently wrong would have
+  produced a plausible-looking but mislabeled spectrum). Throttled to ~1/sec, published as a
+  latest-snapshot Redis key (not a stream -- a waterfall display wants "now," not history).
+  `redis_sink.py` gained `RedisStreamHealthSink` (`tocsin:health`, a real time series worth
+  keeping) alongside the spectrum snapshot sink. 9 new tests, 81 total in `sdr_rx` (up from
+  72).
+- `services/api`, a new FastAPI service and the first thing in this repo to actually write to
+  the `timescaledb` compose service:
+  - `schema.sql` (applied idempotently at startup, `db.ensure_schema`): `alerts` (upserted by
+    id, since `fusion` republishes the same alert on every state transition) and
+    `health_samples` (an actual TimescaleDB hypertable via `create_hypertable` -- the one
+    table in this schema where a real time-series database earns its keep over plain
+    Postgres). No ORM/migration framework -- raw asyncpg, matching this codebase's established
+    minimalism; there's no schema-evolution story yet to build tooling for.
+  - `redis_bus.py`: an async port of `fusion`/`dispatcher`'s consumer-group `StreamConsumer`
+    (`redis.asyncio` throughout, `asyncio.create_task` for the background poll loop), serving
+    both `tocsin:alerts` and `tocsin:health`. Crash-replay tested against an async version of
+    the same hand-written faithful Redis-streams fake used elsewhere.
+  - `ingest.py`/`sse.py`: newly ingested alerts upsert into Postgres *and* fan out live to any
+    connected `/alerts/stream` client via an in-process `Broadcaster` (one `asyncio.Queue` per
+    client) -- deliberately not Redis pub/sub, since `api` has no horizontal-scaling story yet
+    to justify it.
+  - `app.py`: `GET /alerts`, `/alerts/stream` (SSE), `/health`, `/spectrum`, `/spectrum/{site}`,
+    `/stats` (alert-state counts plus the `RF_ONLY`/`API_ONLY` divergence rate -- design doc
+    §5's stated "best single health metric for the whole system"). `create_app()` takes
+    already-constructed `pool`/`redis_client` rather than building them in a `lifespan`
+    callback, specifically to keep route logic testable with fakes and no async context
+    manager to trigger or bypass.
+  - Found one real testing-infrastructure trap, not a product bug: an early `/alerts/stream`
+    test opened a live `TestClient.stream()` connection against the endpoint's intentionally-
+    infinite generator and hung indefinitely -- `TestClient`'s stream context manager doesn't
+    reliably cancel that on exit. Killed the hung process, replaced the test with one that
+    confirms the route is registered correctly without opening a live connection, since the
+    actual pub/sub logic (`Broadcaster`) already has full direct coverage in `test_sse.py`.
+  - 36 tests: `db.py` (schema application, upsert/insert queries, the ISO-string ->
+    `datetime` conversion asyncpg requires for `timestamptz` params -- JSON has no native
+    datetime type, and asyncpg does not parse strings implicitly), `redis_bus.py`,
+    `sse.py`, `spectrum.py`, `ingest.py`, `config.py`, and `app.py` (via FastAPI's
+    `TestClient` against fake Postgres/Redis).
+- `web/`, a new Vite + TypeScript frontend -- vanilla, no framework (the design doc names
+  "Vite + TypeScript" without one, and there's no way to visually verify UI polish in this
+  authoring sandbox regardless of framework choice, so this stayed proportionate):
+  `src/api.ts` (REST fetch helpers + `subscribeToAlerts` via native `EventSource`, no SSE
+  library needed), `src/views/{alerts,health,spectrum,stats}.ts` (hand-authored DOM
+  manipulation -- the alert feed's `upsert()` replaces an already-rendered alert in place
+  rather than duplicating it when `fusion` republishes the same id on a state transition; the
+  spectrum view colors the 7 NWR channel bins distinctly from the 41 spectrum-only bins), and
+  `src/main.ts` wiring SSE (push) for alerts against 5s polling (no push feed yet) for
+  health/spectrum/stats. `nginx.conf` proxies `/api/*` to the `api` service in production
+  (stripping the prefix, `proxy_buffering off` for SSE specifically -- buffering would defeat
+  the point of a live feed). `npm run build` (`tsc --noEmit` then `vite build`) is the only
+  verification performed -- confirmed real by running it against the live npm registry in
+  this session, not assumed.
+- `compose.yaml`: `sdr-rx` gained `SDR_RX_REDIS_URL`; `api` (Postgres DSN built from the
+  already-required `POSTGRES_PASSWORD`, so no new required-var footgun) and `web` (nginx on
+  8080, proxying to `api`) added, both profiles. `docker compose config` confirmed resolving
+  cleanly for both.
+- Caught up two stale spots in the root README while touching this area: the "Build order"
+  section still described Phase 1 as hardware-unverified and didn't mention Phases 5-8 at
+  all (both facts had changed several sessions ago without the README being updated to
+  match); fixed to reflect actual current status per this doc, and the `make test` service
+  list was missing every service added since Phase 4.
+- 395 tests passing across all nine implemented Python services (`make test`), up from 350,
+  plus `web`'s clean type-check-and-build.
+
+**Not started / open:**
+- No transcript storage (design doc §9 names "transcripts" alongside alerts/health as
+  TimescaleDB's job) -- nothing consumes `tocsin:transcripts` into Postgres yet, only
+  `dispatcher`'s stage 2 reads it, ephemerally, off the stream. Worth a table once the UI
+  wants to show transcript text.
+- No auth (design doc §9: "reverse proxy + Argon2id local backend auth") -- out of scope for
+  this phase, which is about the data path, not the deploy-behind-Caddy story.
+- Not verified against a real Postgres, Redis, browser, or live upstream producer anywhere in
+  this phase -- verified against fakes, fixtures, and (for `web`) a real `npm`/`tsc` run
+  against the live registry, but no real page has ever been rendered against a real backend.
+- `/alerts` has no pagination beyond `limit` (no cursor/offset) -- fine at current expected
+  alert volumes.
+
+**Depends on:** Phase 5 (alert store) and Phase 1 (health signal) per roadmap.md -- both
+already built (Phase 5 fully proven against its own exit criteria; Phase 1 live-hardware
+verified). The only remaining real dependency is the same one every phase since 2 has
+flagged: no real SAME header has been decoded from actual RF in this repo's history yet, so
+the alert feed this UI displays has never shown a real RF-sourced alert end to end.
 
 ---
 
@@ -549,3 +1000,106 @@ criteria above still can't be met until Phase 2's own real-audio gap closes.
   `stt_worker`'s from-source whisper.cpp build hit the same previously-documented
   TLS-intercepting-proxy wall this sandbox always hits on pip/git-over-HTTPS. See Phase 4's
   section above for the full list of what's confirmed vs. still open.
+- **2026-08-08** — At the user's explicit direction ("let's get an MVP of the whole project
+  up and running, working end to end"), built Phase 5 in full: `services/nws_poller` (new --
+  ETag-conditional `api.weather.gov` client verified against the API's own OpenAPI spec,
+  GeoJSON parser, active-alert dedup tracker, Redis Streams sink), `services/fusion` (new --
+  event-code/FIPS/time-window correlator, mode-relative confidence, an in-memory
+  `AlertStore` state machine, and a Redis consumer-group durability layer whose
+  crash-recovery replay is actually tested, not just asserted, against a hand-written
+  faithful fake of Redis's stream semantics), and `services/same_decoder` gained the
+  `RedisStreamEventSink` the design doc's durability requirement (§5) needed and earlier
+  phases had explicitly deferred to "Phase 5." Unlike Phases 2-4, this phase's stated exit
+  criteria (roadmap.md: correlation verified against fixtures covering true matches,
+  near-misses, and each unmatched state) don't depend on real hardware at all, and are fully
+  met as of this session, not just unit-tested-ahead-of-proof. Found and fixed one real bug
+  along the way: `docker compose config` interpolates every service's environment
+  regardless of which `--profile` is selected, so the first draft's hard-required
+  `NWS_POLLER_USER_AGENT` (`${VAR:?...}`, correct in isolation for `hybrid`) was silently
+  blocking `offgrid` startup too, even though `nws-poller` never runs there -- exactly the
+  class of regression CLAUDE.md's connectivity rule exists to prevent. Fixed to the same
+  empty-default-plus-app-level-loud-fail pattern `SDR_RX_DEVICES` already uses; confirmed
+  both profiles resolve cleanly with `docker compose config`, with and without every
+  hybrid-only var set. `Makefile`'s `test` target and `.env.example` updated. 244 tests
+  passing (`make test`), up from 191. No Docker daemon in this sandbox this session, so
+  neither new image is build-verified (lower risk than `sdr-rx`/`stt-worker`'s images since
+  both are plain `python:3.11-slim` + `uv sync`, no apt/from-source step, but not the same
+  as verified); also not yet run against a real Redis instance or real `api.weather.gov`
+  traffic. See Phase 5's section above for the full done/open breakdown.
+- **2026-08-08** — Continued the same MVP push into Phase 6: `fusion` gained
+  `redis_sink.py` publishing every canonical `Alert` to `tocsin:alerts` (extracted its JSON
+  serialization into a shared `serialize.py` in the process), and `services/dispatcher` (new)
+  implements stage 1 in full -- deterministic template message, near-duplicate suppression,
+  a token-bucket rate limiter, Redis-persisted idempotency (keyed on the SAME header's own
+  `raw_header` since SAME carries no ETN), and a `meshtastic` PyPI wrapper checked against
+  the real installed package's actual signatures (`inspect.signature`, not just
+  documentation) since no physical Meshtastic node exists in this sandbox to verify against
+  directly. Found a real design bug while writing `service.py` and fixed it before it ever
+  shipped: an early draft claimed the idempotency key as the *first* gate for simplicity,
+  which would have permanently stranded any alert that got that far and then failed a later
+  gate (rate limit, dedup) as "already sent" for 24h despite never actually being
+  transmitted -- reordered so idempotency is claimed *last*, immediately before the send,
+  and added a dedicated test (`test_send_exception_does_not_propagate_and_idempotency_is_
+  still_claimed`) that would fail if that ordering ever regressed. `compose.yaml` gained the
+  `dispatcher` service (both profiles, single serial-device passthrough, `restart:
+  on-failure`). 292 tests passing (`make test`), up from 244. Entirely unverified against
+  real hardware or a real Redis this session -- no Meshtastic node, no Docker daemon, no
+  Redis instance available; see Phase 6's section above for the complete breakdown of what
+  that leaves open.
+- **2026-08-08** — Finished Phase 7 in the same MVP-push session, at the user's explicit
+  direction ("let's finish 7 and then move to 8"). Closed a real gap found while scoping
+  stage 2: `segment_capture`'s independent SAME-header pipeline (a deliberate Phase 4 design
+  choice) never carried the raw header text or a tier value through to `stt_worker`, so
+  stage 2 had no precise way to identify which alert a transcript belonged to the way stage
+  1 does. Fixed at the source (`segment_capture` gained its own `tiers.py` and now threads
+  `raw_header`/`tier` through `CaptureResult` -> `stt_worker`'s `GuardedTranscript`) rather
+  than building a fuzzier matching heuristic downstream. Built `stt_worker`'s `remote_http`
+  provider and `STT_CHAIN` race (local always completes as the floor; remote races
+  concurrently on Tier A only, within a budget measured from the start of the race) and its
+  `tocsin:transcripts` Redis producer; `fusion` gained the `tocsin:alerts` producer
+  `dispatcher` needed. Built `dispatcher`'s `egress/` package (a real `meshtastic_mqtt.py`
+  downlink publisher verified against Meshtastic's actual MQTT integration docs -- exact
+  topic and JSON schema, not approximated -- plus `dispatch.py`'s serial-then-MQTT
+  `DualPathSender`, mode-gated per design doc §8) and stage 2 in full (`litellm_client.py`
+  verified against LiteLLM's real API docs, a Redis-persisted `circuit_breaker.py`, and
+  `stage2_guard.py` for LiteLLM's own output). Caught one real bug before it shipped, in
+  `stt_worker`'s race logic: an early draft's `with ThreadPoolExecutor(...)` block would have
+  silently blocked past the remote budget on its implicit `shutdown(wait=True)`, waiting for
+  a slow remote thread to finish even after giving up on it -- fixed with an explicit
+  `shutdown(wait=False)` and a wall-clock-timed regression test. Both of this phase's named
+  roadmap exit criteria are exercised directly, not just asserted plausible:
+  `test_stage2_dispatcher.py` kills a fake LiteLLM mid-run and confirms stage 2 degrades
+  silently while never touching egress, and drives the circuit breaker through open ->
+  cooldown -> recovery in one test. 350 tests passing (`make test`), up from 292. Nothing in
+  this phase touched real Meshtastic/MQTT/LiteLLM/remote-STT infrastructure or a real Redis
+  -- every wire contract was verified against real published specs this session, but that's
+  "spec-verified," not "live-verified"; see Phase 7's section above for the full breakdown.
+- **2026-08-08** — Finished Phase 8 in the same session, at the user's explicit direction
+  ("finish 7 and then move to 8"): the API + web UI milestone, and by far the largest single
+  phase so far -- the first to write to TimescaleDB, the first FastAPI service, the first
+  TypeScript in this repo. Found and fixed a real latent bug in `sdr_rx` while wiring health
+  data into the new UI (not caused by this phase, just surfaced by finally using the data for
+  something): `HealthTracker` was shared across every site's `DevicePipeline` but keyed
+  samples on `channel` alone, so two dongles/sites would silently collide on the same channel
+  name -- the identical bug class already fixed once for this service's own ZMQ topics
+  (2026-08-07 entry above). Fixed by keying on `(site, channel)` throughout, with a
+  regression test reproducing the exact collision. Added `sdr_rx.spectrum`: the 41 spectrum-
+  only bins design doc §3 describes, computed for free from data `DevicePipeline.process()`
+  was already discarding, correctly reindexed through the same `k % NUM_BINS` mapping
+  `DevicePipeline` uses per-channel (verified against both a positive- and negative-k
+  wraparound case, since a silent reindexing bug would have produced a plausible-looking but
+  mislabeled spectrum display). Built `services/api` (FastAPI, raw asyncpg against a
+  checked-in `schema.sql`, async Redis consumer groups feeding both Postgres and a live SSE
+  fan-out) and `web/` (vanilla Vite+TypeScript, no framework -- proportionate given this
+  sandbox can't visually verify UI polish regardless of framework choice). Hit and fixed one
+  real test-infrastructure trap along the way: an `/alerts/stream` test using
+  `TestClient.stream()` against the endpoint's intentionally-infinite SSE generator hung the
+  whole test run indefinitely; killed the hung process and replaced it with a route-
+  registration check, relying on `test_sse.py`'s already-thorough direct coverage of the
+  underlying pub/sub logic instead. Also caught the root README's "Build order" section badly
+  out of date (still described Phase 1 as hardware-unverified, didn't mention Phases 5-8 at
+  all) and fixed it to match this doc, since a stale root README undermines the very
+  "where are we" tracking this file exists to provide. 395 tests passing across all nine
+  Python services (`make test`), up from 350, plus a clean `web` type-check-and-build
+  confirmed against the live npm registry. Nothing in this phase ran against a real Postgres,
+  Redis, or browser -- see Phase 8's section above for the complete breakdown.

@@ -37,25 +37,15 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+from .transcript import Segment, Transcript  # re-exported -- see transcript.py's docstring
 
 DEFAULT_BINARY = "whisper-cli"
 DEFAULT_LANGUAGE = "en"
 
-
-@dataclass(frozen=True)
-class Segment:
-    text: str
-    no_speech_prob: float | None
-    avg_logprob: float | None
-
-
-@dataclass(frozen=True)
-class Transcript:
-    text: str
-    segments: tuple[Segment, ...]
+__all__ = ["Segment", "Transcript", "build_command", "parse_transcript", "run", "DEFAULT_BINARY", "DEFAULT_LANGUAGE"]
 
 
 def build_command(

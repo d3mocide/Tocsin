@@ -11,6 +11,7 @@ from .bus import CapturePublisher
 from .multimon import MultimonProcess
 from .recorder import DEFAULT_HARD_TIMEOUT_SECONDS, DEFAULT_PREROLL_SECONDS, SegmentRecorder
 from .ring_reader import RingBufferReader
+from .tiers import TierTable
 
 
 class SegmentCaptureService:
@@ -23,6 +24,7 @@ class SegmentCaptureService:
         ring_buffer_dir: Path,
         output_dir: Path,
         publisher: CapturePublisher,
+        tiers: TierTable | None = None,
         multimon_command: list[str] | None = None,
         preroll_seconds: float = DEFAULT_PREROLL_SECONDS,
         hard_timeout_seconds: float = DEFAULT_HARD_TIMEOUT_SECONDS,
@@ -32,6 +34,13 @@ class SegmentCaptureService:
         self._ring_buffer_dir = ring_buffer_dir
         self._output_dir = output_dir
         self._publisher = publisher
+        # Optional, not required, unlike same_decoder.Decoder's `tiers` --
+        # segment_capture's own tests predate tier threading and construct
+        # this without a data/ directory available; an empty TierTable
+        # just falls back to Tier B for every code (TierTable's own
+        # "unrecognized code" behavior), which is a safe default here since
+        # nothing downstream silently escalates on it.
+        self._tiers = tiers or TierTable({})
         self._multimon_command = multimon_command
         self._preroll_seconds = preroll_seconds
         self._hard_timeout_seconds = hard_timeout_seconds
@@ -68,12 +77,14 @@ class SegmentCaptureService:
             message_start = parse_message_start(line)
             if message_start is not None:
                 ring_reader = self._ring_reader_factory(self._ring_buffer_dir / site, channel)
+                _name, tier = self._tiers.lookup(message_start.event_code)
                 self._recorders[key] = self._recorder_factory(
                     site,
                     channel,
                     message_start,
                     ring_reader,
                     self._output_dir,
+                    tier=tier,
                     preroll_seconds=self._preroll_seconds,
                     hard_timeout_seconds=self._hard_timeout_seconds,
                 )

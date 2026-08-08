@@ -19,12 +19,53 @@ import os
 import sys
 from pathlib import Path
 
-from . import whispercpp
-from .service import TranscriptionWorker
+from . import remote_http, whispercpp
+from .service import DEFAULT_REMOTE_BUDGET_SECONDS, TranscriptionWorker
 from .subscriber import CaptureSubscriber
 
 DEFAULT_ZMQ_CONNECT = "tcp://segment-capture:5556"
 DEFAULT_WORK_DIR = Path("/tmp/stt_worker")
+
+
+def _build_sink():
+    """`None` falls back to `TranscriptionWorker`'s own default
+    (`LoggingTranscriptSink`) -- same seam pattern as
+    `same_decoder._build_sink`/`nws_poller._build_sink`."""
+    redis_url = os.environ.get("STT_WORKER_REDIS_URL")
+    if not redis_url:
+        return None
+    import redis as redis_lib
+
+    from .redis_sink import RedisStreamTranscriptSink
+
+    return RedisStreamTranscriptSink(redis_lib.from_url(redis_url))
+
+
+def _build_remote_run():
+    """`STT_CHAIN` (design doc §6): `local` (default, offgrid) disables
+    remote entirely; `local,remote` (hybrid) enables it, but only if a
+    base URL is actually configured -- a hybrid-only misconfiguration must
+    never block the local-only path that works off-grid too (CLAUDE.md's
+    connectivity rule), so this warns and falls back rather than
+    exiting."""
+    chain = {part.strip() for part in os.environ.get("STT_CHAIN", "local").split(",") if part.strip()}
+    if "remote" not in chain:
+        return None
+    base_url = os.environ.get("STT_WORKER_REMOTE_BASE_URL")
+    if not base_url:
+        print(
+            "stt-worker: STT_CHAIN includes 'remote' but STT_WORKER_REMOTE_BASE_URL is unset -- "
+            "continuing local-only.",
+            file=sys.stderr,
+        )
+        return None
+    api_key = os.environ.get("STT_WORKER_REMOTE_API_KEY") or None
+    model = os.environ.get("STT_WORKER_REMOTE_MODEL", remote_http.DEFAULT_MODEL)
+
+    def remote_run(wav_path):
+        return remote_http.run(wav_path, base_url=base_url, api_key=api_key, model=model)
+
+    return remote_run
 
 
 def main() -> None:
@@ -47,10 +88,20 @@ def main() -> None:
     language = os.environ.get("STT_WORKER_LANGUAGE", whispercpp.DEFAULT_LANGUAGE)
     initial_prompt = os.environ.get("STT_WORKER_INITIAL_PROMPT") or None
     binary = os.environ.get("STT_WORKER_WHISPER_BINARY", whispercpp.DEFAULT_BINARY)
+    remote_budget_seconds = float(
+        os.environ.get("STT_WORKER_REMOTE_BUDGET_SECONDS", DEFAULT_REMOTE_BUDGET_SECONDS)
+    )
 
     subscriber = CaptureSubscriber(connect_addr)
     worker = TranscriptionWorker(
-        model_path, work_dir, binary=binary, language=language, initial_prompt=initial_prompt
+        model_path,
+        work_dir,
+        sink=_build_sink(),
+        binary=binary,
+        language=language,
+        initial_prompt=initial_prompt,
+        remote_run=_build_remote_run(),
+        remote_budget_seconds=remote_budget_seconds,
     )
     print(f"stt-worker: subscribed to {connect_addr}, model={model_path}", flush=True)
     try:

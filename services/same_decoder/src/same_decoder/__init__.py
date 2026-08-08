@@ -21,6 +21,22 @@ from .tiers import TierTable
 DEFAULT_ZMQ_CONNECT = "tcp://sdr-rx:5555"
 
 
+def _build_sink():
+    """`None` falls back to `Decoder`'s own default (`LoggingEventSink`) --
+    same seam pattern as `nws_poller._build_sink`. A real deployment sets
+    `SAME_DECODER_REDIS_URL` (compose.yaml does) so `fusion` has something
+    durable to read from (design doc §5); local/test runs without it still
+    work, just logging to stdout instead."""
+    redis_url = os.environ.get("SAME_DECODER_REDIS_URL")
+    if not redis_url:
+        return None
+    import redis as redis_lib
+
+    from .redis_sink import RedisStreamEventSink
+
+    return RedisStreamEventSink(redis_lib.from_url(redis_url))
+
+
 def main() -> None:
     connect_addr = os.environ.get("SAME_DECODER_ZMQ_CONNECT", DEFAULT_ZMQ_CONNECT)
     data_dir = os.environ.get("TOCSIN_DATA_DIR")
@@ -32,7 +48,7 @@ def main() -> None:
         sys.exit(1)
 
     subscriber = SameAudioSubscriber(connect_addr)
-    decoder = Decoder(tiers)
+    decoder = Decoder(tiers, sink=_build_sink())
     print(f"same-decoder: subscribed to {connect_addr}", flush=True)
     try:
         while True:

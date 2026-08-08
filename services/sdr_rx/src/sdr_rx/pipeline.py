@@ -20,6 +20,7 @@ from .discriminator import FMDiscriminator
 from .health import HealthTracker
 from .resample import to_multimon_rate, to_s16le, to_stt_rate
 from .ring_buffer import ChannelRingBuffer
+from .spectrum import SpectrumTracker
 
 
 class SampleSource(Protocol):
@@ -49,6 +50,7 @@ class DevicePipeline:
         publisher: ChannelPublisher,
         ring_buffers: dict[str, ChannelRingBuffer],
         health: HealthTracker | None = None,
+        spectrum: SpectrumTracker | None = None,
         channelizer: PolyphaseChannelizer | None = None,
         dc_blocker: DCBlocker | None = None,
     ):
@@ -57,6 +59,7 @@ class DevicePipeline:
         self._dc_blocker = dc_blocker or DCBlocker()
         self._channelizer = channelizer or PolyphaseChannelizer()
         self._health = health or HealthTracker()
+        self._spectrum = spectrum or SpectrumTracker(site)
         self._bins = nwr_bins()
         missing = [b.channel for b in self._bins if b.channel not in ring_buffers]
         if missing:
@@ -68,6 +71,7 @@ class DevicePipeline:
         spectrum = self._channelizer.process(cleaned)  # (n_frames, num_bins)
         if spectrum.shape[0] == 0:
             return
+        self._spectrum.sample(spectrum)
         for b in self._bins:
             state = self._channels[b.channel]
             bin_samples = spectrum[:, b.k % self._channelizer.num_bins]
@@ -75,7 +79,7 @@ class DevicePipeline:
             if audio.size == 0:
                 continue
             state.ring_buffer.write(audio)
-            self._health.sample(b.channel, audio)
+            self._health.sample(self.site, b.channel, audio)
             self._publisher.publish(TOPIC_SAME, self.site, b.channel, 22050, to_s16le(to_multimon_rate(audio)))
             self._publisher.publish(TOPIC_STT, self.site, b.channel, 16000, to_s16le(to_stt_rate(audio)))
 

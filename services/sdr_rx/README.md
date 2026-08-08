@@ -8,13 +8,25 @@ see `../../docs/` and the repo root README for the full design.
 The 48-bin odd-stacked polyphase channelizer (`src/sdr_rx/channelizer.py`),
 DC blocker, discriminator, resampling, channel/bin mapping, ZMQ PUB
 publisher (`bus.py`), tmpfs ring buffer (`ring_buffer.py`), health signal
-(`health.py`), host-prerequisite check (`prerequisites.py`), and the
-pipeline that wires them together (`pipeline.py`) are implemented and unit
-tested. `SoapySDRDevice` (`capture.py`) is written against the SoapySDR
-Python API but is untestable without target hardware and the SoapySDR
-bindings installed -- everything upstream of it (`DevicePipeline`) is
-exercised in tests via a fake sample source instead, so the whole path
-except actual device I/O is proven without RF.
+(`health.py`), the 41-spectrum-bin tracker (`spectrum.py`, Phase 8 --
+computed for free from the channelizer's already-full 48-bin output, see
+its own docstring), Redis publishing for both (`redis_sink.py`,
+`tocsin:health` stream + a per-site `tocsin:spectrum:<site>` snapshot key
+for `api`), host-prerequisite check (`prerequisites.py`), and the pipeline
+that wires them together (`pipeline.py`) are implemented and unit tested.
+`SoapySDRDevice` (`capture.py`) is written against the SoapySDR Python API
+but is untestable without target hardware and the SoapySDR bindings
+installed -- everything upstream of it (`DevicePipeline`) is exercised in
+tests via a fake sample source instead, so the whole path except actual
+device I/O is proven without RF.
+
+**A real bug fixed in Phase 8, not introduced by it:** `HealthTracker` was
+shared across every site's `DevicePipeline` in a multi-dongle setup but
+keyed samples on `channel` alone, not `(site, channel)` -- two sites' `WX5`
+would silently collide, the same bug class already fixed once for this
+service's own ZMQ topics (`docs/design/tracking.md`, 2026-08-07). Found
+while wiring health data into Phase 8's UI; fixed with a regression test
+(`test_same_channel_name_at_different_sites_is_tracked_independently`).
 
 The Dockerfile now installs the SoapySDR system packages (`python3-soapysdr`,
 `soapysdr-module-rtlsdr`) via apt on a `debian:bookworm-slim` base -- see the
@@ -61,6 +73,7 @@ multi-service sequence. The `sdr-rx`-specific prerequisites it walks through:
 | `SDR_RX_LIST_DEVICES` | *(unset)* | If set (any value), enumerate visible rtlsdr devices and exit instead of starting capture -- see `make sdr-devices`. |
 | `SDR_RX_ZMQ_BIND` | `tcp://0.0.0.0:5555` | ZMQ PUB bind address for the `same.<site>.<channel>` / `stt.<site>.<channel>` topics (see `bus.py`). |
 | `SDR_RX_RING_BUFFER_DIR` | `/tmp/sdr_rx_ring` | Base directory for the per-site, per-channel tmpfs ring buffers -- mount this on tmpfs in production. |
+| `SDR_RX_REDIS_URL` | *(unset -- logs in-process only)* | Redis connection URL. When set, health samples publish to the `tocsin:health` stream and spectrum snapshots to `tocsin:spectrum:<site>` for `api` (Phase 8). |
 
 ## Development
 
