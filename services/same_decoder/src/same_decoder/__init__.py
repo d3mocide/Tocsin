@@ -14,6 +14,7 @@ import os
 import sys
 from pathlib import Path
 
+from . import heartbeat as heartbeat_module
 from .service import Decoder
 from .subscriber import SameAudioSubscriber
 from .tiers import TierTable
@@ -21,20 +22,29 @@ from .tiers import TierTable
 DEFAULT_ZMQ_CONNECT = "tcp://localhost:5555"
 
 
-def _build_sink():
-    """`None` falls back to `Decoder`'s own default (`LoggingEventSink`) --
-    same seam pattern as `nws_poller._build_sink`. A real deployment sets
-    `SAME_DECODER_REDIS_URL` (compose.yaml does) so `fusion` has something
-    durable to read from (design doc §5); local/test runs without it still
-    work, just logging to stdout instead."""
+def _build_redis_client():
+    """`None` when `SAME_DECODER_REDIS_URL` is unset. Built once in `main()`
+    and shared by the event sink and the liveness heartbeat, rather than
+    each opening its own connection to the same server."""
     redis_url = os.environ.get("SAME_DECODER_REDIS_URL")
     if not redis_url:
         return None
     import redis as redis_lib
 
+    return redis_lib.from_url(redis_url)
+
+
+def _build_sink(redis_client):
+    """`None` falls back to `Decoder`'s own default (`LoggingEventSink`) --
+    same seam pattern as `nws_poller._build_sink`. A real deployment sets
+    `SAME_DECODER_REDIS_URL` (compose.yaml does) so `fusion` has something
+    durable to read from (design doc §5); local/test runs without it still
+    work, just logging to stdout instead."""
+    if redis_client is None:
+        return None
     from .redis_sink import RedisStreamEventSink
 
-    return RedisStreamEventSink(redis_lib.from_url(redis_url))
+    return RedisStreamEventSink(redis_client)
 
 
 def main() -> None:
@@ -47,11 +57,15 @@ def main() -> None:
         print(f"same-decoder: could not load event-code table: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    redis_client = _build_redis_client()
     subscriber = SameAudioSubscriber(connect_addr)
-    decoder = Decoder(tiers, sink=_build_sink())
+    decoder = Decoder(tiers, sink=_build_sink(redis_client))
+    heartbeat = heartbeat_module.build(redis_client)
     print(f"same-decoder: subscribed to {connect_addr}", flush=True)
     try:
         while True:
+            if heartbeat is not None:
+                heartbeat.beat()
             received = subscriber.recv(timeout_ms=1000)
             if received is None:
                 continue

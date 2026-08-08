@@ -13,8 +13,10 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
+from . import heartbeat as heartbeat_module
 from .bus import Publisher
 from .capture import DEFAULT_GAIN_DB, SoapySDRDevice, enumerate_devices, parse_device_config
 from .channels import nwr_bins
@@ -102,6 +104,7 @@ def main() -> None:
     health = HealthTracker(sink=health_sink)
 
     threads: list[threading.Thread] = []
+    started_sites: list[str] = []
     for device_config in devices:
         try:
             device = SoapySDRDevice(device_config.serial, gain_db=gain_db)
@@ -127,10 +130,27 @@ def main() -> None:
         )
         thread.start()
         threads.append(thread)
+        started_sites.append(device_config.site)
 
     if not threads:
         print("sdr-rx: no devices started successfully", file=sys.stderr)
         sys.exit(1)
 
-    for thread in threads:
-        thread.join()
+    heartbeat = heartbeat_module.build(redis_client)
+    if heartbeat is None:
+        for thread in threads:
+            thread.join()
+        return
+
+    # Beat from the main thread, watching the device threads, rather than
+    # from inside DevicePipeline: a per-site capture thread that has
+    # silently died is precisely what this needs to be able to report, and
+    # a heartbeat living inside that thread would simply stop with it and
+    # be indistinguishable from the whole process being gone.
+    while any(thread.is_alive() for thread in threads):
+        heartbeat.beat(
+            sites=started_sites,
+            devices_configured=len(devices),
+            devices_running=sum(1 for thread in threads if thread.is_alive()),
+        )
+        time.sleep(1.0)

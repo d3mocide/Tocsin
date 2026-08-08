@@ -3,55 +3,73 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
     <title>Tocsin</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <header>
-      <h1>Tocsin</h1>
-      <div id="connection-status" class="status status-unknown">connecting&hellip;</div>
+    <header class="app-header">
+      <div class="brand">
+        <h1>Tocsin</h1>
+        <div id="mode-chip"></div>
+      </div>
+      <div id="connection-status"></div>
     </header>
 
-    <main>
-      <section id="stats-section" aria-labelledby="stats-heading">
-        <h2 id="stats-heading">System health</h2>
-        <div id="stats" class="stats-grid">
-          <p class="empty">Loading&hellip;</p>
-        </div>
-      </section>
+    <main class="layout">
+      <div class="main-column">
+        <section class="panel panel-streams" aria-labelledby="streams-heading">
+          <div class="panel-head"><h2 id="streams-heading">Live audio</h2></div>
+          <div id="streams"></div>
+        </section>
 
-      <section id="alerts-section" aria-labelledby="alerts-heading">
-        <h2 id="alerts-heading">Alert feed</h2>
-        <ul id="alerts" class="alert-list">
-          <li class="empty">Loading&hellip;</li>
-        </ul>
-      </section>
+        <section class="panel panel-feed" aria-labelledby="alerts-heading">
+          <div class="panel-head">
+            <h2 id="alerts-heading">Alert feed</h2>
+          </div>
+          <div id="filters" class="filters"></div>
+          <!-- Announced politely: a new alert arriving should reach a screen
+               reader without stealing focus from whatever is being read. -->
+          <div id="alerts" class="alert-feed" aria-live="polite" aria-busy="false">
+            <p class="empty">Loading…</p>
+          </div>
+        </section>
 
-      <section id="rf-health-section" aria-labelledby="rf-health-heading">
-        <h2 id="rf-health-heading">RF channel health</h2>
-        <table id="rf-health">
-          <thead>
-            <tr>
-              <th scope="col">Site</th>
-              <th scope="col">Channel</th>
-              <th scope="col">RMS</th>
-              <th scope="col">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td colspan="4" class="empty">Loading&hellip;</td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
+        <section class="panel" aria-labelledby="activity-heading">
+          <div class="panel-head"><h2 id="activity-heading">Activity</h2></div>
+          <div id="activity"></div>
+        </section>
+      </div>
 
-      <section id="spectrum-section" aria-labelledby="spectrum-heading">
-        <h2 id="spectrum-heading">Spectrum</h2>
-        <label for="spectrum-site-select">Site</label>
-        <select id="spectrum-site-select"></select>
-        <canvas id="spectrum-canvas" width="960" height="200"></canvas>
-      </section>
+      <div class="sidebar">
+        <section class="panel" aria-labelledby="stats-heading">
+          <div class="panel-head"><h2 id="stats-heading">System health</h2></div>
+          <div id="stats" class="stats-grid"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="services-heading">
+          <div class="panel-head"><h2 id="services-heading">Services</h2></div>
+          <div id="services"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="dispatch-heading">
+          <div class="panel-head"><h2 id="dispatch-heading">Dispatch</h2></div>
+          <div id="dispatch"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="rf-health-heading">
+          <div class="panel-head"><h2 id="rf-health-heading">RF channels</h2></div>
+          <div id="rf-health" class="scroll-x"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="spectrum-heading">
+          <div class="panel-head">
+            <h2 id="spectrum-heading">Spectrum</h2>
+            <select id="spectrum-site-select" class="filter-select" aria-label="Spectrum site"></select>
+          </div>
+          <canvas id="spectrum-canvas" width="640" height="260"></canvas>
+        </section>
+      </div>
     </main>
 
     <footer>

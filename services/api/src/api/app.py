@@ -10,16 +10,30 @@ called.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, spectrum as spectrum_module
-from .sse import Broadcaster
+from . import db, reference as reference_module, spectrum as spectrum_module, status as status_module, streams as streams_module
+from .config import ApiConfig
+from .sse import Broadcaster, format_sse
+
+
+async def _default_http_get(url: str) -> str | None:
+    """Injectable so `/streams` is testable without a running Icecast (and
+    so tests never open a socket). Imported lazily: httpx is only needed
+    for this one LAN call, and an `api` that can't reach Icecast must
+    still serve every other route."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=streams_module.DEFAULT_TIMEOUT_SECONDS) as client:
+        response = await client.get(url)
+        if response.status_code != 200:
+            return None
+        return response.text
 
 
 def create_app(
@@ -27,11 +41,22 @@ def create_app(
     redis_client,
     broadcaster: Broadcaster | None = None,
     static_dir: Path | None = None,
+    config: ApiConfig | None = None,
+    http_get=_default_http_get,
 ) -> FastAPI:
     app = FastAPI(title="Tocsin API")
     app.state.pool = pool
     app.state.redis = redis_client
     app.state.broadcaster = broadcaster or Broadcaster()
+    app.state.config = config
+    app.state.http_get = http_get
+    app.state.reference = reference_module.load(config.data_dir if config else None)
+
+    mode = config.mode if config else None
+    captures_dir = config.captures_dir if config else None
+    icecast_base = (
+        streams_module.public_base_url(config.icecast_host, config.icecast_port) if config else None
+    )
 
     # Personal/emergency use (design doc §11, non-goals), same posture as
     # deploy/mosquitto's and deploy/icecast's default-open configs -- not
@@ -50,6 +75,27 @@ def create_app(
     @app.get("/health")
     async def get_health():
         return await db.latest_health(app.state.pool)
+
+    @app.get("/health/history")
+    async def get_health_history(
+        since_seconds: int = Query(3600, ge=60, le=604_800),
+        buckets: int = Query(60, ge=2, le=500),
+    ):
+        return await db.health_history(app.state.pool, since_seconds=since_seconds, buckets=buckets)
+
+    @app.get("/transcripts")
+    async def get_transcripts(
+        limit: int = Query(100, ge=1, le=1000),
+        raw_header: str | None = None,
+    ):
+        return await db.list_transcripts(app.state.pool, limit=limit, raw_header=raw_header)
+
+    @app.get("/dispatches")
+    async def get_dispatches(
+        limit: int = Query(100, ge=1, le=1000),
+        raw_header: str | None = None,
+    ):
+        return await db.list_dispatches(app.state.pool, limit=limit, raw_header=raw_header)
 
     @app.get("/spectrum/{site}")
     async def get_spectrum(site: str):
@@ -73,21 +119,87 @@ def create_app(
             # design doc §5: "The RF_ONLY/API_ONLY divergence rate over
             # time is the best single health metric for the whole system."
             "divergence_rate": (divergent / total) if total else 0.0,
+            "dispatch": await db.dispatch_summary(app.state.pool),
         }
 
-    @app.get("/alerts/stream")
-    async def stream_alerts():
+    @app.get("/system")
+    async def get_system():
+        """Mode and the browser-facing Icecast base URL. `mode` is on its
+        own endpoint rather than folded into `/stats` because the UI needs
+        it before it can render anything honestly -- an empty API-source
+        column means "no network by design" under offgrid and "the poller
+        is broken" under hybrid, and the page cannot tell those apart
+        without this."""
+        return {
+            "mode": mode,
+            "icecast_public_url": config.icecast_public_url if config else None,
+            "icecast_port": config.icecast_port if config else None,
+            "captures_available": captures_dir is not None and captures_dir.is_dir(),
+        }
+
+    @app.get("/services")
+    async def get_services():
+        return await status_module.list_services(app.state.redis, mode)
+
+    @app.get("/reference")
+    async def get_reference():
+        return app.state.reference.as_dict()
+
+    @app.get("/streams")
+    async def get_streams():
+        if icecast_base is None:
+            return {"icecast_reachable": False, "streams": []}
+        heartbeats = await status_module.read_heartbeats(app.state.redis)
+        known = streams_module.mounts_from_heartbeat(heartbeats.get("live_audio"))
+        icecast = await streams_module.fetch_icecast_status(app.state.http_get, icecast_base)
+        public_base = (config.icecast_public_url if config else None) or icecast_base
+        return {
+            "icecast_reachable": icecast is not None,
+            "streams": streams_module.merge(known, icecast, public_base),
+        }
+
+    @app.get("/captures/{name}")
+    async def get_capture(name: str):
+        """Serves one finished capture WAV so a transcript can be checked
+        against the audio it came from -- the guard-failed ones especially,
+        where the text was deliberately dropped.
+
+        Only the basename of the requested path is used, and the result is
+        re-checked to be inside `captures_dir` after resolution. `wav_path`
+        reaches the browser from a Redis payload, so treating it as a
+        trusted filesystem path would make this endpoint an arbitrary-file
+        read on the container."""
+        if captures_dir is None:
+            raise HTTPException(status_code=404, detail="captures not configured")
+        candidate = (captures_dir / Path(name).name).resolve()
+        if candidate.parent != captures_dir.resolve() or not candidate.is_file():
+            raise HTTPException(status_code=404, detail="no such capture")
+        return FileResponse(candidate, media_type="audio/wav")
+
+    @app.get("/events")
+    async def stream_events():
+        """One SSE stream carrying every named event type (see `sse.py`) --
+        alerts, health samples, transcripts, and dispatch outcomes. Clients
+        use `addEventListener(name, ...)` rather than `onmessage`, which
+        only fires for unnamed events."""
         queue = app.state.broadcaster.subscribe()
 
         async def event_generator():
             try:
                 while True:
-                    item = await queue.get()
-                    yield f"data: {json.dumps(item)}\n\n"
+                    event, item = await queue.get()
+                    yield format_sse(event, item)
             finally:
                 app.state.broadcaster.unsubscribe(queue)
 
-        return StreamingResponse(event_generator(), media_type="text/event-stream")
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            # Without this an intermediary (a reverse proxy someone puts
+            # in front of this per design doc §9) will buffer the stream
+            # and defeat the point of it being live.
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # Mounted last and at "/": FastAPI/Starlette match routes in
     # registration order, so every route declared above (e.g. GET /alerts)

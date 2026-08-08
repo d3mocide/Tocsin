@@ -25,6 +25,42 @@ from .sse import Broadcaster
 
 ALERTS_STREAM = "tocsin:alerts"
 HEALTH_STREAM = "tocsin:health"
+TRANSCRIPTS_STREAM = "tocsin:transcripts"
+DISPATCHES_STREAM = "tocsin:dispatches"
+
+STATUS_KEY = "tocsin:status:api"
+STATUS_TTL_SECONDS = 30
+STATUS_INTERVAL_SECONDS = 10.0
+
+
+async def _heartbeat_forever(redis_client, mode: str, stop_event: asyncio.Event) -> None:
+    """`api`'s own entry in `GET /services`. Async and inline rather than
+    the sync `heartbeat.py` every other service carries -- this process is
+    an event loop, not a polling loop, so there's no main-loop iteration to
+    hang a `beat()` call on.
+
+    Self-reporting is not circular: a client that can read `/services` at
+    all has already proven `api` is up, but the row still has to be there
+    or the table would show every service *except* the one serving it."""
+    import json
+    from datetime import datetime, timezone
+
+    while not stop_event.is_set():
+        payload = {
+            "service": "api",
+            "mode": mode,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "ttl_seconds": STATUS_TTL_SECONDS,
+            "detail": {},
+        }
+        try:
+            await redis_client.setex(STATUS_KEY, STATUS_TTL_SECONDS, json.dumps(payload))
+        except Exception as exc:
+            print(f"api: heartbeat write failed: {exc}", file=sys.stderr)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=STATUS_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            pass
 
 
 async def _run(config: ApiConfig) -> None:
@@ -39,18 +75,20 @@ async def _run(config: ApiConfig) -> None:
 
     broadcaster = Broadcaster()
     ingestor = Ingestor(pool, broadcaster)
-    alerts_consumer = StreamConsumer(redis_client, ALERTS_STREAM, ingestor.handle_alert, config.consumer_name)
-    health_consumer = StreamConsumer(redis_client, HEALTH_STREAM, ingestor.handle_health, config.consumer_name)
-    await alerts_consumer.start()
-    await health_consumer.start()
+    consumers = [
+        StreamConsumer(redis_client, ALERTS_STREAM, ingestor.handle_alert, config.consumer_name),
+        StreamConsumer(redis_client, HEALTH_STREAM, ingestor.handle_health, config.consumer_name),
+        StreamConsumer(redis_client, TRANSCRIPTS_STREAM, ingestor.handle_transcript, config.consumer_name),
+        StreamConsumer(redis_client, DISPATCHES_STREAM, ingestor.handle_dispatch, config.consumer_name),
+    ]
+    for consumer in consumers:
+        await consumer.start()
 
     stop_event = asyncio.Event()
-    background_tasks = [
-        asyncio.create_task(alerts_consumer.run_forever(stop_event)),
-        asyncio.create_task(health_consumer.run_forever(stop_event)),
-    ]
+    background_tasks = [asyncio.create_task(consumer.run_forever(stop_event)) for consumer in consumers]
+    background_tasks.append(asyncio.create_task(_heartbeat_forever(redis_client, config.mode, stop_event)))
 
-    app = create_app(pool, redis_client, broadcaster, static_dir=config.static_dir)
+    app = create_app(pool, redis_client, broadcaster, static_dir=config.static_dir, config=config)
     server = uvicorn.Server(uvicorn.Config(app, host=config.host, port=config.port, log_level="info"))
     print(f"api: serving on {config.host}:{config.port}, Postgres + Redis connected", flush=True)
     try:

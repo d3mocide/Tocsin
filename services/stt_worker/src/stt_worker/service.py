@@ -31,6 +31,13 @@ class GuardedTranscript:
     passed_guard: bool
     guard_reason: str | None
     timestamp_ns: int
+    # The untrimmed capture on the shared `segment-captures` volume,
+    # threaded straight through from segment_capture's payload. Carried so
+    # `api` can serve the original audio next to the transcript -- a
+    # transcript that failed the hallucination guard is exactly the one
+    # worth listening to, and without this the WAV is unreachable from
+    # anywhere but the container filesystem.
+    wav_path: str | None = None
 
 
 class TranscriptSink(Protocol):
@@ -107,6 +114,7 @@ class TranscriptionWorker:
                 passed_guard=result.passed,
                 guard_reason=result.reason,
                 timestamp_ns=time.time_ns(),
+                wav_path=str(wav_path),
             )
         )
 

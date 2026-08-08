@@ -20,6 +20,7 @@ import os
 import sys
 from pathlib import Path
 
+from . import heartbeat as heartbeat_module
 from .bus import CapturePublisher
 from .service import SegmentCaptureService
 from .subscriber import SameAudioSubscriber
@@ -31,6 +32,19 @@ DEFAULT_RING_BUFFER_DIR = Path("/run/sdr_rx_ring")
 DEFAULT_OUTPUT_DIR = Path("/var/lib/segment_capture/captures")
 DEFAULT_PREROLL_SECONDS = 10.0
 DEFAULT_HARD_TIMEOUT_SECONDS = 300.0
+
+
+def _build_redis_client():
+    """Redis is optional here and used only for the liveness heartbeat --
+    this service's actual output goes over ZMQ to stt_worker, not through
+    Redis, so an unset `SEGMENT_CAPTURE_REDIS_URL` costs nothing but a row
+    on the status board."""
+    redis_url = os.environ.get("SEGMENT_CAPTURE_REDIS_URL")
+    if not redis_url:
+        return None
+    import redis as redis_lib
+
+    return redis_lib.from_url(redis_url)
 
 
 def main() -> None:
@@ -66,9 +80,12 @@ def main() -> None:
         preroll_seconds=preroll_seconds,
         hard_timeout_seconds=hard_timeout_seconds,
     )
+    heartbeat = heartbeat_module.build(_build_redis_client())
     print(f"segment-capture: subscribed to {connect_addr}, publishing captures on {bind_addr}", flush=True)
     try:
         while True:
+            if heartbeat is not None:
+                heartbeat.beat(output_dir=str(output_dir))
             received = subscriber.recv(timeout_ms=1000)
             if received is not None:
                 site, channel, _sample_rate_hz, pcm = received

@@ -90,7 +90,14 @@ services:
       # with site_names/channel_names display-name overrides to mount; see
       # services/live_audio/README.md.
       LIVE_AUDIO_METADATA_CONFIG: ${LIVE_AUDIO_METADATA_CONFIG:-}
+      # Liveness heartbeat only (tocsin:status:live_audio) -- live-audio's
+      # real output is the Icecast stream, not Redis. The heartbeat also
+      # carries its mount list, which is what lets api's /streams show a
+      # channel whose ffmpeg died; Icecast simply stops listing those.
+      LIVE_AUDIO_REDIS_URL: redis://redis:6379/0
       SEGMENT_CAPTURE_ZMQ_CONNECT: tcp://localhost:5555
+      # Liveness heartbeat only; captures still go out over ZMQ.
+      SEGMENT_CAPTURE_REDIS_URL: redis://redis:6379/0
       # stt-worker (a separate container) connects to this one, so it
       # stays reachable by this service's name -- see stt-worker's
       # STT_WORKER_ZMQ_CONNECT below.
@@ -268,6 +275,32 @@ services:
       API_REDIS_URL: redis://redis:6379/0
       API_HOST: 0.0.0.0
       API_PORT: "8000"
+      # Surfaced to the browser via GET /system. The UI cannot describe an
+      # empty CAP column honestly without it: no API source means "offgrid
+      # doesn't poll NWS at all" here and "the poller is broken" under
+      # hybrid, and those look identical on screen otherwise.
+      TOCSIN_MODE: *mode
+      # Read-only, for GET /reference: SAME event codes (name + tier) and
+      # the FIPS -> county table the UI needs to render "Multnomah, OR"
+      # instead of "041051" and to tell a Tier A warning from a Tier C test.
+      TOCSIN_DATA_DIR: /app/data
+      # Where segment-capture's finished WAVs land, so GET /captures/{name}
+      # can serve the audio behind a transcript -- the guard-failed ones
+      # especially, where stt_worker deliberately dropped the text.
+      API_CAPTURES_DIR: /var/lib/segment_capture/captures
+      ICECAST_HOST: icecast
+      ICECAST_PORT: "8000"
+      # What the *browser* should use to reach Icecast, which is not
+      # `icecast:8000` -- that only resolves inside this network. Unset by
+      # default so the page falls back to its own hostname on the Icecast
+      # port, which is right for the usual "browse to the Pi on the LAN"
+      # case; set it for deployments behind a reverse proxy where it isn't.
+      ICECAST_PUBLIC_URL: ${ICECAST_PUBLIC_URL:-}
+    volumes:
+      - ./data:/app/data:ro
+      # read-only: api serves these, segment-capture (in the sdr-rx
+      # container) is the only writer.
+      - segment-captures:/var/lib/segment_capture/captures:ro
     ports:
       # Was web/nginx's port before that container merged in here -- kept
       # at 8080 so the bring-up runbook (README.md) doesn't change.
@@ -275,6 +308,10 @@ services:
     depends_on:
       - redis
       - timescaledb
+      # Not a hard requirement -- /streams degrades to live-audio's own
+      # heartbeat view when Icecast is unreachable rather than erroring --
+      # but starting it first avoids a pointless failed fetch on boot.
+      - icecast
     profiles: [offgrid, hybrid]
 
 volumes:

@@ -891,11 +891,78 @@ FastAPI service, and the first TypeScript in this repo.
   unchanged. `web/src/api.ts`'s default base URL moved from `/api` to same-origin unprefixed
   accordingly. See the Session Log entry this date for the full reasoning.
 
+- **2026-08-08 (UI overhaul):** the frontend was surfacing roughly a third of what the
+  system already knew, and three whole classes of information had nowhere to go at all.
+  Closed all of it, plus the transcript-storage gap this doc had flagged as open.
+  - **Service liveness (new).** Nothing in the repo published a heartbeat, so nothing could
+    tell a stopped `fusion` from a quiet night. Each of the eight non-`api` services now
+    SETEXes `tocsin:status:<service>` from its own main loop (`heartbeat.py`, duplicated
+    per service per CLAUDE.md, generated from one template and unit tested once in
+    `fusion`); `api` writes its own from an async task. `GET /services` compares the live
+    keys against a checked-in expected set *for the current mode* -- listing only the keys
+    that exist would render a crashed service as absent rather than broken, which is the
+    exact failure the endpoint exists to catch. `nws_poller` is excluded from the expected
+    set under `offgrid` (design doc §8) and its heartbeat carries last-success/last-error,
+    since a poller failing every call to api.weather.gov is otherwise indistinguishable
+    from a quiet night. `live_audio` and `segment_capture` gained optional Redis URLs for
+    this and nothing else -- their real output still goes over Icecast/ZMQ.
+  - **Transcripts (the open item from this phase's first pass).** `transcripts` table,
+    a fourth consumer on `tocsin:transcripts`, and `GET /transcripts?raw_header=` --
+    `raw_header` being the only identifier shared between an alert's RF source and a
+    transcript. `stt_worker`'s `GuardedTranscript` gained `wav_path`, threaded straight
+    through from `segment_capture`'s payload, so `GET /captures/{name}` can serve the
+    original audio next to the text. That endpoint takes the basename only and re-checks
+    containment after resolution: `wav_path` arrives from a Redis payload, so trusting it
+    as a filesystem path would have made it an arbitrary-file read.
+  - **Dispatch outcomes (new).** `dispatcher` sent to the mesh and recorded nothing
+    queryable, making "did that warning actually go out?" answerable only from container
+    logs. `RedisStreamDispatchLog` publishes every stage-1/stage-2 decision to
+    `tocsin:dispatches` (slotting into the `DispatchLog` Protocol seam that already
+    existed), `api` stores it and serves `GET /dispatches`, and `/stats` gained a
+    sent-vs-skipped summary. The negatives are the valuable half -- `skipped_rate_limited`,
+    `serial_no_ack`, `skipped_circuit_open` are all "an alert existed and nothing reached
+    the mesh." The `dispatches` table deliberately has no primary key: a rate-limited
+    attempt followed by a later successful one is two real events, not a duplicate.
+  - **SSE carries everything now.** `/alerts/stream` became `/events` with named event
+    types (`alert`, `health`, `transcript`, `dispatch`), which let the frontend drop its
+    polling timers for health entirely -- a channel going dead (design doc §3's primary
+    liveness signal for the whole SDR path) used to wait up to 5s to reach the screen. The
+    broadcaster's per-client queue is now bounded and drops oldest-first, so one asleep tab
+    can't grow the process's memory.
+  - **Other new endpoints.** `/system` (mode -- the UI cannot honestly describe an empty
+    CAP column without knowing whether the deployment polls NWS at all), `/health/history`
+    (`time_bucket`-aggregated, `dead` `BOOL_OR`'d rather than averaged so a partly-dead
+    bucket still reads dead), `/streams` (Icecast `status-json.xsl` merged with
+    `live_audio`'s heartbeat mount list -- Icecast drops a mount whose source died, which
+    is the moment you most want to see it), and `/reference` (`data/`'s event codes and
+    FIPS table, so the UI shows "Multnomah, OR" and a tier badge instead of `041051`).
+  - **`web/` rebuilt.** Status bar (mode/services/dispatch), expandable alert cards showing
+    RF and CAP provenance side by side with the RF-to-API latency, county names, tier
+    badges, active/expired split and sorting, relative timestamps, per-panel error states,
+    filters, a merged transcript/dispatch activity log, Icecast players, health sparklines,
+    and a fixed-scale scrolling waterfall replacing the bar chart that rescaled to each
+    frame's own min/max (which made a carrier appearing look identical to the noise floor
+    dropping). Every alert field that used to be fetched and discarded is now on screen:
+    `sources[]` was arriving in the browser and being thrown away wholesale.
+  - **First real browser render in this repo's history.** Served the built `dist/` plus a
+    stub API matching `services/api`'s response shapes to headless Chromium at 1440px and
+    420px: no console or page errors, no horizontal page scroll at either width, filters
+    and card expansion and the per-alert transcript/dispatch fetch all confirmed working,
+    search input keeps focus across re-renders, tab title badges active Tier A alerts. Two
+    real bugs were found this way and fixed -- the waterfall drew rows bottom-anchored
+    while its own comment said newest-at-top, and `/health/history` had been added but
+    never actually called, leaving the sparkline column permanently blank.
+  - **466 tests** across the nine Python services (up from 395) plus `web`'s clean
+    type-check-and-build. `compose.yaml` wires the new env/volumes for `api` (data dir,
+    captures volume read-only, Icecast host/public URL, mode) and the two new heartbeat
+    Redis URLs; YAML parses cleanly, though no Docker daemon was available this session to
+    re-run `docker compose config`.
+  - **Still not verified:** nothing here has run against a real Postgres, Redis, Icecast,
+    or live upstream producer. The browser render used a stub API, and no real SAME header
+    has ever been decoded from actual RF in this repo's history -- unchanged from every
+    prior phase.
+
 **Not started / open:**
-- No transcript storage (design doc §9 names "transcripts" alongside alerts/health as
-  TimescaleDB's job) -- nothing consumes `tocsin:transcripts` into Postgres yet, only
-  `dispatcher`'s stage 2 reads it, ephemerally, off the stream. Worth a table once the UI
-  wants to show transcript text.
 - No auth (design doc §9: "reverse proxy + Argon2id local backend auth") -- out of scope for
   this phase, which is about the data path, not the deploy-behind-Caddy story.
 - Not verified against a real Postgres, Redis, browser, or live upstream producer anywhere in
@@ -1282,3 +1349,13 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
     process-group `kill -TERM -- "-$pid"` in `cleanup()` actually reaches the real `uv run
     <service>` processes, not just their loop shells, avoiding a hang out to the stop
     timeout and a SIGKILL fallback.
+
+- **2026-08-08 (frontend/API overhaul):** answered "are we surfacing everything, is there a
+  service monitor, can we listen to the Icecast feeds" with: no (about a third), no, and
+  not from the UI. Added per-service liveness heartbeats + `GET /services`, transcript
+  storage + `GET /transcripts` + `GET /captures/{name}`, a dispatch outcome log +
+  `GET /dispatches`, and `/system` `/health/history` `/streams` `/reference`; converted
+  `/alerts/stream` to a multi-type `/events` stream; rebuilt `web/` around an expandable
+  alert card that shows RF and CAP provenance side by side. First browser render in this
+  repo's history (headless Chromium against a stub API), which caught two real bugs. 466
+  tests green, up from 395. See the Phase 8 notes above for the full reasoning.

@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 from pathlib import Path
 
@@ -115,3 +116,152 @@ async def test_alert_state_counts_returns_a_plain_dict():
     pool = FakePool(fetch_results=[[{"state": "RF_ONLY", "count": 3}, {"state": "CONFIRMED", "count": 7}]])
     counts = await db.alert_state_counts(pool)
     assert counts == {"RF_ONLY": 3, "CONFIRMED": 7}
+
+
+async def test_insert_transcript_is_idempotent_on_redelivery():
+    """The consumer group is at-least-once (redis_bus.py), so the same
+    transcription can arrive twice -- ON CONFLICT DO NOTHING on
+    (raw_header, timestamp_ns) is what keeps it from showing up twice in
+    the UI."""
+    pool = FakePool()
+    await db.insert_transcript(
+        pool,
+        {
+            "raw_header": "ZCZC-WXR-TOR-041051+0030-2210300-KPTL/NWS-",
+            "timestamp_ns": 1_700_000_000_000_000_000,
+            "site": "home",
+            "channel": "WX5",
+            "event_code": "TOR",
+            "tier": "A",
+            "fips_codes": ["041051"],
+            "text": "tornado warning",
+            "passed_guard": True,
+            "guard_reason": None,
+            "wav_path": "/captures/a.wav",
+        },
+    )
+
+    query, args = pool.executed[0]
+    assert "ON CONFLICT (raw_header, timestamp_ns) DO NOTHING" in query
+    assert args[0] == "ZCZC-WXR-TOR-041051+0030-2210300-KPTL/NWS-"
+    assert args[6] == ["041051"]
+
+
+async def test_insert_transcript_tolerates_a_payload_with_no_wav_path():
+    """wav_path was added to GuardedTranscript after the fact; a transcript
+    published by an older stt_worker still has to land."""
+    pool = FakePool()
+    await db.insert_transcript(
+        pool,
+        {
+            "raw_header": "ZCZC",
+            "timestamp_ns": 1,
+            "site": "home",
+            "channel": "WX5",
+            "event_code": "TOR",
+            "tier": "A",
+            "fips_codes": [],
+            "text": "",
+            "passed_guard": False,
+            "guard_reason": "repeated_ngram",
+        },
+    )
+
+    _query, args = pool.executed[0]
+    assert args[-1] is None
+
+
+async def test_insert_dispatch_converts_the_iso_timestamp():
+    """asyncpg needs a real datetime for a timestamptz param -- JSON has no
+    datetime type and asyncpg does not parse strings implicitly."""
+    pool = FakePool()
+    await db.insert_dispatch(
+        pool,
+        {
+            "stage": "1",
+            "alert_id": "abc123",
+            "event_code": "TOR",
+            "tier": "A",
+            "fips_codes": ["041051"],
+            "raw_header": "ZCZC",
+            "sent": True,
+            "reason": "serial",
+            "dispatched_at": "2026-08-08T21:00:00+00:00",
+        },
+    )
+
+    _query, args = pool.executed[0]
+    assert isinstance(args[0], datetime)
+    assert args[1] == "1"
+    assert args[2] == "abc123"
+
+
+async def test_insert_dispatch_of_a_stage_2_record_has_no_alert_id():
+    pool = FakePool()
+    await db.insert_dispatch(
+        pool,
+        {
+            "stage": "2",
+            "site": "home",
+            "channel": "WX5",
+            "event_code": "TOR",
+            "tier": "A",
+            "fips_codes": [],
+            "raw_header": "ZCZC",
+            "sent": False,
+            "reason": "skipped_circuit_open",
+            "dispatched_at": "2026-08-08T21:00:00+00:00",
+        },
+    )
+
+    _query, args = pool.executed[0]
+    assert args[2] is None  # alert_id
+    assert args[3] == "home"
+
+
+async def test_list_transcripts_filters_by_raw_header():
+    pool = FakePool(fetch_results=[[]])
+    await db.list_transcripts(pool, raw_header="ZCZC")
+
+    query, args = pool.fetch_calls[0]
+    assert "WHERE raw_header = $1" in query
+    assert args == ("ZCZC", 100)
+
+
+async def test_list_dispatches_unfiltered_orders_newest_first():
+    pool = FakePool(fetch_results=[[]])
+    await db.list_dispatches(pool, limit=5)
+
+    query, args = pool.fetch_calls[0]
+    assert "ORDER BY dispatched_at DESC" in query
+    assert args == (5,)
+
+
+async def test_health_history_buckets_the_window_and_ors_dead():
+    """dead is BOOL_OR'd, not averaged: a channel dead for part of a bucket
+    has to render as dead, not as a fraction that rounds away."""
+    pool = FakePool(fetch_results=[[]])
+    await db.health_history(pool, since_seconds=3600, buckets=60)
+
+    query, args = pool.fetch_calls[0]
+    assert "time_bucket" in query
+    assert "BOOL_OR(dead)" in query
+    assert args == (3600.0, 60.0)
+
+
+async def test_dispatch_summary_splits_sent_from_skipped():
+    pool = FakePool(
+        fetch_results=[
+            [
+                {"sent": True, "reason": "serial", "count": 2},
+                {"sent": True, "reason": "mqtt_fallback", "count": 1},
+                {"sent": False, "reason": "skipped_duplicate", "count": 4},
+            ]
+        ]
+    )
+
+    summary = await db.dispatch_summary(pool)
+
+    assert summary["sent"] == 3
+    assert summary["skipped"] == 4
+    assert summary["by_reason"] == {"serial": 2, "mqtt_fallback": 1, "skipped_duplicate": 4}

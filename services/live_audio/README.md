@@ -42,6 +42,7 @@ is not yet verified -- see the repo root README's bring-up runbook.
 | `ICECAST_STREAM_DESCRIPTION` | `Tocsin NOAA Weather Radio relay` | Stream description, same for every mount. |
 | `ICECAST_STREAM_GENRE` | `weather` | Stream genre, same for every mount. |
 | `LIVE_AUDIO_METADATA_CONFIG` | *(none)* | Path to an optional YAML file with `site_names`/`channel_names` display-name overrides used by `ICECAST_STREAM_NAME_TEMPLATE` above, e.g. showing the `home` site from `SDR_RX_DEVICES` as "Portland Home Station" instead of `home`:<br>`site_names:`<br>`  home: Portland Home Station`<br>`channel_names:`<br>`  WX5: Channel 5` |
+| `LIVE_AUDIO_REDIS_URL` | *(unset)* | Optional, heartbeat only. When set, publishes liveness to `tocsin:status:live_audio` (with the current mount list) so `api`'s `GET /services` and `GET /streams` can see this process. Audio still goes to Icecast, never through Redis. |
 
 Each active channel appears at `http://<icecast-host>:8000/<site>-<channel>.ogg`.
 
