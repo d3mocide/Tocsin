@@ -1,10 +1,13 @@
-"""Consumes canonical Alerts from `tocsin:alerts` via a Redis consumer
-group -- same durability pattern as `fusion.redis_bus` ("at least once,"
+"""Consumes canonical Alerts (`tocsin:alerts`, stage 1) and guarded
+transcripts (`tocsin:transcripts`, stage 2 -- Phase 7) via Redis consumer
+groups -- same durability pattern as `fusion.redis_bus` ("at least once,"
 not "exactly once"; a crash between processing and acking can replay one
-alert on restart, which `idempotency.py`'s Redis-persisted claim is
-specifically there to make safe to do). Not a shared import from `fusion`
--- service boundary (CLAUDE.md); the stream name and payload shape here
-duplicate what `fusion.redis_sink` publishes.
+message on restart, which `idempotency.py`'s Redis-persisted claim is
+specifically there to make safe to do). Not a shared import from `fusion`/
+`stt_worker` -- service boundary (CLAUDE.md); the stream names and payload
+shapes here duplicate what `fusion.redis_sink`/`stt_worker.redis_sink`
+publish. One `AlertStreamConsumer` class serves both streams (just a
+`stream=` argument apart), not two near-identical classes.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import json
 from typing import Callable
 
 STREAM_NAME = "tocsin:alerts"
+TRANSCRIPTS_STREAM_NAME = "tocsin:transcripts"
 GROUP_NAME = "dispatcher"
 
 

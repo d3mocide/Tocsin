@@ -1,4 +1,5 @@
 import struct
+import time
 import wave
 from pathlib import Path
 
@@ -46,7 +47,9 @@ def test_handle_capture_records_a_passing_transcript(tmp_path):
             "site": "home",
             "channel": "WX5",
             "event_code": "TOR",
+            "tier": "A",
             "fips_codes": ["017021"],
+            "raw_header": "ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-",
             "wav_path": str(wav_path),
             "voice_start_sample": 2,
         }
@@ -57,7 +60,9 @@ def test_handle_capture_records_a_passing_transcript(tmp_path):
     assert result.site == "home"
     assert result.channel == "WX5"
     assert result.event_code == "TOR"
+    assert result.tier == "A"
     assert result.fips_codes == ("017021",)
+    assert result.raw_header == "ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-"
     assert result.text == "a tornado warning"
     assert result.passed_guard is True
     assert result.guard_reason is None
@@ -80,7 +85,9 @@ def test_handle_capture_blanks_text_when_guard_fails(tmp_path):
             "site": "home",
             "channel": "WX5",
             "event_code": "TOR",
+            "tier": "A",
             "fips_codes": ["017021"],
+            "raw_header": "ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-",
             "wav_path": str(wav_path),
             "voice_start_sample": None,
         }
@@ -113,7 +120,9 @@ def test_handle_capture_trims_wav_before_transcribing(tmp_path):
             "site": "home",
             "channel": "WX5",
             "event_code": "TOR",
+            "tier": "A",
             "fips_codes": [],
+            "raw_header": "ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-",
             "wav_path": str(wav_path),
             "voice_start_sample": 2,
         }
@@ -121,3 +130,140 @@ def test_handle_capture_trims_wav_before_transcribing(tmp_path):
 
     assert seen_paths[0] != wav_path  # transcribed the *trimmed* copy, not the original
     assert sink.transcripts[0].text == "(3, 4, 5)"
+
+
+def _payload(wav_path: Path, tier: str = "A") -> dict:
+    return {
+        "site": "home",
+        "channel": "WX5",
+        "event_code": "TOR",
+        "tier": tier,
+        "fips_codes": ["017021"],
+        "raw_header": "ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-",
+        "wav_path": str(wav_path),
+        "voice_start_sample": None,
+    }
+
+
+def _slow_local(delay: float, transcript: Transcript):
+    def run(wav_path, model_path, binary, language, initial_prompt):
+        time.sleep(delay)
+        return transcript
+
+    return run
+
+
+def _slow_remote(delay: float, transcript: Transcript = None, raises: Exception = None):
+    def run(wav_path):
+        time.sleep(delay)
+        if raises:
+            raise raises
+        return transcript
+
+    return run
+
+
+def test_tier_b_never_races_remote(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    remote_calls = []
+
+    def remote_run(wav_path):
+        remote_calls.append(wav_path)
+        return Transcript(text="should not be used", segments=())
+
+    worker = TranscriptionWorker(
+        model_path="/models/m.bin",
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_fake_whisper_run(Transcript(text="local text", segments=())),
+        remote_run=remote_run,
+    )
+    worker.handle_capture(_payload(wav_path, tier="B"))
+
+    assert remote_calls == []
+    assert sink.transcripts[0].text == "local text"
+
+
+def test_no_remote_configured_uses_local_even_on_tier_a(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path="/models/m.bin",
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_fake_whisper_run(Transcript(text="local text", segments=())),
+        remote_run=None,
+    )
+    worker.handle_capture(_payload(wav_path, tier="A"))
+    assert sink.transcripts[0].text == "local text"
+
+
+def test_remote_wins_when_it_returns_in_budget_with_text(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path="/models/m.bin",
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_slow_local(0.05, Transcript(text="local text", segments=())),
+        remote_run=_slow_remote(0.05, Transcript(text="remote text", segments=())),
+        remote_budget_seconds=1.0,
+    )
+    worker.handle_capture(_payload(wav_path, tier="A"))
+    assert sink.transcripts[0].text == "remote text"
+
+
+def test_local_wins_when_remote_exceeds_budget(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path="/models/m.bin",
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_slow_local(0.02, Transcript(text="local text", segments=())),
+        remote_run=_slow_remote(1.0, Transcript(text="remote text", segments=())),
+        remote_budget_seconds=0.1,
+    )
+    start = time.monotonic()
+    worker.handle_capture(_payload(wav_path, tier="A"))
+    elapsed = time.monotonic() - start
+
+    assert sink.transcripts[0].text == "local text"
+    assert elapsed < 0.5  # didn't block waiting for the slow remote thread to actually finish
+
+
+def test_local_wins_when_remote_raises(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path="/models/m.bin",
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_slow_local(0.02, Transcript(text="local text", segments=())),
+        remote_run=_slow_remote(0.0, raises=RuntimeError("connection refused")),
+        remote_budget_seconds=1.0,
+    )
+    worker.handle_capture(_payload(wav_path, tier="A"))
+    assert sink.transcripts[0].text == "local text"
+
+
+def test_local_wins_when_remote_returns_empty_text(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path="/models/m.bin",
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_slow_local(0.02, Transcript(text="local text", segments=())),
+        remote_run=_slow_remote(0.02, Transcript(text="", segments=())),
+        remote_budget_seconds=1.0,
+    )
+    worker.handle_capture(_payload(wav_path, tier="A"))
+    assert sink.transcripts[0].text == "local text"

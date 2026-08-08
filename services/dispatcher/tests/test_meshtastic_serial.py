@@ -1,6 +1,6 @@
 import threading
 
-from dispatcher.meshtastic_serial import MeshtasticSerialClient
+from dispatcher.egress.meshtastic_serial import MeshtasticSerialClient
 
 
 class FakeInterfaceAcksImmediately:

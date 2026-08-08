@@ -23,6 +23,7 @@ from pathlib import Path
 from .bus import CapturePublisher
 from .service import SegmentCaptureService
 from .subscriber import SameAudioSubscriber
+from .tiers import TierTable
 
 DEFAULT_ZMQ_CONNECT = "tcp://sdr-rx:5555"
 DEFAULT_ZMQ_BIND = "tcp://0.0.0.0:5556"
@@ -39,6 +40,7 @@ def main() -> None:
     output_dir = Path(os.environ.get("SEGMENT_CAPTURE_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)))
     preroll_seconds = float(os.environ.get("SEGMENT_CAPTURE_PREROLL_SECONDS", DEFAULT_PREROLL_SECONDS))
     hard_timeout_seconds = float(os.environ.get("SEGMENT_CAPTURE_HARD_TIMEOUT_SECONDS", DEFAULT_HARD_TIMEOUT_SECONDS))
+    data_dir = os.environ.get("TOCSIN_DATA_DIR")
 
     if not ring_buffer_dir.exists():
         print(
@@ -48,12 +50,19 @@ def main() -> None:
         )
         sys.exit(1)
 
+    try:
+        tiers = TierTable.load(Path(data_dir) if data_dir else None)
+    except OSError as exc:
+        print(f"segment-capture: could not load event-code table: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     subscriber = SameAudioSubscriber(connect_addr)
     publisher = CapturePublisher(bind_addr)
     service = SegmentCaptureService(
         ring_buffer_dir=ring_buffer_dir,
         output_dir=output_dir,
         publisher=publisher,
+        tiers=tiers,
         preroll_seconds=preroll_seconds,
         hard_timeout_seconds=hard_timeout_seconds,
     )

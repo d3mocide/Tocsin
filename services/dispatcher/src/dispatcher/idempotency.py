@@ -41,3 +41,13 @@ class IdempotencyStore:
         went out."""
         key = idempotency_key(raw_header, stage)
         return bool(self._redis.set(key, "1", nx=True, ex=self._ttl_seconds))
+
+    def already_claimed(self, raw_header: str, stage: str) -> bool:
+        """Read-only check, no side effect -- lets a caller skip expensive
+        work (stage 2's LiteLLM call) *before* the real `claim()` gate,
+        for an alert a prior run already fully dispatched. Not a
+        substitute for `claim()`: a redelivered alert that's mid-flight in
+        another process could pass this check and still lose the race at
+        `claim()`, which remains the sole source of truth for "did this
+        actually get claimed."""
+        return bool(self._redis.exists(idempotency_key(raw_header, stage)))

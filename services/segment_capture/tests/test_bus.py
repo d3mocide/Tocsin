@@ -20,7 +20,9 @@ def _result(**overrides) -> CaptureResult:
         site="home",
         channel="WX5",
         event_code="TOR",
+        tier="A",
         fips_codes=("017021",),
+        raw_header="ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-",
         wav_path=Path("/tmp/home-WX5-TOR-1.wav"),
         voice_start_sample=12345,
         num_samples=50000,
@@ -46,7 +48,9 @@ def test_publish_sends_topic_and_json_payload():
     assert payload["site"] == "home"
     assert payload["channel"] == "WX5"
     assert payload["event_code"] == "TOR"
+    assert payload["tier"] == "A"
     assert payload["fips_codes"] == ["017021"]
+    assert payload["raw_header"] == "ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-"
     assert payload["wav_path"] == "/tmp/home-WX5-TOR-1.wav"
     assert payload["voice_start_sample"] == 12345
     assert payload["num_samples"] == 50000

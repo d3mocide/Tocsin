@@ -31,7 +31,7 @@ completion of the phase's actual exit criteria.
 | 4 | Segment capture + local STT | In Progress | 2026-08-08 |
 | 5 | NWS poller + fusion | In Progress | 2026-08-08 |
 | 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
-| 7 | Dispatcher stage 2 + remote STT | Not Started | — |
+| 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-08 |
 | 8 | API + web UI | Not Started | — |
 
 ---
@@ -635,7 +635,129 @@ live-hardware verification).
 
 ## Phase 7 — Dispatcher stage 2 + remote STT
 
-**Status:** Not Started
+**Status:** In Progress (2026-08-08) -- same build-order exception as Phases 4-6: built at
+the user's explicit direction to finish Phase 7 before moving to Phase 8, ahead of Phase 2's
+real-audio proof. Verified against its own stated exit criteria already, the same way Phase 5
+was: roadmap.md's literal wording ("killing the LiteLLM endpoint mid-run degrades stage 2
+silently with stage 1 still delivered" and "circuit breaker opens after N consecutive
+failures and recovers") is exercised directly in `services/dispatcher/tests/
+test_stage2_dispatcher.py`, not just plausible by design.
+
+**Done:**
+- Closed a real gap discovered while scoping this phase: `stt_worker`'s `GuardedTranscript`
+  carried `event_code`/`fips_codes` but not the SAME header's own `raw_header` or a `tier`
+  value -- stage 1 gets both for free via `fusion`, but `segment_capture` runs its own
+  independent SAME-header parse (Phase 4's deliberate design) that never touched either.
+  Without them, stage 2 would have needed a fuzzy, collision-prone way to match a transcript
+  back to "which alert does this enrich." Fixed at the source instead of working around it in
+  `dispatcher`:
+  - `services/segment_capture` gained `tiers.py` (mirrors `same_decoder/tiers.py` exactly,
+    including its lazy-default-data-dir fix) and now threads `tier` (looked up from its own
+    parsed event code) and `raw_header` (`boundary.MessageStart.raw`, previously captured
+    but dropped at the `CaptureResult` boundary) through `CaptureResult` ->
+    `CapturePublisher`'s JSON payload. `SegmentCaptureService` takes an optional `TierTable`
+    now (`None` falls back to an empty table, i.e. Tier B for everything -- safe default for
+    existing callers/tests written before this). 8 new tests, 46 total (up from 38).
+  - `services/stt_worker`'s `GuardedTranscript` gained `tier`/`raw_header`, passed straight
+    through from the capture payload in `handle_capture`.
+- `services/stt_worker`, the two other Phase 7 deliverables the roadmap names for this
+  service:
+  - **Redis Streams producer:** `redis_sink.py` (`RedisStreamTranscriptSink`, publishes to
+    `tocsin:transcripts`), the same optional-Redis-URL seam `same_decoder`/`nws_poller`
+    already established.
+  - **`remote_http` provider + `STT_CHAIN` race:** `transcript.py` extracts the
+    provider-agnostic `Transcript`/`Segment` types out of `whispercpp.py` (which now
+    re-exports them for backward compatibility) now that there's a second real provider to
+    share them with -- CLAUDE.md's own stated exception to "stay concrete." `remote_http.py`
+    implements the OpenAI-compatible `POST /v1/audio/transcriptions` shape design doc §6
+    names explicitly. `service.py`'s `TranscriptionWorker._transcribe` implements "race,
+    don't chain": local always runs to completion (the floor); on Tier A captures only, when
+    a remote provider is configured, both run concurrently via a `ThreadPoolExecutor`, and
+    remote wins if it returns non-empty text within a budget measured *from the start of the
+    race* (not restarted after local finishes). Deliberately simplified from the design
+    doc's literal "with a better score" wording -- a real cross-provider confidence
+    comparison isn't implementable against a generic OpenAI-compatible endpoint, whose
+    standard response is just `{"text": ...}` with none of whisper.cpp's
+    `no_speech_prob`/`avg_logprob` guaranteed (documented explicitly in both `service.py`'s
+    and `README.md`'s text, not silently assumed away). A real bug avoided during
+    implementation, not found after the fact: an early draft used a `with
+    ThreadPoolExecutor(...)` block, whose implicit `shutdown(wait=True)` on exit would have
+    blocked the caller until the *slow* remote thread actually finished even after the code
+    had already "given up" waiting via the budget timeout -- silently turning
+    `remote_budget_seconds` into a lie. Fixed by managing the pool explicitly with
+    `shutdown(wait=False)`, with a test (`test_local_wins_when_remote_exceeds_budget`) that
+    asserts on wall-clock elapsed time to prove the caller isn't blocked.
+  - 13 new tests, 38 total (up from 25).
+- `services/fusion` gained the producer half of the handoff this phase needed:
+  `redis_sink.py` (`RedisStreamAlertSink`, publishes every canonical `Alert` to
+  `tocsin:alerts`), wired as `main()`'s sink. Extracted the JSON serialization logic that
+  used to live inline in `store.py`'s `LoggingAlertSink` into `serialize.py` so both sinks
+  share one definition. 3 new tests, 36 total (up from 33). *(Landed alongside Phase 6's own
+  work, listed here since it's this phase's actual dependency, not Phase 6's.)*
+- `services/dispatcher`, completing both of design doc §7's remaining pieces:
+  - **`egress/` package** (introduced now that there are two real egress mechanisms to
+    group, matching design doc §9's suggested layout): `meshtastic_serial.py` moved here
+    unchanged from Phase 6; `meshtastic_mqtt.py` (new) publishes Meshtastic's real MQTT
+    downlink JSON schema to `msh/{region}/2/json/mqtt/` -- verified against Meshtastic's own
+    MQTT integration docs this session (topic format, required channel named "mqtt" with
+    downlink enabled, `{"from", "type": "sendtext", "payload"}` schema), not guessed;
+    `dispatch.py`'s `DualPathSender` implements the design doc's serial-primary,
+    MQTT-fallback flow, gated on `TOCSIN_MODE=hybrid` (design doc §8's connectivity contract
+    -- `dispatcher` is the second service in this repo, after `fusion`, to actually read
+    `TOCSIN_MODE` in code). `Stage1Dispatcher` was refactored to send through `DualPathSender`
+    instead of the serial client directly; its own tests and outcome-reason vocabulary
+    updated to match ("serial"/"mqtt_fallback"/"serial_no_ack"/"mqtt_fallback_failed"
+    replacing Phase 6's placeholder "sent"/"no_ack").
+  - **Stage 2**: `litellm_client.py` (LiteLLM's real OpenAI-compatible chat-completions
+    contract, verified against LiteLLM's own docs -- `/chat/completions`, `Authorization:
+    Bearer`, `choices[0].message.content`; hard 3s timeout per the design doc),
+    `circuit_breaker.py` (Redis-persisted consecutive-failure counter; opens for a cooldown
+    after N failures; recovery is TTL-driven, not a dedicated half-open state -- once the
+    open marker's Redis TTL lapses, the next call is simply allowed to try again),
+    `stage2_guard.py` (length/ASCII/no-newline validation on LiteLLM's *output*, distinct
+    from `stt_worker.guard`'s hallucination guard on its *input*), and `Stage2Dispatcher` in
+    `service.py` wiring: tier gate -> transcript-guard gate -> cheap `already_claimed()` peek
+    (avoids paying for an LLM call re-enriching something already fully dispatched) ->
+    circuit-breaker gate -> LiteLLM call -> output guard -> the real, side-effecting
+    `idempotency.claim()` (last, immediately before the send, same "claim last" principle
+    Phase 6 established for stage 1 and this module's own docstring explains again for
+    stage 2's slightly different gate shape).
+  - `models.py` gained `TranscriptIn`/`parse_transcript` alongside the existing
+    `RFAlertIn`/`parse_rf_source`; `redis_bus.py`'s `AlertStreamConsumer` (already generic
+    over `stream=`) now also serves `tocsin:transcripts`, reusing the exact same
+    crash-replay-tested class rather than writing a second one.
+  - `__init__.py`: stage 2 is built only when `DISPATCHER_LITELLM_BASE_URL` is set: unset
+    means `tocsin:transcripts` is never even consumed (chose design doc §8's "omitted
+    entirely" option for offgrid over its "template-only" alternative, since the former
+    needs zero additional code).
+  - 27 new tests (circuit breaker, LiteLLM client, stage-2 guard, `Stage2Dispatcher`, the
+    MQTT client, `DualPathSender`, plus `Stage1Dispatcher`'s tests updated for the egress
+    refactor), 82 total in `dispatcher` (up from 45).
+- `compose.yaml`: `segment-capture` and `stt-worker` gained `TOCSIN_DATA_DIR`/data mount and
+  `STT_WORKER_REDIS_URL`/`STT_CHAIN`/remote-provider env vars respectively; `dispatcher`
+  gained `TOCSIN_MODE`, MQTT gateway env vars, and LiteLLM env vars, plus a `mosquitto`
+  dependency. `docker compose config` confirmed resolving cleanly for both profiles, with
+  minimal env and with every new hybrid-only var set at once (a lesson learned from
+  Phase 5's `NWS_POLLER_USER_AGENT` bug: every new var here uses the same
+  empty-default-plus-app-level-check pattern, none use compose's hard-required `:?`).
+- 350 tests passing across all eight implemented services (`make test`), up from 292.
+
+**Not started / open:**
+- Everything named in the three services' own READMEs as unverified: no real Meshtastic
+  node, no real MQTT gateway configuration, no real LiteLLM/OpenAI-compatible endpoint, no
+  real remote STT endpoint, no real Redis instance, and no Docker daemon in this sandbox this
+  session -- every wire contract in this phase was verified against real published specs
+  (Meshtastic's MQTT docs, LiteLLM's docs, the OpenAI API shape) rather than guessed, but
+  "spec-verified" isn't "live-verified."
+- Tier B's general MQTT broadcast path (distinct from the ack-fallback leg this phase does
+  build) is still unscoped in roadmap.md, called out again in `dispatcher/README.md`.
+- A SAME header spanning more than one state still only shows the first state in stage-1's
+  message (carried over from Phase 6, unchanged).
+
+**Depends on:** Phase 4 (transcript) and Phase 6 (stage 1) per roadmap.md -- both already
+built in this repo (see their own sections), so this phase's only remaining real-world
+dependency is the same one every phase since 2 has: no real SAME header has been decoded from
+actual RF in this repo's history yet.
 
 ---
 
@@ -824,3 +946,31 @@ live-hardware verification).
   real hardware or a real Redis this session -- no Meshtastic node, no Docker daemon, no
   Redis instance available; see Phase 6's section above for the complete breakdown of what
   that leaves open.
+- **2026-08-08** — Finished Phase 7 in the same MVP-push session, at the user's explicit
+  direction ("let's finish 7 and then move to 8"). Closed a real gap found while scoping
+  stage 2: `segment_capture`'s independent SAME-header pipeline (a deliberate Phase 4 design
+  choice) never carried the raw header text or a tier value through to `stt_worker`, so
+  stage 2 had no precise way to identify which alert a transcript belonged to the way stage
+  1 does. Fixed at the source (`segment_capture` gained its own `tiers.py` and now threads
+  `raw_header`/`tier` through `CaptureResult` -> `stt_worker`'s `GuardedTranscript`) rather
+  than building a fuzzier matching heuristic downstream. Built `stt_worker`'s `remote_http`
+  provider and `STT_CHAIN` race (local always completes as the floor; remote races
+  concurrently on Tier A only, within a budget measured from the start of the race) and its
+  `tocsin:transcripts` Redis producer; `fusion` gained the `tocsin:alerts` producer
+  `dispatcher` needed. Built `dispatcher`'s `egress/` package (a real `meshtastic_mqtt.py`
+  downlink publisher verified against Meshtastic's actual MQTT integration docs -- exact
+  topic and JSON schema, not approximated -- plus `dispatch.py`'s serial-then-MQTT
+  `DualPathSender`, mode-gated per design doc §8) and stage 2 in full (`litellm_client.py`
+  verified against LiteLLM's real API docs, a Redis-persisted `circuit_breaker.py`, and
+  `stage2_guard.py` for LiteLLM's own output). Caught one real bug before it shipped, in
+  `stt_worker`'s race logic: an early draft's `with ThreadPoolExecutor(...)` block would have
+  silently blocked past the remote budget on its implicit `shutdown(wait=True)`, waiting for
+  a slow remote thread to finish even after giving up on it -- fixed with an explicit
+  `shutdown(wait=False)` and a wall-clock-timed regression test. Both of this phase's named
+  roadmap exit criteria are exercised directly, not just asserted plausible:
+  `test_stage2_dispatcher.py` kills a fake LiteLLM mid-run and confirms stage 2 degrades
+  silently while never touching egress, and drives the circuit breaker through open ->
+  cooldown -> recovery in one test. 350 tests passing (`make test`), up from 292. Nothing in
+  this phase touched real Meshtastic/MQTT/LiteLLM/remote-STT infrastructure or a real Redis
+  -- every wire contract was verified against real published specs this session, but that's
+  "spec-verified," not "live-verified"; see Phase 7's section above for the full breakdown.

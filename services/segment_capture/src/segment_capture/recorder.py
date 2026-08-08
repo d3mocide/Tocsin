@@ -26,7 +26,9 @@ class CaptureResult:
     site: str
     channel: str
     event_code: str
+    tier: str
     fips_codes: tuple[str, ...]
+    raw_header: str
     wav_path: Path
     voice_start_sample: int | None  # STT-rate (16 kHz) offset into the WAV, or None if undetected
     num_samples: int
@@ -46,6 +48,7 @@ class SegmentRecorder:
         message_start: MessageStart,
         ring_reader: RingBufferReader,
         output_dir: Path,
+        tier: str = "B",
         preroll_seconds: float = DEFAULT_PREROLL_SECONDS,
         hard_timeout_seconds: float = DEFAULT_HARD_TIMEOUT_SECONDS,
         now_fn=time.monotonic,
@@ -53,6 +56,7 @@ class SegmentRecorder:
         self.site = site
         self.channel = channel
         self._message_start = message_start
+        self._tier = tier
         self._ring_reader = ring_reader
         self._output_dir = output_dir
         self._hard_timeout_seconds = hard_timeout_seconds
@@ -87,7 +91,9 @@ class SegmentRecorder:
             site=self.site,
             channel=self.channel,
             event_code=self._message_start.event_code,
+            tier=self._tier,
             fips_codes=self._message_start.fips_codes,
+            raw_header=self._message_start.raw,
             wav_path=wav_path,
             voice_start_sample=voice_start_stt,
             num_samples=num_samples,

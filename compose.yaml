@@ -134,9 +134,14 @@ services:
       SEGMENT_CAPTURE_ZMQ_BIND: tcp://0.0.0.0:5556
       SEGMENT_CAPTURE_RING_BUFFER_DIR: /run/sdr_rx_ring
       SEGMENT_CAPTURE_OUTPUT_DIR: /var/lib/segment_capture/captures
+      # Phase 7: segment-capture now does its own tier lookup (threaded
+      # through to stt_worker -> dispatcher's stage 2), same data file
+      # same-decoder already mounts.
+      TOCSIN_DATA_DIR: /app/data
     volumes:
       - sdr-rx-ring:/run/sdr_rx_ring
       - segment-captures:/var/lib/segment_capture/captures
+      - ./data:/app/data:ro
     depends_on:
       - sdr-rx
     profiles: [offgrid, hybrid]
@@ -153,11 +158,22 @@ services:
       STT_WORKER_ZMQ_CONNECT: tcp://segment-capture:5556
       STT_WORKER_MODEL_PATH: /models/${STT_WORKER_MODEL_FILE:-ggml-base.en.bin}
       STT_WORKER_INITIAL_PROMPT: ${STT_WORKER_INITIAL_PROMPT:-}
+      # Publishes to Redis Streams (tocsin:transcripts) for dispatcher's
+      # stage 2 (design doc §5's durability principle, extended to
+      # stt_worker -- Phase 7).
+      STT_WORKER_REDIS_URL: redis://redis:6379/0
+      # local-only by default (offgrid); hybrid deployments that want the
+      # remote race set STT_CHAIN=local,remote plus the REMOTE_* vars
+      # below in .env -- see services/stt_worker/README.md.
+      STT_CHAIN: ${STT_CHAIN:-local}
+      STT_WORKER_REMOTE_BASE_URL: ${STT_WORKER_REMOTE_BASE_URL:-}
+      STT_WORKER_REMOTE_API_KEY: ${STT_WORKER_REMOTE_API_KEY:-}
     volumes:
       - segment-captures:/var/lib/segment_capture/captures
       - ./models:/models:ro
     depends_on:
       - segment-capture
+      - redis
     profiles: [offgrid, hybrid]
 
   nws-poller:
@@ -208,11 +224,26 @@ services:
     # in, unlike sdr-rx's deliberate "no devices configured" clean exit.
     restart: on-failure
     environment:
+      TOCSIN_MODE: *mode
       TOCSIN_DATA_DIR: /app/data
       DISPATCHER_REDIS_URL: redis://redis:6379/0
       # Empty (unset) by default -> meshtastic-python autodetects the
       # device; only needed if more than one serial device is attached.
       MESHTASTIC_SERIAL_DEV_PATH: ${MESHTASTIC_SERIAL_DEV_PATH:-}
+      # MQTT fallback (design doc §7): only ever attempted under
+      # TOCSIN_MODE=hybrid (see DualPathSender), and only if a gateway
+      # node ID is actually configured -- both empty by default.
+      MESHTASTIC_GATEWAY_NODE_ID: ${MESHTASTIC_GATEWAY_NODE_ID:-}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MESHTASTIC_MQTT_REGION: ${MESHTASTIC_MQTT_REGION:-US}
+      # Stage 2 (design doc §7): unset by default -> stage 2 is skipped
+      # entirely, never even consuming tocsin:transcripts (see
+      # __init__.py's docstring on why "omitted," not "template-only,"
+      # was chosen from the design doc's stated §8 options).
+      DISPATCHER_LITELLM_BASE_URL: ${DISPATCHER_LITELLM_BASE_URL:-}
+      DISPATCHER_LITELLM_API_KEY: ${DISPATCHER_LITELLM_API_KEY:-}
+      DISPATCHER_LITELLM_MODEL: ${DISPATCHER_LITELLM_MODEL:-gpt-4o-mini}
     volumes:
       - ./data:/app/data:ro
     # A single device node, not the whole USB bus like sdr-rx's
@@ -225,8 +256,10 @@ services:
     depends_on:
       - redis
       - fusion
+      - mosquitto
     # both: stage 1 is deterministic and zero-dependency by design (§7) --
-    # it works identically off-grid.
+    # it works identically off-grid. Stage 2's LiteLLM call and the MQTT
+    # fallback leg are the only mode/config-gated parts.
     profiles: [offgrid, hybrid]
 
   # api:                       # milestone 8
