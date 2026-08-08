@@ -18,6 +18,7 @@ import sys
 
 from .app import create_app
 from .config import ApiConfig
+from .connect import PostgresStartupError, create_pool
 from .db import ensure_schema
 from .ingest import Ingestor
 from .redis_bus import StreamConsumer
@@ -64,11 +65,10 @@ async def _heartbeat_forever(redis_client, mode: str, stop_event: asyncio.Event)
 
 
 async def _run(config: ApiConfig) -> None:
-    import asyncpg
     import redis.asyncio as redis_asyncio
     import uvicorn
 
-    pool = await asyncpg.create_pool(dsn=config.postgres_dsn)
+    pool = await create_pool(config.postgres_dsn)
     redis_client = redis_asyncio.from_url(config.redis_url, decode_responses=True)
 
     await ensure_schema(pool)
@@ -104,6 +104,18 @@ async def _run(config: ApiConfig) -> None:
 def main() -> None:
     config = ApiConfig.from_env()
     if not config.postgres_dsn:
-        print("api: API_POSTGRES_DSN is required -- refusing to start", file=sys.stderr)
+        print(
+            "api: no Postgres connection configured -- set API_POSTGRES_PASSWORD "
+            "(compose passes POSTGRES_PASSWORD through) or API_POSTGRES_DSN. Refusing to start.",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    asyncio.run(_run(config))
+    try:
+        asyncio.run(_run(config))
+    except PostgresStartupError as exc:
+        # One legible block instead of an asyncpg traceback repeated every
+        # few seconds by `restart: on-failure` -- nothing about these is
+        # fixable by retrying, and the restart loop is what hid the
+        # explanation in the first place.
+        print(exc, file=sys.stderr, flush=True)
+        sys.exit(1)
