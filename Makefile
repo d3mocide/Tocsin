@@ -25,8 +25,15 @@ up-offgrid:
 up-hybrid:
 	TOCSIN_MODE=hybrid docker compose --profile hybrid up --build
 
+# Both profiles, always. Every service in compose.yaml declares
+# `profiles:`, and a profiled service is not selected unless its profile is
+# active -- so a bare `docker compose down` matched nothing and exited 0
+# having stopped nothing, whichever mode was actually up. Naming both here
+# means one `make down` tears down the stack regardless of how it started.
+# --remove-orphans also clears containers left behind by an earlier
+# compose.yaml (e.g. the retired standalone web/nginx service).
 down:
-	docker compose down
+	docker compose --profile offgrid --profile hybrid down --remove-orphans
 
 # CPU throughput benchmark for the channelizer, per docs/design/master-prompt.md §6
 # ("to be benchmarked rather than trusted") and hazard #2 in §3.

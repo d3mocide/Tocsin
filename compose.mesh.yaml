@@ -1,0 +1,26 @@
+# Meshtastic transmit overlay -- merged on top of compose.yaml via
+# COMPOSE_FILE (see .env.example). Included by default; drop it to run
+# Tocsin without a Meshtastic node attached.
+#
+# This is a separate file rather than a commented-out block or a profile
+# because Docker refuses to *start* a container whose `devices:` host path
+# is absent, and a list entry in an override file cannot be unset from the
+# base once declared. Splitting it is what makes "no node attached" a
+# working configuration instead of a container that dies before its
+# entrypoint runs.
+
+services:
+  dispatcher:
+    environment:
+      # Overrides compose.yaml's default of false. Kept next to the device
+      # mapping so the two can't drift apart: mapping a node the transmit
+      # path ignores, or enabling transmit with no node mapped, are both
+      # configurations nobody wants.
+      MESHTASTIC_ENABLED: ${MESHTASTIC_ENABLED:-true}
+    # A single device node, not the whole USB bus like sdr-rx's
+    # /dev/bus/usb passthrough -- a Meshtastic node enumerates as one
+    # stable serial device (standard USB-serial/CDC-ACM, unlike an RTL-SDR
+    # dongle's bus-relative path), and meshtastic-python talks to it
+    # directly by path rather than doing its own bus enumeration.
+    devices:
+      - ${MESHTASTIC_SERIAL_DEVICE:-/dev/ttyUSB0}:${MESHTASTIC_SERIAL_DEVICE:-/dev/ttyUSB0}

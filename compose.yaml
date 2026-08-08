@@ -163,6 +163,7 @@ services:
       STT_CHAIN: ${STT_CHAIN:-local}
       STT_WORKER_REMOTE_BASE_URL: ${STT_WORKER_REMOTE_BASE_URL:-}
       STT_WORKER_REMOTE_API_KEY: ${STT_WORKER_REMOTE_API_KEY:-}
+      STT_WORKER_REMOTE_MODEL: ${STT_WORKER_REMOTE_MODEL:-whisper-1}
     volumes:
       - segment-captures:/var/lib/segment_capture/captures
       - ./models:/models:ro
@@ -224,6 +225,19 @@ services:
       # Empty (unset) by default -> meshtastic-python autodetects the
       # device; only needed if more than one serial device is attached.
       MESHTASTIC_SERIAL_DEV_PATH: ${MESHTASTIC_SERIAL_DEV_PATH:-}
+      # Defaults to false *here* and true in compose.mesh.yaml, so adding
+      # that file to COMPOSE_FILE is the single switch that turns the mesh
+      # on: it maps the device and enables the transmit path together.
+      # Those two must agree -- enabling transmit without the device
+      # mapping is a loud exit-1 at startup, not a degraded run.
+      MESHTASTIC_ENABLED: ${MESHTASTIC_ENABLED:-false}
+      # serial | tcp (design doc §7: "sendText(wantAck=True) over
+      # serial/TCP"). A tcp node needs no device mapping, so it runs on
+      # this file alone -- set MESHTASTIC_ENABLED=true explicitly rather
+      # than adding compose.mesh.yaml, which exists only for the USB case.
+      MESHTASTIC_TRANSPORT: ${MESHTASTIC_TRANSPORT:-serial}
+      MESHTASTIC_TCP_HOST: ${MESHTASTIC_TCP_HOST:-}
+      MESHTASTIC_TCP_PORT: ${MESHTASTIC_TCP_PORT:-4403}
       # MQTT fallback (design doc §7): only ever attempted under
       # TOCSIN_MODE=hybrid (see DualPathSender), and only if a gateway
       # node ID is actually configured -- both empty by default.
@@ -240,13 +254,11 @@ services:
       DISPATCHER_LITELLM_MODEL: ${DISPATCHER_LITELLM_MODEL:-gpt-4o-mini}
     volumes:
       - ./data:/app/data:ro
-    # A single device node, not the whole USB bus like sdr-rx's
-    # /dev/bus/usb passthrough -- a Meshtastic node enumerates as one
-    # stable serial device (standard USB-serial/CDC-ACM, unlike an RTL-SDR
-    # dongle's bus-relative path), and meshtastic-python talks to it
-    # directly by path rather than doing its own bus enumeration.
-    devices:
-      - ${MESHTASTIC_SERIAL_DEVICE:-/dev/ttyUSB0}:${MESHTASTIC_SERIAL_DEVICE:-/dev/ttyUSB0}
+    # No `devices:` here on purpose -- it lives in compose.mesh.yaml.
+    # Docker refuses to *start* a container whose device path is absent
+    # from the host, so a mapping in this file would make a node the hard
+    # prerequisite for running Tocsin at all, including the receive-only
+    # half (SAME decode, transcripts, web UI) that needs no radio.
     depends_on:
       - redis
       - fusion
