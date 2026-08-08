@@ -41,7 +41,14 @@ services:
 
   sdr-rx:
     build: ./services/sdr_rx
-    restart: unless-stopped
+    # on-failure, not unless-stopped: with no SDR_RX_DEVICES configured (a
+    # deliberately supported state -- see the README's bring-up runbook),
+    # main() reports that and exits 0. unless-stopped restarts on ANY exit
+    # including that one, crash-looping a container that isn't actually
+    # crashing (confirmed against a real build). on-failure only restarts
+    # the exit-1 path (bad serial / device error), which is the case that
+    # actually warrants a retry.
+    restart: on-failure
     environment:
       TOCSIN_MODE: *mode
       SDR_RX_DEVICES: ${SDR_RX_DEVICES:-}

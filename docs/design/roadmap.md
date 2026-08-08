@@ -48,9 +48,10 @@ audibly and the health RMS signal (master prompt §3) shows a live carrier, not 
 
 **Depends on:** Phase 0. RTL-SDR hardware for the live-capture half.
 
-**Status:** everything not requiring physical hardware is done (channelizer, ZMQ publish,
-ring buffer, health signal, host-prerequisite check, multi-dongle addressing, pipeline
-wiring, SoapySDR/USB Docker packaging); only live-hardware verification remains (see
+**Status:** everything not requiring physical hardware is done, unit tested, and (2026-08-08)
+build/runtime-verified against a real Docker daemon — channelizer, ZMQ publish, ring
+buffer, health signal, host-prerequisite check, multi-dongle addressing, pipeline wiring,
+SoapySDR/USB Docker packaging. Only live-hardware verification remains (see
 `docs/design/tracking.md`).
 
 ---
@@ -72,8 +73,10 @@ real warning to test against.
 **Status:** implemented and unit tested ahead of Phase 1's live-hardware proof, at the
 user's explicit request (see `docs/design/tracking.md`'s build-order note) — parser, tier
 lookup, dedup, the multimon-ng subprocess wrapper, and the ZMQ subscriber all have unit
-coverage, but the exit criteria above (a recorded RWT capture, or real multimon-ng output)
-isn't met yet and can't be until real audio is flowing.
+coverage. Build/runtime-verified (2026-08-08): multimon-ng's EAS mode confirmed present,
+container runs stably (a real crash-loop bug was caught and fixed this way). The exit
+criteria above (a recorded RWT capture, or real multimon-ng decode output) isn't met yet
+and can't be until real audio is flowing.
 
 ---
 
@@ -91,8 +94,10 @@ tool.
 
 **Status:** implemented and unit tested ahead of Phase 1's live-hardware proof, same caveat
 as Phase 2 above. Resolved the Icecast-vs-MediaMTX open item in favor of Icecast (see
-`services/live_audio/README.md`). The exit criteria above (audible in an actual browser)
-isn't met yet — needs real ffmpeg/Icecast/RF end to end.
+`services/live_audio/README.md`). Build/runtime-verified (2026-08-08): two real bugs caught
+and fixed this way (an illegal `--` inside an XML comment, and Icecast refusing to run as
+root) — `curl` against a real running container returned `HTTP 200`. The exit criteria
+above (audible in an actual browser, with genuine RF-sourced audio) isn't met yet.
 
 ---
 

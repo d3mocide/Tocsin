@@ -26,7 +26,11 @@ Both modes run from one `compose.yaml` using Docker Compose profiles, selected b
 
 This is the sequence to go from a cloned repo to a real RTL-SDR dongle feeding decoded SAME
 events and a listenable audio stream. Everything up through step 4 works with no dongle
-plugged in yet -- only step 5 onward needs hardware.
+plugged in yet -- only step 5 onward needs hardware. Steps 1-4 have been run for real
+against a Docker daemon (see `docs/design/tracking.md`, 2026-08-08) with `/dev/bus/usb`
+passthrough stubbed out (this repo's own dev sandbox has no USB subsystem to test that
+part against); step 4's `make up-offgrid` came up clean with all non-`sdr-rx` services
+staying up and `sdr-rx` exiting 0 as designed.
 
 1. **Blacklist the DVB driver on the host** (not the container) -- the kernel's
    `dvb_usb_rtl28xxu` claims the dongle before SoapySDR can open it otherwise:
@@ -67,7 +71,8 @@ plugged in yet -- only step 5 onward needs hardware.
    likely to need adjusting against your actual RF environment.
 
 None of steps 5-8 have been verified against real hardware yet in this repo's history --
-see `docs/design/tracking.md` for exactly what's confirmed vs. still open.
+that's the actual gap this section exists to close. See `docs/design/tracking.md` for
+exactly what's confirmed vs. still open.
 
 ## Repository layout
 
@@ -115,15 +120,20 @@ still open, and don't read "implemented" below as "verified."
 0. Bootstrap (repo scaffolding, compose profiles, checked-in reference data). **Done.**
 1. Channelizer (`services/sdr_rx`). Channelizer DSP, ZMQ publishing, tmpfs ring buffer,
    health signal, host-prerequisite check, multi-dongle addressing, and SoapySDR/USB
-   Docker packaging are all implemented and unit tested (synthetic signals; no hardware
-   dependency). **Not yet done:** live-hardware verification -- see "Hardware bring-up"
-   above.
+   Docker packaging are all implemented, unit tested, and (as of 2026-08-08) build- and
+   runtime-verified against a real Docker daemon -- `import SoapySDR` genuinely resolves
+   inside the container. **Not yet done:** live-hardware verification (real dongle,
+   `/dev/bus/usb` on a machine that has one) -- see "Hardware bring-up" above.
 2. SAME decode end to end (`services/same_decoder`: multimon-ng → parsed, tiered event).
-   Implemented and unit tested against real-format example headers; not yet verified
-   against actual multimon-ng output or a recorded RWT capture (needs real audio).
+   Implemented, unit tested, and build/runtime-verified -- multimon-ng's EAS mode is
+   confirmed present and the container runs stably. A real crash-loop bug was caught and
+   fixed this way (see `docs/design/tracking.md`, 2026-08-08). Not yet verified against
+   actual multimon-ng *decode output* or a recorded RWT capture (needs real audio).
 3. Live audio (`services/live_audio` + Icecast, picked over MediaMTX -- see
-   `services/live_audio/README.md`). Implemented and unit tested; not yet verified against
-   a real ffmpeg/Icecast/browser playback chain.
+   `services/live_audio/README.md`). Implemented, unit tested, and build/runtime-verified;
+   two real bugs were caught and fixed this way (an illegal `--` inside an XML comment, and
+   Icecast refusing to run as root) -- see `docs/design/tracking.md`. Not yet verified with
+   genuine RF-sourced audio flowing through the encode path.
 4. Segment capture + local STT (ring buffer, trim, transcribe, hallucination guards).
 5. NWS poller + fusion (correlation logic with recorded fixtures from both sources).
 6. Dispatcher stage 1 (template only, serial Meshtastic, idempotency, rate limiting).

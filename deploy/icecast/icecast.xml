@@ -1,11 +1,11 @@
 <!--
   Minimal Icecast config for live-audio (design doc §3 Phase 3). Same
   posture as deploy/mosquitto/mosquitto.conf: personal/emergency use
-  (docs/design/master-prompt.md §11, non-goals -- no public rebroadcast),
+  (docs/design/master-prompt.md §11, non-goals: no public rebroadcast),
   not meant to be exposed beyond the local network as shipped.
 
   source-password/admin-password below are Icecast's traditional
-  placeholder ("hackme") -- change both before exposing this port past
+  placeholder ("hackme"); change both before exposing this port past
   localhost, and update ICECAST_SOURCE_PASSWORD for services/live_audio to
   match (see that service's README).
 -->

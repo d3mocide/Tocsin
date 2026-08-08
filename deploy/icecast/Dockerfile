@@ -17,8 +17,11 @@ COPY icecast.xml /etc/icecast2/icecast.xml
 
 EXPOSE 8000
 
-# Not build-verified: no Docker daemon in the authoring sandbox (see
-# docs/design/tracking.md). If the binary the bookworm icecast2 package
-# installs isn't named `icecast2`, `dpkg -L icecast2 | grep bin` on a real
-# build will show the right name.
+# icecast2 refuses to start as root (a built-in safety check, not something
+# a <changeowner> directive is needed to avoid) unless explicitly told
+# otherwise. The Debian package already creates a dedicated `icecast2`
+# system user with correct ownership on /var/log/icecast2 -- port 8000 is
+# unprivileged, so running as that user needs no other changes.
+USER icecast2
+
 CMD ["icecast2", "-c", "/etc/icecast2/icecast.xml"]
