@@ -121,9 +121,10 @@ itself.
 
 Icecast playback URLs are *not* built from `VITE_API_BASE_URL` -- they
 come from `GET /system`'s `icecast_public_url` when the deployment sets
-one, and otherwise from this page's own hostname on the Icecast port. The
-URLs `api` returns are built from its own view of Icecast (`icecast:8000`
-inside compose), which the browser can't resolve.
+one, and otherwise from this page's own hostname on `GET /system`'s
+`icecast_port` (`ICECAST_PORT`, `8000` by default). The URLs `api` returns
+are built from its own view of Icecast (`icecast:<ICECAST_PORT>` inside
+compose), which the browser can't resolve.
 
 ## Development
 

@@ -1409,3 +1409,25 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   `node_transport` defaults to `serial`, leaving every existing log value unchanged. A LAN
   node is not an internet dependency and stays valid offgrid -- §8's four gated components
   cover the MQTT fallback leg, not the link to your own node.
+
+- **2026-08-08:** Made the two host-published ports configurable at the user's request
+  ("we need to make the front end port and the icecast ports configurable"). `TOCSIN_WEB_PORT`
+  (default `8080`) publishes the web UI/API and `ICECAST_PORT` (default `8000`) publishes
+  Icecast, both from `.env`; `API_PORT` now also feeds the container side of the api mapping
+  instead of being a `"8000"` literal that a changed `API_PORT` would have silently
+  desynced. The Icecast side needed more than a compose edit: Icecast reads its listen port
+  from XML and has no env configuration, so `deploy/icecast/icecast.xml` became a template
+  with an `${ICECAST_PORT}` placeholder rendered by a new `entrypoint.sh` (`envsubst`, with
+  an explicit variable list) to `/tmp/icecast.xml` -- `/etc/icecast2` is root-owned and the
+  container runs as `icecast2`. Host and container port move together for Icecast on
+  purpose: the browser reaches a mount by the host port while `live-audio`/`api` reach it by
+  the container port, and both read `ICECAST_PORT`, so splitting them would break playback
+  URLs for anyone who hasn't set `ICECAST_PUBLIC_URL` (now documented in `.env.example`
+  alongside a new "Ports" section in the root README). Verified with `docker compose config`
+  at defaults and at `TOCSIN_WEB_PORT=9090 ICECAST_PORT=8100 API_PORT=8001` (mappings and
+  every consumer's env resolve correctly), `sh -n` on the entrypoint, and an XML-parse check
+  of the rendered template at both ports -- which caught an illegal `--` inside the XML
+  comment added next to the placeholder. Not verified: the built image actually starting
+  Icecast on a non-default port, since no Docker daemon is available in this sandbox (same
+  standing gap as the rest of the compose stack). Unprivileged `icecast2` caps
+  `ICECAST_PORT` above 1024; noted in the Dockerfile and `.env.example`.

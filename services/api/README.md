@@ -78,12 +78,12 @@ sandbox).
 | `API_POSTGRES_DSN` | *(required)* | e.g. `postgresql://tocsin:<password>@timescaledb:5432/tocsin`. Refuses to start without it. |
 | `API_REDIS_URL` | `redis://redis:6379/0` | Redis connection URL. |
 | `API_CONSUMER_NAME` | `api` | Redis consumer-group consumer name (fixed, not hostname-derived -- same reasoning as `fusion`/`dispatcher`). |
-| `API_HOST` / `API_PORT` | `0.0.0.0` / `8000` | uvicorn bind address. |
+| `API_HOST` / `API_PORT` | `0.0.0.0` / `8000` | uvicorn bind address *inside the container*. Compose publishes it on the host as `TOCSIN_WEB_PORT` (default `8080`) -- see the root README's "Ports". |
 | `API_STATIC_DIR` | `/app/static` | Directory containing `web/`'s built `dist/`. Mounted at `/` if it exists; set to empty to disable the SPA mount entirely. |
 | `TOCSIN_MODE` | `offgrid` | Reported by `GET /system` and used to decide which services `GET /services` expects (`nws_poller` is hybrid-only). |
 | `TOCSIN_DATA_DIR` | *(unset)* | Directory holding `same_event_codes.yaml` and `fips.csv` for `GET /reference`. Unset or missing degrades to an empty reference rather than refusing to start -- unlike every other service, where a missing tier table would mean mis-tiering a real warning. |
 | `API_CAPTURES_DIR` | *(unset)* | `segment_capture`'s output directory. Unset makes `GET /captures/{name}` a 404. |
-| `ICECAST_HOST` / `ICECAST_PORT` | `icecast` / `8000` | Where *this process* reaches Icecast to read its status page. |
+| `ICECAST_HOST` / `ICECAST_PORT` | `icecast` / `8000` | Where *this process* reaches Icecast to read its status page. `ICECAST_PORT` is also what `GET /system` reports for the browser to build playback URLs from, so it must match the port Icecast is published on -- compose keeps the two sides equal on purpose. |
 | `ICECAST_PUBLIC_URL` | *(unset)* | Where the *browser* should reach Icecast. Unset means the page falls back to its own hostname on `ICECAST_PORT`, which is right for a LAN deployment; set it behind a reverse proxy. |
 
 ## Development

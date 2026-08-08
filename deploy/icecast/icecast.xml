@@ -33,8 +33,12 @@
 
     <hostname>localhost</hostname>
 
+    <!-- ${ICECAST_PORT} is substituted at container start by entrypoint.sh
+         (defaulting to 8000), so this file is a template rather than the
+         config Icecast actually reads. Change the env var, not this
+         element. -->
     <listen-socket>
-        <port>8000</port>
+        <port>${ICECAST_PORT}</port>
         <bind-address>0.0.0.0</bind-address>
     </listen-socket>
 

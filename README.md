@@ -78,7 +78,8 @@ part against); step 4's `make up-offgrid` came up clean.
      sdr-rx/same-decoder/live-audio/segment-capture's log lines are interleaved here now
      (each line is prefixed with its own service name, e.g. `same-decoder: ...`), since
      they're one container.
-   - Listen: open `http://<host>:8000/home-WX5.ogg` (swap in your site/channel; see
+   - Listen: open `http://<host>:8000/home-WX5.ogg` (swap in your site/channel, and the
+     port if you changed `ICECAST_PORT` -- see "Ports" below and
      `services/live_audio/README.md`) in a browser or media player -- you should hear NWR's
      continuous broadcast. This is the fastest way to confirm tuning/gain/antenna before
      worrying about SAME decode at all.
@@ -93,6 +94,27 @@ part against); step 4's `make up-offgrid` came up clean.
 None of steps 5-8 have been verified against real hardware yet in this repo's history --
 that's the actual gap this section exists to close. See `docs/design/tracking.md` for
 exactly what's confirmed vs. still open.
+
+## Ports
+
+Two ports are published to the host, both set in `.env`:
+
+| Env var | Default | What it is |
+|---|---|---|
+| `TOCSIN_WEB_PORT` | `8080` | The web UI and the API behind it (same origin): `http://<host>:8080/`. |
+| `ICECAST_PORT` | `8000` | Icecast, for live audio: `http://<host>:8000/<site>-<channel>.ogg`. |
+
+Change either in `.env` and `make down && make up-offgrid`; nothing else needs editing.
+
+`ICECAST_PORT` is deliberately one knob for three things -- Icecast's own listen socket,
+the published host port, and the port `live-audio`/`api` dial inside the compose network --
+because the browser builds playback URLs from this page's hostname on that same port. If
+Icecast sits behind a reverse proxy on some other address, set `ICECAST_PUBLIC_URL` instead
+of trying to split the two halves apart.
+
+The api container's internal bind port (`API_PORT`, default `8000`) is separately
+configurable but rarely worth changing: compose maps `TOCSIN_WEB_PORT` onto it, so it never
+appears in a URL you type.
 
 ## Repository layout
 
