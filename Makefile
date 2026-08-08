@@ -1,4 +1,22 @@
-.PHONY: up-offgrid up-hybrid down bench-channelizer sdr-devices fetch-models test
+.PHONY: help up-offgrid up-hybrid down bench-channelizer sdr-devices fetch-models test
+
+.DEFAULT_GOAL := help
+
+# Bare `make` prints this instead of starting the stack -- up-offgrid used to
+# be the default goal (first target wins), which meant a bare `make` silently
+# ran `docker compose up --build`.
+help:
+	@echo "Tocsin -- available make targets:"
+	@echo ""
+	@printf "  %-17s %s\n" "up-offgrid" "Start the stack in offgrid mode (no network dependency)"
+	@printf "  %-17s %s\n" "up-hybrid" "Start the stack in hybrid mode (adds network-only components)"
+	@printf "  %-17s %s\n" "down" "Stop the stack"
+	@printf "  %-17s %s\n" "test" "Run the test suite for every service that has one"
+	@printf "  %-17s %s\n" "sdr-devices" "List rtlsdr device serials, for setting SDR_RX_DEVICES"
+	@printf "  %-17s %s\n" "bench-channelizer" "Run the channelizer CPU throughput benchmark"
+	@printf "  %-17s %s\n" "fetch-models" "Pre-stage STT model weights (not yet implemented)"
+	@echo ""
+	@echo "See README.md and docs/design/master-prompt.md for details."
 
 # TOCSIN_MODE selects the compose profile; see docs/design/master-prompt.md §1, §8.
 up-offgrid:
