@@ -365,3 +365,12 @@ and unit tested," not "verified against real audio."
   `/dev/bus/usb` passthrough itself, since this VM has no USB subsystem at all (not a code
   question, an environment one) — confirmed everything else with that one line stubbed out
   locally, then restored it unchanged before committing. 115 tests passing (`make test`).
+- **2026-08-08** — Field report: a host set `SDR_RX_DEVICES` to a bare serial (e.g.
+  `49435794`, no `site:` prefix) and got an uncaught `ValueError` traceback out of `main()`,
+  crash-looping forever under `restart: on-failure` since a malformed static config never
+  self-heals by retrying. `parse_device_config`'s validation was already correct — the gap
+  was `main()` not catching it. `__init__.py` now catches `ValueError` from
+  `parse_device_config`, prints one clear message naming the offending value and the
+  expected `site:serial` format plus the `make sdr-devices` pointer, and exits 1 (still a
+  real failure, distinct from the intentional "no devices configured" exit 0 path) instead
+  of dumping a traceback. Added `tests/test_main.py` covering this path. 116 tests passing.
