@@ -48,7 +48,17 @@ def main() -> None:
             print(f"  serial={kwargs.get('serial', '?')} label={kwargs.get('label', '?')}")
         return
 
-    devices = parse_device_config(os.environ.get("SDR_RX_DEVICES", ""))
+    raw_devices = os.environ.get("SDR_RX_DEVICES", "")
+    try:
+        devices = parse_device_config(raw_devices)
+    except ValueError as exc:
+        print(
+            f"sdr-rx: bad SDR_RX_DEVICES={raw_devices!r}: {exc}. "
+            "Expected 'site:serial,site2:serial2', e.g. SDR_RX_DEVICES=home:00000001 "
+            "-- run 'make sdr-devices' to find a dongle's serial.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if not devices:
         print(
             "sdr-rx: no devices configured (set SDR_RX_DEVICES='site:serial,...'). "
