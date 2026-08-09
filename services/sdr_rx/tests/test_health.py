@@ -50,6 +50,45 @@ def test_sink_records_every_sample():
     assert len(sink.history) == 2
 
 
+def test_sink_reports_are_throttled_but_dead_detection_is_not():
+    """Regression test for the fix in docs/design/tracking.md's 2026-08-09
+    entry: `sample()` must still update flat-carrier state on every call
+    (dead detection stays exactly as timely), but the sink -- the expensive
+    part, a Redis round trip -- should only be hit at most once per
+    `report_interval_s` per channel."""
+    sink = LoggingHealthSink()
+    tracker = HealthTracker(sink=sink, flat_carrier_seconds=30.0, rms_threshold=1e-4, report_interval_s=1.0)
+
+    tracker.sample("home", "WX1", np.zeros(10), now=0.0)  # first-ever sample always reports
+    tracker.sample("home", "WX1", np.zeros(10), now=0.2)  # within the throttle window
+    tracker.sample("home", "WX1", np.zeros(10), now=0.9)  # still within it
+    assert len(sink.history) == 1
+
+    tracker.sample("home", "WX1", np.zeros(10), now=1.1)  # past the throttle window
+    assert len(sink.history) == 2
+
+    # Dead detection must not lag behind the throttled reports: feed a
+    # sample every 0.9s (well under the 1s report interval) and confirm
+    # `dead` still flips at the documented 30s flat-carrier boundary.
+    tracker2 = HealthTracker(sink=LoggingHealthSink(), flat_carrier_seconds=30.0, rms_threshold=1e-4)
+    t = 0.0
+    result = None
+    while t <= 31.0:
+        result = tracker2.sample("home", "WX2", np.zeros(10), now=t)
+        t += 0.9
+    assert result.dead
+
+
+def test_report_throttling_is_independent_per_channel():
+    sink = LoggingHealthSink()
+    tracker = HealthTracker(sink=sink, report_interval_s=1.0)
+    tracker.sample("home", "WX1", np.ones(5), now=0.0)
+    tracker.sample("home", "WX2", np.ones(5), now=0.0)
+    tracker.sample("home", "WX1", np.ones(5), now=0.5)  # throttled
+    tracker.sample("home", "WX2", np.ones(5), now=0.5)  # throttled
+    assert len(sink.history) == 2
+
+
 def test_channels_tracked_independently():
     tracker = HealthTracker(flat_carrier_seconds=30.0)
     tracker.sample("home", "WX1", np.zeros(10), now=0.0)

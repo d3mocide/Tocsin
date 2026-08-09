@@ -12,7 +12,7 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from .audio_conditioning import SQUELCH_DEFAULT_THRESHOLD, Squelch, VoiceBandFilter
+from .audio_conditioning import SQUELCH_OPEN_DB, Squelch, VoiceBandFilter
 from .bus import TOPIC_SAME, TOPIC_STT
 from .channelizer import PolyphaseChannelizer
 from .channels import nwr_bins
@@ -35,12 +35,12 @@ class ChannelPublisher(Protocol):
 class _ChannelState:
     """Per-NWR-channel state carried across `process()` calls."""
 
-    def __init__(self, channel: str, ring_buffer: ChannelRingBuffer, squelch_threshold: float):
+    def __init__(self, channel: str, ring_buffer: ChannelRingBuffer, squelch_open_db: float):
         self.channel = channel
         self.discriminator = FMDiscriminator()
         self.ring_buffer = ring_buffer
         self.voice_filter = VoiceBandFilter()
-        self.squelch = Squelch(threshold=squelch_threshold)
+        self.squelch = Squelch(open_db=squelch_open_db)
 
 
 class DevicePipeline:
@@ -56,7 +56,7 @@ class DevicePipeline:
         spectrum: SpectrumTracker | None = None,
         channelizer: PolyphaseChannelizer | None = None,
         dc_blocker: DCBlocker | None = None,
-        squelch_threshold: float = SQUELCH_DEFAULT_THRESHOLD,
+        squelch_open_db: float = SQUELCH_OPEN_DB,
     ):
         self.site = site
         self._publisher = publisher
@@ -69,7 +69,7 @@ class DevicePipeline:
         if missing:
             raise ValueError(f"missing ring buffers for channels: {missing}")
         self._channels = {
-            b.channel: _ChannelState(b.channel, ring_buffers[b.channel], squelch_threshold) for b in self._bins
+            b.channel: _ChannelState(b.channel, ring_buffers[b.channel], squelch_open_db) for b in self._bins
         }
 
     def process(self, samples: np.ndarray) -> None:

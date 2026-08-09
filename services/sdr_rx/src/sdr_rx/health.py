@@ -33,6 +33,18 @@ import numpy as np
 
 FLAT_CARRIER_SECONDS = 30.0
 FLAT_CARRIER_RMS_THRESHOLD = 1e-4
+# `sample()` is called once per channel per capture chunk (~55ms at the
+# design's 1.2 MS/s / 65,536-sample chunk size -- see capture.py), so
+# reporting every call means ~128 Redis XADDs/sec for a single seven-channel
+# dongle, each one round-tripping through `api`'s consumer into a Postgres
+# INSERT and an SSE broadcast to every connected browser. None of that
+# granularity does anything for this signal's actual job -- detecting a
+# carrier flat for FLAT_CARRIER_SECONDS (30s) -- so the sink report is
+# throttled to this interval while the flat-carrier state itself still
+# updates on every single call (in-process, no I/O, effectively free).
+# Profiled on a live deployment: this was a real, measurable contributor to
+# `api`/`postgres` CPU (docs/design/tracking.md's entry this date).
+DEFAULT_REPORT_INTERVAL_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -71,11 +83,14 @@ class HealthTracker:
         sink: HealthSink | None = None,
         flat_carrier_seconds: float = FLAT_CARRIER_SECONDS,
         rms_threshold: float = FLAT_CARRIER_RMS_THRESHOLD,
+        report_interval_s: float = DEFAULT_REPORT_INTERVAL_S,
     ):
         self._sink = sink or LoggingHealthSink()
         self._flat_carrier_seconds = flat_carrier_seconds
         self._rms_threshold = rms_threshold
+        self._report_interval_s = report_interval_s
         self._flat_since: dict[tuple[str, str], float] = {}
+        self._last_reported_at: dict[tuple[str, str], float] = {}
 
     def sample(self, site: str, channel: str, audio: np.ndarray, now: float | None = None) -> ChannelHealth:
         now = time.monotonic() if now is None else now
@@ -95,5 +110,8 @@ class HealthTracker:
         health = ChannelHealth(
             site=site, channel=channel, timestamp_ns=time.time_ns(), rms=rms, power=power, dead=dead
         )
-        self._sink.record(health)
+        last_reported = self._last_reported_at.get(key)
+        if last_reported is None or now - last_reported >= self._report_interval_s:
+            self._sink.record(health)
+            self._last_reported_at[key] = now
         return health

@@ -196,6 +196,43 @@ part of the stated exit criteria, which are now all met):
   assertions still pass unmodified -- CLAUDE.md's bar for touching this file. 96 tests
   passing in `sdr_rx`, up from 93.
 
+- **2026-08-09 (squelch upgrade):** Replaced `audio_conditioning.Squelch`'s fixed-RMS-
+  threshold design with a self-calibrating noise-quieting squelch, ported from
+  `d3mocide/op25-downstream`'s `squelch_core.NoiseSquelch` (credited there to Pieter-Tjerk de
+  Boer PA3FWM's "Squelch algorithms" technote) -- see the Session Log entry this date for the
+  full writeup, including why GNU Radio itself was ruled out as a wholesale replacement.
+  Dropped the reference's `disc_gain`/`deviation` normalization (this discriminator's output
+  is already unit-gain radians per sample) and its optional DB1NV voice detector (no
+  P25/DMR-style voice-vs-data distinction applies to a feed already split from raw SAME
+  decode). Kept: a runtime-tracked, rise-only no-carrier reference so `open_db`/`hyst_db` are
+  portable dB-relative thresholds instead of one fixed number needing per-site tuning, and the
+  4-state (closed/opening/open/hang) machine with a rehold margin that avoids the open<->hang
+  chatter a single hysteresis threshold falls into at the boundary. `SQUELCH_REF_POWER_INIT`
+  and the 8 kHz noise band were calibrated against this channelizer's *real* DC-block/PFB/
+  discriminator chain fed AWGN (not an idealized approximation) -- consistently ~0.62 rad^2
+  across all seven NWR bins. Found and fixed one real bug this calibration surfaced: the
+  discriminator output for a synthetic test tone needs the baseband *offset* from the LO
+  (`(k + 0.5) * 25000` Hz), not `channels.bin_frequency_hz()`'s absolute RF frequency --
+  using the latter by mistake in a scratch calibration script produced a wildly aliased
+  "carrier" that showed no quieting at all, which is what caught the mistake. Also fixed a
+  real bug in the port itself once real signals were used to test it: `noise_power` seeded
+  from the same deliberately-low `SQUELCH_REF_POWER_INIT` as the reference caused a strong,
+  genuine carrier's low noise-band power to take several `POWER_TAU_MS` windows to smooth in
+  from that unrelated starting point, delaying every open decision -- now the first real
+  measurement snaps `noise_power` directly instead of smoothing in from an arbitrary seed.
+  Config: `SDR_RX_SQUELCH_THRESHOLD` (an absolute number needing per-site tuning) replaced by
+  `SDR_RX_SQUELCH_OPEN_DB` (a portable dB value, default 8.0, matching the reference
+  algorithm's own default). Verified: `sdr_rx` 102 passed (up from 96) -- new tests include a
+  direct port of the reference implementation's own threshold-jitter-doesn't-thrash regression
+  test (driving the state machine directly, the same technique its own test suite uses, rather
+  than trying to synthesize audio landing on an exact dB value) and two tests running the real
+  channelizer chain end to end (AWGN never opens the gate; a clean carrier does), trimmed from
+  an initial 3-5s of simulated IQ per case down to 0.75s once the behavior was confirmed stable
+  at that length, to keep the suite fast (full suite: 28s -> 9.5s). Not verified: real hardware
+  -- the calibration is against this channelizer's own simulated chain, not an actual dongle's
+  noise floor, which will differ in absolute terms (though the self-calibration is exactly the
+  mechanism meant to absorb that difference without retuning).
+
 ---
 
 ## Phase 2 — SAME decode end to end
@@ -1060,6 +1097,29 @@ FastAPI service, and the first TypeScript in this repo.
   `/events` request. `api` suite 109 passed (up from 103), `web`'s `tsc --noEmit`/`vite
   build` clean.
 
+- **2026-08-09:** Live deployment follow-up to the `sdr-rx` CPU fix earlier this date (Phase
+  1's note this date): `api` at 38.9% CPU and `postgres` at 23.9% were unexpectedly high for
+  a lightweight polling REST API. Traced it to `sdr_rx.HealthTracker` publishing a Redis
+  stream entry on every `sample()` call -- once per NWR channel per capture chunk, ~128/sec
+  for a single seven-channel dongle -- each one round-tripping through `api`'s consumer into
+  a Postgres `INSERT` and an SSE broadcast to every connected browser, for a signal whose
+  only job is detecting a carrier flat for 30 continuous seconds (`FLAT_CARRIER_SECONDS`).
+  Fixed at the source, not the consumer: `HealthTracker.sample()` still updates flat-carrier
+  state on every call (in-process, effectively free, zero loss of detection fidelity) but
+  only forwards to the sink at most once per `report_interval_s` (new parameter, default
+  1.0s) per `(site, channel)` -- an ~18x cut in Redis/Postgres/SSE traffic for this stream.
+  Also batched `api.redis_bus.StreamConsumer`'s per-entry `XACK` into one call per batch
+  (`xreadgroup` already reads a batch in one round trip; acking one at a time threw that away
+  on the write side) -- preserves the exact at-least-once/idempotent-replay semantics the
+  original per-entry ack had via a `try/finally` that still acks everything that succeeded
+  before a later entry's handler raised. Verified: `sdr_rx` 98 passed (up from 96, new tests
+  assert reports are throttled per-channel while dead-detection timing is unaffected),
+  `api` 111 passed (up from 109, new tests assert a multi-entry batch acks in one call and
+  that a mid-batch failure still acks everything that completed before it). Not verified:
+  the actual CPU drop on the reporting Pi -- the fix targets the mechanism the profiling
+  data pointed at, not a number reproduced in this sandbox (no Postgres/Redis load-test
+  harness here).
+
 **Not started / open:**
 - No auth (design doc §9: "reverse proxy + Argon2id local backend auth") -- out of scope for
   this phase, which is about the data path, not the deploy-behind-Caddy story.
@@ -1865,3 +1925,89 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   whether 3.44x-on-this-sandbox is comfortably above or still uncomfortably close to 1.0x on the
   real hardware is an open question until measured there directly (`make bench-channelizer`,
   or better, timing the real `DevicePipeline.process()` loop against a live dongle).
+
+- **2026-08-09 (later same day):** Follow-up screenshots from the same live deployment, before
+  vs. after merging the `sdr-rx` CPU PR: `sdr-rx` now sits around 85-88% of one core (both its
+  threads combined) instead of pegged at 99.7% -- consistent with roughly the 1.17x-1.2x
+  real-time margin the earlier sandbox numbers predicted once corrected for a Pi core being
+  slower than the sandbox's, up from an estimated well-under-1.0x before that fix (matching the
+  original "pegged solid, buffering broken" report). But the user's real question was about the
+  *aggregate* jump: all four cores at 84-91% with `api` at 38.9% and `postgres` at 23.9%, on a
+  Pi that also runs an independent ADS-B feeder (`readsb`) and a P25 trunked-scanner stack
+  (`op25`/`liquidsoap`) against other SDRs, unrelated to Tocsin. First worth ruling out: the
+  screenshot showed two rows each for `sdr-rx`, `live_audio`, `same_decoder`, and
+  `segment_capture` -- not duplicate containers (a real concern, would mean a bad redeploy):
+  every pair had byte-identical VIRT/RES/SHR, the signature of two *threads* of one process
+  (sdr-rx's capture thread + its mostly-idle main loop; libzmq's background I/O thread for the
+  other three), not two separate processes.
+
+  Root-caused the actual `api`/`postgres` cost by reading `sdr_rx.health`, `api.redis_bus`, and
+  `api.ingest` together rather than profiling blind: `HealthTracker.sample()` is called once
+  per NWR channel per capture chunk in `DevicePipeline.process()` -- seven times every ~55ms,
+  ~128/sec for one dongle -- and every call unconditionally published to the `tocsin:health`
+  Redis stream. `api`'s consumer reads that stream in batches of up to 100 but then processed
+  each entry with its own individual Postgres `INSERT` *and* its own individual SSE broadcast to
+  every connected browser, sequentially, awaited one at a time. None of that per-chunk
+  granularity serves the signal's actual purpose -- `FLAT_CARRIER_SECONDS = 30.0`, detecting a
+  channel dead for 30 continuous seconds -- so fixed it at the source rather than patching the
+  consumer's batching alone: `HealthTracker` now throttles how often it forwards to the sink
+  (default once per second per channel, `report_interval_s`) while still updating its internal
+  flat-carrier timer on every call, so dead-channel detection timing is provably unaffected (new
+  test drives it through the full 30s boundary on the *unthrottled* per-chunk cadence and
+  confirms `dead` still flips at the right instant). This alone is an ~18x cut in Redis
+  XADDs/Postgres inserts/SSE broadcasts for this one stream. Also batched `api.redis_bus`'s
+  per-entry `XACK` into one call per batch, since `xreadgroup` already reads a batch in a single
+  round trip and acking it back one entry at a time threw that away -- done via a `try/finally`
+  so a handler that raises partway through a batch still acks everything that completed before
+  it, preserving the exact at-least-once semantics the original per-entry ack had (two new
+  tests: one asserting a 3-entry batch acks in a single call, one asserting a mid-batch failure
+  still acks the entries that succeeded before it).
+
+  Separately, the user pointed at `d3mocide/op25-downstream` (a GNU Radio-based P25 decoder,
+  also streaming to Icecast) asking whether it has transferable optimizations. Cloned and read
+  it rather than assuming: its DSP core is GNU Radio -- compiled C++ blocks with VOLK SIMD
+  kernels, not Python/NumPy -- which is a different, and faster, execution model than Tocsin's
+  channelizer, but adopting it would mean rewriting `sdr_rx`'s signal chain onto a different
+  framework entirely, not a portable optimization; out of scope here and flagged as a real
+  architecture decision rather than attempted piecemeal. Its Icecast path (`liquidsoap` instead
+  of `live_audio`'s `ffmpeg` subprocess) isn't a lead either -- `live_audio` measured at ~5% CPU
+  total in the same htop capture, not a hot spot, so there's no profiling evidence a swap would
+  help. The one genuinely useful find: `squelch_core.py`'s noise squelch (credited to PA3FWM/
+  DB1NV) is a materially more sophisticated design than `sdr_rx.audio_conditioning.Squelch` --
+  self-calibrating against a rise-only-tracked no-carrier reference (dB-of-quieting, no
+  per-site threshold hunting, directly answering the "how do I pick `SDR_RX_SQUELCH_THRESHOLD`"
+  question left open in the squelch PR) with a proper 4-state attack/hang/rehold machine to
+  avoid chatter at the threshold. Worth a follow-up quality pass on the squelch itself; it is
+  not a CPU fix (if anything slightly more compute than the current version) so left for a
+  separate task rather than folded into this one.
+
+  Verified: `sdr_rx` 98 passed (up from 96), `api` 111 passed (up from 109). Not verified: the
+  actual CPU numbers on the reporting Pi after this fix -- no way to reproduce Postgres/Redis
+  load at that rate in this sandbox, so this is confirmed by tracing the exact call path and
+  its frequency, not by reproducing the observed CPU drop directly.
+
+- **2026-08-09 (squelch upgrade + GNU Radio question):** Two follow-ups from the same
+  conversation. First, whether `sdr_rx` should be rewritten on GNU Radio (op25-downstream's
+  own foundation) rather than the custom NumPy/SciPy channelizer. Answered without
+  implementing anything: op25 being faster is expected (compiled C++ blocks with VOLK SIMD
+  kernels vs. Python/NumPy is a genuinely different execution model) but not new information,
+  and porting `sdr_rx`'s core would mean re-deriving and re-verifying every hazard CLAUDE.md
+  calls out (odd-stacked phase correction, batched FFT, DC-blocking order) inside a
+  flowgraph model that's substantially harder to unit-test at the granularity
+  `test_channelizer.py` currently achieves with pure synthetic NumPy arrays and no hardware.
+  Recommended against it for now: the CPU problem this session already turned from "falling
+  behind" into "thin but real margin" (the two PRs above), which changes the cost/benefit of
+  a full rewrite considerably from where it stood before those fixes landed. Flagged as a real
+  v2 architecture decision to revisit later if headroom is still a problem after squeezing
+  what's left in the current approach, not something to fold into an optimization pass.
+
+  Second, porting op25-downstream's noise squelch (`squelch_core.py`) into
+  `sdr_rx.audio_conditioning.Squelch`, replacing its fixed-RMS-threshold design -- see Phase
+  1's note this date for the technical writeup (self-calibrating reference, dB-relative
+  thresholds, the 4-state hysteresis machine, the two real bugs found and fixed while
+  calibrating and testing against this system's actual channelizer chain rather than trusting
+  the port by inspection). Config env var renamed `SDR_RX_SQUELCH_THRESHOLD` ->
+  `SDR_RX_SQUELCH_OPEN_DB` to match (`README.md`, `pipeline.py`, `__init__.py`,
+  `test_pipeline.py`'s force-closed test updated to the new dB semantics). Verified: `sdr_rx`
+  102 passed (up from 96). Not verified: real hardware -- calibrated against this system's own
+  simulated DC-block/PFB/discriminator chain, not a live dongle's actual noise floor.

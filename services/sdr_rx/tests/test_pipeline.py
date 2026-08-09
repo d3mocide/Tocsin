@@ -72,11 +72,12 @@ def test_process_is_a_no_op_below_the_channelizer_history_length():
 def test_squelch_gates_only_the_stt_topic_leaving_same_untouched(tmp_path):
     publisher = FakePublisher()
     ring_buffers = _ring_buffers(tmp_path)
-    # Always-closed gate (RMS is never negative) isolates what squelching
-    # touches: the "stt" topic (live_audio/Icecast) should come out silent,
-    # while "same" (multimon-ng decode) must be unaffected -- a misfiring
-    # gate must never be able to eat a real SAME header.
-    pipeline = DevicePipeline("site-a", publisher, ring_buffers, squelch_threshold=-1.0)
+    # Impossibly high open threshold (quieting never reaches 1000 dB) keeps
+    # the gate permanently closed, isolating what squelching touches: the
+    # "stt" topic (live_audio/Icecast) should come out silent, while "same"
+    # (multimon-ng decode) must be unaffected -- a misfiring gate must never
+    # be able to eat a real SAME header.
+    pipeline = DevicePipeline("site-a", publisher, ring_buffers, squelch_open_db=1000.0)
 
     n_samples = 200_000
     t = np.arange(n_samples) / FS

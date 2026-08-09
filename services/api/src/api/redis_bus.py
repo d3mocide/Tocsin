@@ -67,10 +67,24 @@ class StreamConsumer:
             return 0
         processed = 0
         for _stream_name, entries in response:
-            for entry_id, fields in entries:
-                await self._handler(json.loads(fields["payload"]))
-                await self._redis.xack(self._stream, self._group, entry_id)
-                processed += 1
+            # One XACK per batch (up to `count` entries) instead of one per
+            # entry: `xreadgroup` already reads the whole batch in a single
+            # round trip, so acking one at a time threw that batching away on
+            # the write side -- a real cost at `sdr_rx`'s health-sample
+            # volume (docs/design/tracking.md's 2026-08-09 entry). Whatever
+            # succeeded before a handler raised is still acked in `finally`,
+            # matching the original per-entry-ack behavior exactly for every
+            # entry that did complete -- only entries never reached (the one
+            # that raised, and anything after it) stay pending for replay.
+            acked_ids = []
+            try:
+                for entry_id, fields in entries:
+                    await self._handler(json.loads(fields["payload"]))
+                    acked_ids.append(entry_id)
+                    processed += 1
+            finally:
+                if acked_ids:
+                    await self._redis.xack(self._stream, self._group, *acked_ids)
         return processed
 
     async def run_forever(self, stop_event: asyncio.Event) -> None:
