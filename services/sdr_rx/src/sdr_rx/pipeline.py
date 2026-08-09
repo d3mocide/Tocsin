@@ -12,6 +12,7 @@ from typing import Callable, Protocol
 
 import numpy as np
 
+from .audio_conditioning import SQUELCH_DEFAULT_THRESHOLD, Squelch, VoiceBandFilter
 from .bus import TOPIC_SAME, TOPIC_STT
 from .channelizer import PolyphaseChannelizer
 from .channels import nwr_bins
@@ -34,10 +35,12 @@ class ChannelPublisher(Protocol):
 class _ChannelState:
     """Per-NWR-channel state carried across `process()` calls."""
 
-    def __init__(self, channel: str, ring_buffer: ChannelRingBuffer):
+    def __init__(self, channel: str, ring_buffer: ChannelRingBuffer, squelch_threshold: float):
         self.channel = channel
         self.discriminator = FMDiscriminator()
         self.ring_buffer = ring_buffer
+        self.voice_filter = VoiceBandFilter()
+        self.squelch = Squelch(threshold=squelch_threshold)
 
 
 class DevicePipeline:
@@ -53,6 +56,7 @@ class DevicePipeline:
         spectrum: SpectrumTracker | None = None,
         channelizer: PolyphaseChannelizer | None = None,
         dc_blocker: DCBlocker | None = None,
+        squelch_threshold: float = SQUELCH_DEFAULT_THRESHOLD,
     ):
         self.site = site
         self._publisher = publisher
@@ -64,7 +68,9 @@ class DevicePipeline:
         missing = [b.channel for b in self._bins if b.channel not in ring_buffers]
         if missing:
             raise ValueError(f"missing ring buffers for channels: {missing}")
-        self._channels = {b.channel: _ChannelState(b.channel, ring_buffers[b.channel]) for b in self._bins}
+        self._channels = {
+            b.channel: _ChannelState(b.channel, ring_buffers[b.channel], squelch_threshold) for b in self._bins
+        }
 
     def process(self, samples: np.ndarray) -> None:
         cleaned = self._dc_blocker.process(samples)
@@ -81,7 +87,12 @@ class DevicePipeline:
             state.ring_buffer.write(audio)
             self._health.sample(self.site, b.channel, audio)
             self._publisher.publish(TOPIC_SAME, self.site, b.channel, 22050, to_s16le(to_multimon_rate(audio)))
-            self._publisher.publish(TOPIC_STT, self.site, b.channel, 16000, to_s16le(to_stt_rate(audio)))
+            # Squelch + voice-band filter apply only to this feed (live_audio's
+            # Icecast stream) -- SAME decode above and the ring buffer
+            # segment_capture reads alert audio from both stay on raw `audio`,
+            # untouched (audio_conditioning.py's docstring).
+            live_audio = state.voice_filter.process(audio) * state.squelch.envelope(audio)
+            self._publisher.publish(TOPIC_STT, self.site, b.channel, 16000, to_s16le(to_stt_rate(live_audio)))
 
     def run_forever(self, source: SampleSource, stop: Callable[[], bool] | None = None) -> None:
         while stop is None or not stop():

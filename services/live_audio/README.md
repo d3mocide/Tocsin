@@ -29,6 +29,22 @@ rather than real ffmpeg -- see its test file. The full path (ffmpeg
 actually encoding to a real Icecast mountpoint, a browser playing it back)
 is not yet verified -- see the repo root README's bring-up runbook.
 
+### Buffering
+
+`FFmpegFeeder.write()` (`feeder.py`) never blocks the caller. It pushes PCM
+onto a small bounded queue drained by a dedicated writer thread that owns
+the actual (blocking) `stdin.write()` to ffmpeg; if that queue fills --
+because ffmpeg is itself stalled writing to Icecast over a bad network link
+-- the oldest buffered chunk is dropped to make room for the newest. This
+matters because `main()`'s loop is single-threaded: `subscriber.recv()` ->
+`streamer.feed()` -> `feeder.write()` in lockstep. Before this, a stalled
+`write()` stalled that whole loop, which stopped draining the ZMQ SUB
+socket, which silently dropped frames once its own receive buffer filled
+(`subscriber.py`) -- the actual cause of audible cutouts, not anything
+downstream in Icecast. The queue holds ~2s of audio (`feeder.DEFAULT_QUEUE_MAXSIZE`);
+long enough to ride out a brief stall without adding much latency to an
+already-not-low-latency stream.
+
 ## Configuration
 
 | Env var | Default | Purpose |

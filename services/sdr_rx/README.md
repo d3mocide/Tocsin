@@ -14,10 +14,14 @@ DC blocker, discriminator, resampling, channel/bin mapping, ZMQ PUB
 publisher (`bus.py`), tmpfs ring buffer (`ring_buffer.py`), health signal
 (`health.py`), the 41-spectrum-bin tracker (`spectrum.py`, Phase 8 --
 computed for free from the channelizer's already-full 48-bin output, see
-its own docstring), Redis publishing for both (`redis_sink.py`,
-`tocsin:health` stream + a per-site `tocsin:spectrum:<site>` snapshot key
-for `api`), host-prerequisite check (`prerequisites.py`), and the pipeline
-that wires them together (`pipeline.py`) are implemented and unit tested.
+its own docstring), squelch + voice-band filtering for the live-audio feed
+(`audio_conditioning.py` -- see its docstring for why this is applied to
+the `stt` ZMQ topic only, never to SAME decode or the ring buffer
+`segment_capture` reads alert audio from), Redis publishing for both
+(`redis_sink.py`, `tocsin:health` stream + a per-site
+`tocsin:spectrum:<site>` snapshot key for `api`), host-prerequisite check
+(`prerequisites.py`), and the pipeline that wires them together
+(`pipeline.py`) are implemented and unit tested.
 `SoapySDRDevice` (`capture.py`) is written against the SoapySDR Python API
 but is untestable without target hardware and the SoapySDR bindings
 installed -- everything upstream of it (`DevicePipeline`) is exercised in
@@ -76,6 +80,7 @@ multi-service sequence. The `sdr-rx`-specific prerequisites it walks through:
 | `SDR_RX_DEVICES` | *(none)* | `site:serial,site2:serial2` -- one dongle per transmitter site, addressed by serial number (never by index; see `capture.py`). Empty means no capture; the process reports that and exits. |
 | `SDR_RX_LIST_DEVICES` | *(unset)* | If set (any value), enumerate visible rtlsdr devices and exit instead of starting capture -- see `make sdr-devices`. `entrypoint.sh` special-cases this: it `exec`s straight into sdr-rx's own listing codepath and skips starting same_decoder/live_audio/segment_capture entirely, so `make sdr-devices` stays a quick one-shot diagnostic. |
 | `SDR_RX_GAIN_DB` | `30` (`capture.DEFAULT_GAIN_DB`) | Manual RTL-SDR gain in dB, applied to every configured device (design doc §3: AGC oscillates on a constant carrier, so this stays manual). 30 dB is a starting point, not a universal value -- antenna, cable loss, and distance to the transmitter all shift what's correct for a given site; see the root README's "Tweak from there" bring-up step. |
+| `SDR_RX_SQUELCH_THRESHOLD` | `0.6` (`audio_conditioning.SQUELCH_DEFAULT_THRESHOLD`) | Noise-gate threshold for the live-audio feed only (see `audio_conditioning.py`) -- lower it if real audio is getting cut off on a weak channel, raise it if static is still getting through between transmissions. Same "starting point, not universal" caveat as gain. |
 | `SDR_RX_ZMQ_BIND` | `tcp://0.0.0.0:5555` | ZMQ PUB bind address for the `same.<site>.<channel>` / `stt.<site>.<channel>` topics (see `bus.py`). same_decoder/live_audio/segment_capture connect to this over `localhost` now that they run in this same container -- see their own READMEs. |
 | `SDR_RX_RING_BUFFER_DIR` | `/tmp/sdr_rx_ring` | Base directory for the per-site, per-channel tmpfs ring buffers -- mount this on tmpfs in production. |
 | `SDR_RX_REDIS_URL` | *(unset -- logs in-process only)* | Redis connection URL. When set, health samples publish to the `tocsin:health` stream and spectrum snapshots to `tocsin:spectrum:<site>` for `api` (Phase 8). |
