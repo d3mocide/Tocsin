@@ -26,12 +26,13 @@ this system exists for.
 
 ## Layout
 
-Two columns on desktop. The left carries **Live audio**, the **alert feed**, and the
-**activity log**; the right carries the spectrum, RF channels, nearby NWR stations, system
-health, services, and dispatch -- the radio-hardware panels (spectrum/RF channels/stations)
-grouped at the top of the column, general system status below. Audio and activity started
-on the right and moved because five stacked panels there against a lone feed on the left
-left the page visibly lopsided.
+Two columns on desktop. The left carries **Live audio**, **Nearby NWR stations**, the
+**alert feed**, and the **activity log**; the right carries the spectrum, RF channels,
+system health, services, and dispatch. Nearby NWR stations sits in the wider left column
+rather than with the other radio-hardware panels on the right because its 3-column card
+grid needs the width; RF channels stays on the right in a narrower auto-fit grid. Audio and
+activity started on the right and moved because five stacked panels there against a lone
+feed on the left left the page visibly lopsided.
 
 The audio players lay out as a responsive grid rather than a stack, so the wide left column
 is used horizontally and three mounts don't push the alert feed down the page.
@@ -73,13 +74,13 @@ you opened the page for below the fold.
   breathe with the noise floor and made a carrier appearing look identical
   to the noise floor dropping.
 - **RF channels** (`views/health.ts`) -- per-`(site, channel)` health, one
-  row per channel (dot + name + sparkline, detail line below with RMS,
-  last-sample time, and status). Replaced a 6-column table that forced its
-  own horizontal scroll in the sidebar -- it sits directly under the
-  waterfall now, and a wide table there was worse, not better. `dead: true`
-  (design doc §3's flat-carrier signal) still gets the loudest treatment,
-  with a sparkline seeded from `GET /health/history` so a channel drifting
-  toward dead is visible before it crosses the threshold.
+  card per channel (dot + name, sparkline, RMS/last-sample/status detail
+  line) in an auto-fit grid rather than one full-width row per channel --
+  a single column wasted most of the panel's width on seven short rows.
+  `dead: true` (design doc §3's flat-carrier signal) still gets the
+  loudest treatment, with a sparkline seeded from `GET /health/history` so
+  a channel drifting toward dead is visible before it crosses the
+  threshold.
 - **Nearby NWR stations** (`views/stations.ts`) -- `GET /reference`'s
   station table (`data/nwr_stations_or.yaml`), sorted by `distance_km` when
   the operator has set `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE`
@@ -87,6 +88,11 @@ you opened the page for below the fold.
   gain bring-up and reading the waterfall's channel labels, not station
   identification -- several stations share a channel, so this narrows down
   what a bin probably carries without replacing an actual listen-and-confirm.
+  A fixed 3-column, 2-row page (6 stations) with Prev/Next paging through
+  the rest, rather than a long scrolling list or a "show more" that grows
+  the panel -- `StationsView` keeps the current page across repaints
+  (`reference` reloading, e.g.) so paging through doesn't get reset out
+  from under you.
 - **Live audio** (`views/streams.ts`) -- an `<audio>` player per Icecast
   mount. These streams always worked; nothing in the UI ever mentioned
   them. Each mount's player is created once and kept for the panel's

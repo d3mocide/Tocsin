@@ -39,26 +39,29 @@ export function renderHealth(container: HTMLElement, store: Store): void {
       : el("p", { class: "health-summary good", text: `${samples.length} channels alive` }),
     el(
       "ul",
-      { class: "health-list" },
-      ...samples.map((sample) => row(sample, healthHistory.get(healthKey(sample.site, sample.channel)) ?? [])),
+      { class: "health-grid" },
+      ...samples.map((sample) => card(sample, healthHistory.get(healthKey(sample.site, sample.channel)) ?? [])),
     ),
   );
 }
 
-/** One row per `(site, channel)`, matching the Services/Stations panels'
- * dot+name+detail layout instead of the wide table this replaced -- a
- * 6-column table forced its own horizontal scroll in the sidebar, which
- * only got worse once this panel moved above RF channels to sit in the
- * same narrow column. */
-function row(sample: HealthSample, series: number[]): HTMLElement {
+/** One card per `(site, channel)` in a multi-column grid (`.health-grid`)
+ * rather than one full-width row per channel -- a single column wasted most
+ * of the panel's width on seven short rows once this sat above the plain
+ * text list it used to be a table. */
+function card(sample: HealthSample, series: number[]): HTMLElement {
   return el(
     "li",
-    { class: `health-row ${sample.dead ? "row-dead" : "row-alive"}` },
-    el("span", { class: "health-dot", attrs: { "aria-hidden": "true" } }),
-    el("span", { class: "health-name", text: `${sample.site} · ${sample.channel}` }),
+    { class: `health-card ${sample.dead ? "row-dead" : "row-alive"}` },
+    el(
+      "div",
+      { class: "health-card-head" },
+      el("span", { class: "health-dot", attrs: { "aria-hidden": "true" } }),
+      el("span", { class: "health-name", text: `${sample.site} · ${sample.channel}` }),
+    ),
     sparkline(series, sample.dead),
     el(
-      "span",
+      "div",
       { class: "health-detail" },
       el("span", { class: "mono", text: sample.rms.toExponential(2) }),
       el("span", { text: relativeTime(sample.sampled_at), title: absoluteTime(sample.sampled_at) }),
@@ -69,13 +72,18 @@ function row(sample: HealthSample, series: number[]): HTMLElement {
 
 /** Hand-drawn SVG polyline rather than a chart library: this is sixty
  * points of one series with no axes, legend, or interaction, which is
- * several orders of magnitude less than any charting dependency is for. */
+ * several orders of magnitude less than any charting dependency is for.
+ * Width is `100%` rather than a fixed pixel count now that this sits in a
+ * variable-width grid cell instead of a fixed-width table column --
+ * `viewBox` keeps the polyline's own coordinate math independent of the
+ * rendered size. */
 function sparkline(series: number[], dead: boolean): SVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("class", "sparkline");
   svg.setAttribute("viewBox", `0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`);
-  svg.setAttribute("width", String(SPARKLINE_WIDTH));
+  svg.setAttribute("width", "100%");
   svg.setAttribute("height", String(SPARKLINE_HEIGHT));
+  svg.setAttribute("preserveAspectRatio", "none");
   svg.setAttribute("aria-hidden", "true");
 
   if (series.length < 2) return svg;
