@@ -80,6 +80,14 @@ multi-service sequence. The `sdr-rx`-specific prerequisites it walks through:
    ```
    `sdr-rx` asserts this at startup (`prerequisites.py`) and refuses to start
    with a clear error if the module is loaded.
+1b. **Map the USB bus into the container** -- keep `compose.sdr.yaml` in
+   `COMPOSE_FILE` (it's in `.env.example` by default). `sdr-rx` checks for
+   `/dev/bus/usb` at startup (`prerequisites.py`) once `SDR_RX_DEVICES` is
+   set, because without the mapping libusb counts the dongles but can't open
+   them and librtlsdr reports `rtlsdr_get_device_usb_strings failed` plus
+   `rtlsdr_get_index_by_serial - -3`, which looks like a bad serial instead.
+   `make up-offgrid`/`make up-hybrid`/`make sdr-devices` add the overlay for
+   you; `make dev-stack` is the deliberate no-hardware path.
 2. **Install the udev rule** so the dongle is group-readable without a
    privileged container:
    ```sh

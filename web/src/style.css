@@ -771,25 +771,44 @@ body {
   color: var(--text-dim);
 }
 
+/* Two columns, fixed -- not `auto-fill, minmax(170px, 1fr)`, which gave
+   three on a desktop panel and left each card too narrow for a service
+   name and its heartbeat age on one line. `minmax(0, 1fr)` rather than
+   plain `1fr` so a long detail chip shrinks its column instead of forcing
+   the grid wider than the panel. Collapses to one column on narrow
+   viewports, where two would reintroduce the same crowding. */
 .service-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.4rem;
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
+@media (max-width: 620px) {
+  .service-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .service {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 0.3rem;
   padding: 0.38rem 0.55rem;
   font-size: 0.8rem;
   border-radius: 6px;
   background: var(--panel-deep);
   border: 1px solid var(--border);
   transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+
+.service-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .service:hover {
@@ -803,6 +822,8 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  /* Let the name ellipsis rather than wrap the dot onto its own line. */
+  min-width: 0;
 }
 
 .service-dot-pulse {
@@ -829,6 +850,9 @@ body {
 
 .service-name {
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .service-down .service-name {
@@ -836,19 +860,22 @@ body {
   font-weight: 600;
 }
 
-.service-right {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
+/* Sits on its own row under `.service-head` now. `align-self: flex-start`
+   keeps it hugging its text instead of stretching the full card width, and
+   `cursor: help` advertises the `title` that explains what it's reporting. */
 .service-chip {
+  align-self: flex-start;
+  max-width: 100%;
   font-size: 0.68rem;
   padding: 0.1rem 0.38rem;
   border-radius: 4px;
   background: color-mix(in srgb, var(--panel-deep) 60%, var(--border) 40%);
   color: var(--text-dim);
   border: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
 }
 
 .service-age {

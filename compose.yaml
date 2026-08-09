@@ -143,12 +143,22 @@ services:
     volumes:
       - ./data:/app/data:ro
       - segment-captures:/var/lib/segment_capture/captures
-    # No `devices:` here on purpose -- it lives in compose.sdr.yaml.
-    # Docker refuses to *start* a container whose `devices:` host path is
-    # absent (e.g. Windows/Mac/dev environments without physical SDRs), so
-    # adding compose.sdr.yaml to COMPOSE_FILE maps the USB bus when hardware is attached.
+    # No `devices:` here on purpose -- it lives in compose.sdr.yaml, which
+    # `make up-offgrid`/`make up-hybrid` always include and `make dev-stack`
+    # always omits. Docker refuses to *start* a container whose `devices:` host
+    # path is absent (Windows/Mac and any dev box with no USB subsystem), and a
+    # list entry in an override can't be unset from the base once declared, so
+    # splitting it is what makes "no dongle attached" a runnable configuration
+    # -- same reasoning as compose.mesh.yaml. It is NOT an opt-in for real
+    # deployments: without it libusb can count dongles but open none of them,
+    # and sdr-rx fails at startup saying so (prerequisites.py). The mapping is
+    # the whole USB bus rather than one device node because RTL-SDR dongles
+    # enumerate under a bus-relative path that isn't stable across replugs --
+    # selection happens in the app layer by serial (SDR_RX_DEVICES). The host
+    # also needs the udev rule in deploy/udev/ so the dongle is group-readable
+    # without a privileged container; see this service's README for the full
+    # bring-up sequence (blacklist, udev rule, `make sdr-devices`).
     profiles: [offgrid, hybrid]
-
 
   icecast:
     build: ./deploy/icecast

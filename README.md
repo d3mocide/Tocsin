@@ -61,11 +61,17 @@ part against); step 4's `make up-offgrid` came up clean.
    ```
 3. **Set `POSTGRES_PASSWORD`** (required by `compose.yaml`, even though nothing writes to
    Postgres yet) and build everything: `cp .env.example .env` and edit it, or
-   `export POSTGRES_PASSWORD=...`.
+   `export POSTGRES_PASSWORD=...`. `.env.example`'s `COMPOSE_FILE` already lists
+   `compose.sdr.yaml`, the overlay that maps the host USB bus into `sdr-rx` -- keep it.
+   `make up-offgrid` and `make up-hybrid` add it back if it's missing, since a station with
+   no SDR receives nothing; `make dev-stack` is the one command that deliberately runs
+   without it (and without the mesh overlay), for a laptop with no hardware attached.
 4. **Bring the stack up without a dongle first** to confirm the software side is healthy:
-   `make up-offgrid`. If no Meshtastic node is attached yet either, set
-   `COMPOSE_FILE=compose.yaml` in `.env` for this step -- Docker will not start `dispatcher`
-   while its `devices:` mapping points at a serial port the host doesn't have.
+   `make up-offgrid`. This works with nothing plugged in -- `/dev/bus/usb` exists on any
+   Linux host with a USB subsystem, dongle or not. If no Meshtastic node is attached yet
+   either, set `COMPOSE_FILE=compose.yaml:compose.sdr.yaml` in `.env` for this step --
+   Docker will not start `dispatcher` while its `devices:` mapping points at a serial port
+   the host doesn't have.
    `sdr-rx` (the container also running `same-decoder`, `live-audio`, and
    `segment-capture` -- see `services/sdr_rx/README.md`'s "Container" section) will log "no
    devices configured" for its own process and stop retrying it, but stays `Up`: the other
@@ -149,6 +155,31 @@ in it (alert history, transcripts, RF health series).
 `docker compose ps timescaledb` and its logs are the next step. `api` waits out a normal
 cold start (compose gates it on `timescaledb`'s healthcheck, then retries for 60s beyond
 that), so this means something more than slow startup.
+
+### `sdr-rx` can't open a dongle that's plugged in
+
+```
+[ERROR] rtlsdr_get_device_usb_strings(0) failed
+sdr-rx: site 'PDX' (49435794): rtlsdr_get_index_by_serial(49435794) - -3
+sdr-rx: no devices started successfully
+```
+
+This reads like a wrong serial in `SDR_RX_DEVICES`, but `-3` here almost always means the
+container has no USB bus at all: `compose.sdr.yaml` is missing from `COMPOSE_FILE` in
+`.env`. Without it, libusb still *counts* the dongles but cannot open any of them, so every
+descriptor read fails and the serial lookup finds nothing to match. Fix it in `.env`:
+
+```sh
+COMPOSE_FILE=compose.yaml:compose.sdr.yaml:compose.mesh.yaml
+```
+
+`make up-offgrid`, `make up-hybrid`, and `make sdr-devices` all add the overlay themselves,
+so the mismatch only bites a bare `docker compose` invocation. Current builds of `sdr-rx`
+check for the mapping at startup and say so directly instead of emitting the librtlsdr
+errors above.
+
+If the bus *is* mapped and the errors persist, work back through the host prerequisites in
+"Hardware bring-up": the `dvb_usb_rtl28xxu` blacklist (step 1) and the udev rule (step 2).
 
 ### `stt-worker` says it's waiting for a model file
 

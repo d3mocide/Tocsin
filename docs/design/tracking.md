@@ -2172,3 +2172,65 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   `TOPIC_STT`-publish entirely for a channel outside the set. `sdr_rx` 126 passed (up from
   124) -- two new cases cover the STT topic being absent for a gated-out channel while SAME
   and the ring buffer still see it, and `None` still running STT for every channel unchanged.
+
+- **2026-08-09 — sdr-rx lost its USB passthrough; alert areas and the services panel were
+  unreadable.** Reported from a live PDX station: `rtlsdr_get_device_usb_strings(0..2)
+  failed` for all three dongles, then `rtlsdr_get_index_by_serial(49435794) - -3` and "no
+  devices started successfully", with the container crash-looping on entrypoint.sh's exit-1
+  retry. Bisected to `2e9ce4e`, which moved `sdr-rx`'s `devices: /dev/bus/usb` out of
+  `compose.yaml` into a new `compose.sdr.yaml` overlay. The motivation was sound -- Docker
+  refuses to *start* a container whose `devices:` host path is absent, which made the whole
+  stack unbringable on a machine with no USB subsystem -- but nothing was updated to opt
+  back in where hardware exists: `.env.example` still shipped
+  `COMPOSE_FILE=compose.yaml:compose.mesh.yaml`, the README bring-up runbook never mentioned
+  the overlay, and `make sdr-devices`/`up-offgrid`/`up-hybrid` all shell out to bare
+  `docker compose`, inheriting the omission from `.env`.
+
+  Fixed on the principle that offgrid and hybrid are *deployment* modes and both assume the
+  SDR is attached -- the `dev-*` targets are the only hardware-free path. `up-offgrid`,
+  `up-hybrid`, and `down` now read `COMPOSE_FILE` out of `.env` and append `compose.sdr.yaml`
+  if it's absent, exporting the result (a shell value outranks `.env`'s). Deliberately not a
+  fixed `-f` list: `COMPOSE_FILE` is also the single switch for `compose.mesh.yaml`, so
+  hardcoding would silently drop a user's Meshtastic node. `sdr-devices` *does* pass explicit
+  `-f compose.yaml -f compose.sdr.yaml` -- a dongle-enumeration diagnostic wants exactly the
+  base plus the USB mapping regardless of whether `.env` exists, and the mesh overlay's
+  serial mapping is irrelevant to it. `dev-stack` passes explicit `-f compose.yaml`, ignoring
+  `COMPOSE_FILE` entirely, so it stays runnable on Windows/Mac.
+
+  The compose fix alone would leave the same trap for anyone editing `.env` by hand, so
+  `prerequisites.py` gained `assert_usb_bus_mapped()` beside the existing DVB-blacklist
+  check: Docker's default `/dev` has no `bus/`, so that directory exists only because the
+  overlay mapped it. Ordering matters -- it runs *after* `main()`'s `not devices` early
+  return, because `make dev-stack` legitimately runs with no bus mapped and must still reach
+  its exit 0 (entrypoint.sh stops retrying only on 0; raising ahead of that check would
+  crash-loop the container that the 2026-08-08 `restart: unless-stopped` entry already fixed
+  once). In the `SDR_RX_LIST_DEVICES` path it runs unconditionally, since that's exactly the
+  invocation the operator hit.
+
+  Same session, from the live UI: alert cards printed raw SAME codes
+  (`053001 · 053003 · 053007 · …`, thirteen of them) as the area line. Two causes. `data/fips.csv`
+  carried 20 rows -- 14 Oregon counties plus the 6 Washington ones bordering the Columbia --
+  and the alert was eastern Washington, so `countyName` fell through to its raw-code
+  fallback for every entry. Filled the table out to complete state sets, 36 OR + 39 WA (75
+  rows); all 13 codes from the report now resolve. Separately, raw codes were being shown
+  even when better text existed: NWS ships plain prose in CAP's `areaDesc`, so `areaLabel()`
+  now prefers it, falls back to `fips.csv` county names, and only then to raw codes -- and
+  truncates past three entries with the full list on the card's `title`, since a dozen-plus
+  counties buried the alert's actual content.
+
+  Services panel: dropped `.service-list` from `auto-fill, minmax(170px, 1fr)` (three columns
+  on a desktop panel) to a fixed two, one column under 620px. The detail chip moved out of
+  the name/age row onto its own line -- at 170px it had been wrapping "segment-capture" onto
+  two lines and stacking "polled 34 seconds ago" into a three-line block. Chip text was
+  jargon nobody outside the codebase could read, so `chain: remote` → `transcribing: remote`,
+  `polled …` → `NWS checked …`, `3 dev` → `3 radios`, each with a `title` sentence saying
+  what it measures.
+
+  Verified: `sdr_rx` 132 passed (up from 126) -- 4 new `test_prerequisites.py` cases for the
+  bus check plus 2 new `test_main.py` cases for its wiring (fails naming `compose.sdr.yaml`
+  when devices are configured; still exits 0 when they aren't), and an autouse fixture stubs
+  the check for the pre-existing tests, which run on machines with no USB. `dispatcher` 115
+  passed and `api` 111 passed against the expanded `fips.csv`. `web` typechecks and builds.
+  `make -n` confirms each target's resolved compose file list against a legacy `.env`. Not
+  verified: the real dongles -- no USB subsystem in this sandbox, the same gap the 2026-08-08
+  entry records, so the operator's `make sdr-devices` is the actual test of the fix.
