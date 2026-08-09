@@ -1,5 +1,5 @@
 """HTTP client for `api.weather.gov/alerts/active`, ETag-conditional per
-area (design doc §5, §10 milestone 5).
+area or zone set (design doc §5, §10 milestone 5).
 
 The NWS API requires a descriptive `User-Agent` header (its own docs: "A
 User Agent is required to identify your application") and its `area` query
@@ -7,6 +7,13 @@ parameter is typed as a single StateTerritoryCode/MarineAreaCode, not an
 array -- confirmed against api.weather.gov's own OpenAPI spec (`zone`
 accepts repeated values, `area` does not). Polling N areas therefore means
 N requests, one ETag tracked per area -- see `service.py`.
+
+`zone`, by contrast, *is* an array: a whole `NWS_POLLER_ZONES` list (public
+forecast zone codes, e.g. `ORZ006`) goes out as one request with `zone`
+repeated once per code, matched by one ETag, since the API returns the
+union of alerts across every zone given. This exists to poll a tighter
+area than a whole state -- see `service.py`'s `Poller` for how it composes
+with `fetch`'s per-area calls.
 
 The GET call is injectable (same pattern as `same_decoder.multimon`'s
 injectable subprocess command) so this is testable without real network
@@ -63,12 +70,21 @@ class NwsAlertsClient:
         in) rather than stored here -- `service.py` is also the thing
         deciding what to do with a stale tracker, so keeping ETag state in
         one place avoids two sources of truth for the same fact."""
+        return self._fetch({"area": area}, etag)
+
+    def fetch_zones(self, zones: list[str], etag: str | None = None) -> FetchResult:
+        """Fetches active alerts for a set of forecast zones in one request
+        (unlike `area`, `zone` is a repeatable query parameter -- see this
+        module's docstring). `zones` order doesn't matter to the API, but
+        `service.py` passes the same list/order back in each cycle so the
+        ETag it tracks stays meaningful."""
+        return self._fetch({"zone": zones}, etag)
+
+    def _fetch(self, params: dict, etag: str | None) -> FetchResult:
         headers = {"User-Agent": self._user_agent, "Accept": "application/geo+json"}
         if etag:
             headers["If-None-Match"] = etag
-        response = self._get(
-            ALERTS_ACTIVE_URL, params={"area": area}, headers=headers, timeout=self._timeout
-        )
+        response = self._get(ALERTS_ACTIVE_URL, params=params, headers=headers, timeout=self._timeout)
         if response.status_code == 304:
             return FetchResult(not_modified=True, etag=etag, features=())
         response.raise_for_status()

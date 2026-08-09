@@ -64,12 +64,18 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    # Optional and additive, not a replacement for NWS_POLLER_AREAS: a
+    # narrower filter (public forecast zones, e.g. ORZ006) for operators who
+    # want tighter-than-statewide CAP polling, on top of the area coverage
+    # above rather than instead of it -- see client.py's docstring for why
+    # zones go out as one combined request instead of one per zone.
+    zones = [z.strip() for z in os.environ.get("NWS_POLLER_ZONES", "").split(",") if z.strip()]
 
     interval = float(os.environ.get("NWS_POLLER_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS))
 
     redis_client = _build_redis_client()
     client = NwsAlertsClient(user_agent=user_agent)
-    poller = Poller(client, areas, sink=_build_sink(redis_client))
+    poller = Poller(client, areas, sink=_build_sink(redis_client), zones=zones)
     heartbeat = heartbeat_module.build(redis_client)
     # A silently unreachable api.weather.gov and a genuinely quiet night
     # produce identical output from this service, so the heartbeat carries
@@ -78,7 +84,12 @@ def main() -> None:
     # CONFIRMED alerts had appeared in a week.
     last_success: str | None = None
     last_error: str | None = None
-    print(f"nws-poller: polling {areas} every {interval}s", flush=True)
+    print(
+        f"nws-poller: polling areas {areas}"
+        + (f" and zones {zones}" if zones else "")
+        + f" every {interval}s",
+        flush=True,
+    )
     while True:
         try:
             emitted = poller.poll_once()
@@ -94,7 +105,9 @@ def main() -> None:
             # component, not an exceptional one.
             last_error = str(exc)
             print(f"nws-poller: poll cycle failed: {exc}", file=sys.stderr)
-        _sleep_beating(interval, heartbeat, areas=areas, last_success=last_success, last_error=last_error)
+        _sleep_beating(
+            interval, heartbeat, areas=areas, zones=zones, last_success=last_success, last_error=last_error
+        )
 
 
 def _sleep_beating(seconds: float, heartbeat, sleep=time.sleep, **detail) -> None:
