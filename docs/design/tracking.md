@@ -1745,3 +1745,49 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   33). Not verified: real hardware -- no RTL-SDR, ffmpeg, or Icecast available in this sandbox,
   same standing limitation as the rest of Phase 1/3; the actual static/cutout improvement is
   unconfirmed against a live signal until a user reports back.
+
+- **2026-08-09 (stt-worker remote logging):** Reported from a live hybrid deployment: every
+  `STT_CHAIN=local,remote` transcription was failing against the remote endpoint (a gRPC-backed
+  self-hosted whisper server, per the reported error shape -- `rpc error: ... ffmpeg ... Invalid
+  data found when processing input`, immediate/sub-200ms failures consistent with the remote
+  backend rejecting every upload before ever reaching the model), but nothing in `stt-worker`'s
+  own logs said so -- the only place it showed up was that remote backend's own request-log UI.
+  Root cause of the *invisibility* (not the remote backend's own decode failure, which is
+  external infrastructure outside this repo): `service.py`'s `_transcribe` race deliberately
+  swallows any remote exception/timeout to fall back to local (design doc §6 -- "a remote hiccup
+  degrades quality, never availability"), but did so with a bare `except Exception: return
+  local_transcript` and no logging at all, so a remote endpoint that fails on literally every
+  capture was silently indistinguishable from one working fine and simply losing the race. Added
+  a `stt-worker: remote STT failed, using local result instead: ...` stderr log at that catch
+  site (`docker compose logs stt-worker` now surfaces it) without changing the fallback behavior
+  itself. 2 new tests (`test_remote_failure_is_logged_not_silent`,
+  `test_remote_timeout_is_logged_not_silent`) plus README's Status section documents the log
+  line; 51 `stt_worker` tests passing. Did not change `remote_http.py`'s request shape (multipart
+  `file`/`model` fields, filename/content-type both already correctly `.wav`/`audio/wav`) since
+  nothing in this repo's client code reproduces the remote server's decode failure -- that half
+  is the operator's remote endpoint to fix or reconfigure, now that it's actually visible.
+
+- **2026-08-09 (follow-up, actual root cause found):** The user reported the same host+model
+  works fine through `d3mocide/Vertex` (a sibling project, also self-hosted, also transcribing
+  against this same remote whisper backend) and asked what's different -- which turned "the
+  remote backend is broken" from an assumption into a falsifiable question, since the previous
+  entry's guess (nothing wrong with `remote_http.py`'s request shape) was wrong. Cloned Vertex
+  and traced its actual remote-STT path (`transcription/main.py`): it calls
+  `litellm.atranscription(file=(path.name, audio_bytes), ...)` -- a 2-tuple with no explicit
+  content-type, which routes through the `openai` SDK's `_transform_file` into `httpx`'s
+  `FileField._guess_content_type`, which calls `mimetypes.guess_type(filename)`. Verified directly
+  (installed both packages, read the source, ran it): for a `.wav` filename this resolves to
+  `audio/x-wav`, not `audio/wav`. `remote_http.py` was hardcoding the literal string `"audio/wav"`
+  in the multipart file tuple's content-type slot -- so the previous entry's "already correctly
+  `.wav`/`audio/wav`" was the bug itself, not evidence against one. A self-hosted whisper backend
+  that keys its upload-format detection off the declared Content-Type, doesn't recognize
+  `"audio/wav"` specifically, and falls back to assuming mp3 explains every observed symptom at
+  once: the `.mp3`-named temp file in the original error, the ffmpeg demuxer failure on genuinely
+  valid WAV bytes, and the 100%/every-single-request failure rate (deterministic on a header
+  string, independent of audio content). Fixed by deriving the content-type via
+  `mimetypes.guess_type` (matching httpx's own logic) instead of a hardcoded literal. 1 new
+  regression test (`test_run_sends_mimetypes_guessed_content_type_for_wav`); 52 `stt_worker` tests
+  passing. Not verified against the actual remote backend (no access to it from this sandbox) --
+  the fix is confirmed correct by tracing both SDKs' real source down to the exact
+  `mimetypes.guess_type` call and its output on this filename pattern, not by reproducing the
+  failure against the live host.

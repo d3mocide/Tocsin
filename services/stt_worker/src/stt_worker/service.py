@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -160,10 +161,15 @@ class TranscriptionWorker:
             remaining_budget = max(0.0, self._remote_budget_seconds - (time.monotonic() - start))
             try:
                 remote_transcript = remote_future.result(timeout=remaining_budget)
-            except Exception:
+            except Exception as exc:
                 # Timeout, network error, or any remote failure -- local is
                 # already in hand, so a remote hiccup degrades quality,
-                # never availability (design doc §6's stated tradeoff).
+                # never availability (design doc §6's stated tradeoff). Still
+                # logged, though: silently swallowing this is what let a
+                # remote endpoint fail on every single capture with nobody
+                # noticing from stt-worker's own logs -- only the remote
+                # backend's own dashboard showed it.
+                print(f"stt-worker: remote STT failed, using local result instead: {exc!r}", file=sys.stderr, flush=True)
                 return local_transcript
         finally:
             # wait=False, not a `with` block: a `with`'s implicit
