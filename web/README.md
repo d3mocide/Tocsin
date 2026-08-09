@@ -27,9 +27,11 @@ this system exists for.
 ## Layout
 
 Two columns on desktop. The left carries **Live audio**, the **alert feed**, and the
-**activity log**; the right carries system health, services, dispatch, RF channels, and the
-spectrum. Audio and activity started on the right and moved because five stacked panels
-there against a lone feed on the left left the page visibly lopsided.
+**activity log**; the right carries the spectrum, RF channels, nearby NWR stations, system
+health, services, and dispatch -- the radio-hardware panels (spectrum/RF channels/stations)
+grouped at the top of the column, general system status below. Audio and activity started
+on the right and moved because five stacked panels there against a lone feed on the left
+left the page visibly lopsided.
 
 The audio players lay out as a responsive grid rather than a stack, so the wide left column
 is used horizontally and three mounts don't push the alert feed down the page.
@@ -63,10 +65,6 @@ you opened the page for below the fold.
 - **Dispatch** -- sent vs skipped over the last 24h with a reason
   breakdown. Answers "did anything actually reach the mesh," which no
   other number on the page can.
-- **RF channels** (`views/health.ts`) -- per-`(site, channel)` health.
-  `dead: true` (design doc §3's flat-carrier signal) keeps the loudest
-  treatment, now with a sparkline seeded from `GET /health/history` so a
-  channel drifting toward dead is visible before it crosses the threshold.
 - **Spectrum** (`views/spectrum.ts`) -- a scrolling waterfall over the
   48-bin snapshot, newest row at the top, with the 7 NWR channel bins
   labelled and colored distinctly from the 41 spectrum-only bins (design
@@ -74,6 +72,21 @@ you opened the page for below the fold.
   which rescaled to each frame's own min/max -- that made the display
   breathe with the noise floor and made a carrier appearing look identical
   to the noise floor dropping.
+- **RF channels** (`views/health.ts`) -- per-`(site, channel)` health, one
+  row per channel (dot + name + sparkline, detail line below with RMS,
+  last-sample time, and status). Replaced a 6-column table that forced its
+  own horizontal scroll in the sidebar -- it sits directly under the
+  waterfall now, and a wide table there was worse, not better. `dead: true`
+  (design doc §3's flat-carrier signal) still gets the loudest treatment,
+  with a sparkline seeded from `GET /health/history` so a channel drifting
+  toward dead is visible before it crosses the threshold.
+- **Nearby NWR stations** (`views/stations.ts`) -- `GET /reference`'s
+  station table (`data/nwr_stations_or.yaml`), sorted by `distance_km` when
+  the operator has set `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE`
+  (`services/api/README.md`), alphabetical otherwise. A UI hint for antenna/
+  gain bring-up and reading the waterfall's channel labels, not station
+  identification -- several stations share a channel, so this narrows down
+  what a bin probably carries without replacing an actual listen-and-confirm.
 - **Live audio** (`views/streams.ts`) -- an `<audio>` player per Icecast
   mount. These streams always worked; nothing in the UI ever mentioned
   them. Each mount's player is created once and kept for the panel's

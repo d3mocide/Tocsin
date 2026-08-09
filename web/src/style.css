@@ -479,7 +479,8 @@ body {
 .stream-list,
 .service-list,
 .activity-list,
-.reason-list {
+.reason-list,
+.station-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -588,6 +589,57 @@ body {
   color: var(--rf-only);
 }
 
+/* ---- nwr stations --------------------------------------------------- */
+
+.stations-summary {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.station {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.station-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--confirmed);
+}
+
+.station-abnormal .station-dot { background: var(--dead); }
+
+.station-name {
+  overflow-wrap: anywhere;
+}
+
+.station-callsign {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.station-distance {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.station-detail {
+  grid-column: 2 / -1;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.station-abnormal .station-detail { color: var(--dead); }
+
 /* ---- dispatch summary --------------------------------------------- */
 
 .dispatch-headline {
@@ -625,26 +677,43 @@ body {
 
 /* ---- health ------------------------------------------------------- */
 
-.health-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.83rem;
+.health-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.health-table th,
-.health-table td {
-  text-align: left;
-  padding: 0.3rem 0.4rem;
+.health-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0;
+  font-size: 0.85rem;
   border-bottom: 1px solid var(--border);
-  white-space: nowrap;
 }
 
-.health-table th {
+.health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--confirmed);
+}
+
+.row-dead .health-dot { background: var(--dead); }
+
+.health-name {
+  overflow-wrap: anywhere;
+}
+
+.health-detail {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
   color: var(--text-dim);
-  font-weight: 600;
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .row-dead {

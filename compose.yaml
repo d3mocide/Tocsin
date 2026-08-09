@@ -220,6 +220,8 @@ services:
       # TOCSIN_MODE=hybrid where entrypoint.sh actually starts it.
       NWS_POLLER_USER_AGENT: ${NWS_POLLER_USER_AGENT:-}
       NWS_POLLER_AREAS: ${NWS_POLLER_AREAS:-OR,WA}
+      # Optional, additive to NWS_POLLER_AREAS -- see .env.example.
+      NWS_POLLER_ZONES: ${NWS_POLLER_ZONES:-}
       NWS_POLLER_INTERVAL_SECONDS: ${NWS_POLLER_INTERVAL_SECONDS:-60}
       NWS_POLLER_REDIS_URL: redis://redis:6379/0
     volumes:
@@ -333,6 +335,11 @@ services:
       # the FIPS -> county table the UI needs to render "Multnomah, OR"
       # instead of "041051" and to tell a Tier A warning from a Tier C test.
       TOCSIN_DATA_DIR: /app/data
+      # Optional: adds distance_km to each nwr_stations_or.yaml entry in
+      # GET /reference, purely a UI hint. Both unset (the default) means
+      # every station's distance_km is null.
+      TOCSIN_LATITUDE: ${TOCSIN_LATITUDE:-}
+      TOCSIN_LONGITUDE: ${TOCSIN_LONGITUDE:-}
       # Where segment-capture's finished WAVs land, so GET /captures/{name}
       # can serve the audio behind a transcript -- the guard-failed ones
       # especially, where stt_worker deliberately dropped the text.

@@ -46,13 +46,22 @@ Repo layout, `compose.yaml` (offgrid/hybrid profiles, validated with
 `data/README.md`), `CLAUDE.md`/`AGENTS.md`, this roadmap/tracking pair.
 
 **2026-08-09:** Added `data/nwr_stations_or.yaml`, the full NWR station listing for
-Oregon from weather.gov (callsign, site name, frequency, power, operating WFO), toward
+Oregon from weather.gov (callsign, site name, frequency, status, operating WFO), toward
 the §12 open item on verifying local transmitter frequencies. Confirms KIG98/Portland on
 162.550 as the master prompt's §12 open item already expected. The item's other guess,
 KEC91 (Naselle Ridge) on 162.400, is a Washington-side site and outside this
 Oregon-scoped list, so it's still unconfirmed by this data — Eugene's KEC42, also on
 162.400, is the only Portland-WFO 162.400 station this listing covers. Reference data
 only; doesn't replace the empirical waterfall confirmation the open item calls for.
+
+**2026-08-09 (later same day):** Extended that file with `power_watts` and `lat`/`lon` per
+station, sourced from a third-party aggregator (radiostation.info) since no NWS page
+publishing them was reachable while authoring the file (weather.gov's own per-station pages
+are JS-rendered and returned only navigation chrome to a fetch; `nws.noaa.gov`'s equivalent
+403'd). Two stations (WZ2522 Carney Butte, WZ2559 Enterprise) have no coordinates anywhere
+found -- left `null` rather than guessed, both there and in every consumer of this file (see
+Phase 8's entry this date). This is what made the new "nearby NWR stations" UI feature
+possible; see that entry for the api/web side.
 
 ---
 
@@ -553,6 +562,21 @@ real-audio gap for the RF side.
   `services/fusion/entrypoint.sh` only under `TOCSIN_MODE=hybrid`. Still a fully separate uv
   project with its own tests (`make test` unchanged); see the Session Log entry this date for
   the full reasoning.
+- **2026-08-09:** `nws-poller` gained optional `NWS_POLLER_ZONES` (public-forecast zone
+  codes), additive to the required `NWS_POLLER_AREAS` -- one combined `zone=`-repeated
+  request per cycle via a new `NwsAlertsClient.fetch_zones`, on top of the existing
+  one-request-per-area calls. Building this surfaced a real duplicate-alert bug, not
+  introduced by it: `Poller` tracked "seen" per request target (one `SeenAlertTracker` per
+  area, plus one for the zone request), so the same CAP alert reaching both an area's
+  response and the zone response -- the expected case once zones sit inside an already-polled
+  area's geography -- was "new" to each tracker independently and got emitted to `fusion`
+  twice. `fusion.store.AlertStore.ingest_cap` has no id-based dedup of its own to catch
+  this (any `CapAlertIn` that doesn't match an open RF-only alert mints a fresh `Alert`), so
+  this would have shown up as two separate rows for one real alert. Same latent issue already
+  existed for two overlapping `NWS_POLLER_AREAS` (e.g. a marine warning matching both `OR`
+  and `WA`) -- fixed both at once by giving `Poller` a single shared `SeenAlertTracker`
+  across every area and the zone request instead of one per request target. `nws_poller`
+  suite: 28 passed, up from 21.
 
 **Not started / open:**
 - Neither new Dockerfile is build-verified -- no Docker daemon in this authoring sandbox
@@ -990,6 +1014,25 @@ FastAPI service, and the first TypeScript in this repo.
   and rebuilt within the first repaint and `currentTime` never left 0; after, 25s of
   uninterrupted playback across two polls (listener count visibly advancing) on the same
   element, zero detachments.
+
+- **2026-08-09:** `GET /reference` gained a `stations` table (`reference.py`'s
+  `load_stations`) serving `data/nwr_stations_or.yaml`, with a `distance_km` per station
+  (`reference.haversine_km`) computed from new `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` config
+  when both are set -- `null` otherwise, and `null` for the two stations in that file with no
+  coordinates of their own, rather than a fabricated distance. `web` gained a matching
+  **Nearby NWR stations** panel (`views/stations.ts`), sorted by distance when available,
+  alphabetical otherwise. While building it, reworked the sidebar per live user feedback on a
+  screenshot of the RF channels table: moved Spectrum to the top of the sidebar with RF
+  channels directly under it (`index.html`), and rebuilt `views/health.ts` from a 6-column
+  `<table>` (site/channel/RMS/trend/last-sample/status) that forced its own horizontal
+  scroll into a compact dot+name+sparkline row list with an RMS/time/status detail line
+  below, matching the Services/Stations panels' layout -- a wide table was a worse fit for
+  the narrower sidebar position than it already was at the bottom. Verified in headless
+  Chromium at 1280px and 380px against a stub API: correct panel order, distance-sorted
+  station list with the coordinateless station last, dead-channel row visibly flagged, zero
+  horizontal overflow at either width, no console errors beyond an intentionally-aborted
+  `/events` request. `api` suite 109 passed (up from 103), `web`'s `tsc --noEmit`/`vite
+  build` clean.
 
 **Not started / open:**
 - No auth (design doc §9: "reverse proxy + Argon2id local backend auth") -- out of scope for
@@ -1601,3 +1644,31 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   replacing it with an error banner. Verified in headless Chromium against a stub API
   serving a continuous audio mount: 25s of uninterrupted playback across two polls on the
   same element, against a pre-fix build that lost it inside the first repaint.
+
+- **2026-08-09 (later same day):** NWR Oregon station data, added earlier this date as a
+  plain reference file, extended and wired end to end: `data/nwr_stations_or.yaml` gained
+  `power_watts`/`lat`/`lon` per station (two left `null` -- no coordinates found anywhere,
+  see Phase 0's entry this date); `api` gained `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` config
+  and a `stations` table on `GET /reference` with a haversine `distance_km` per station
+  (`null` when the operator location or the station's own coordinates are unset -- never
+  fabricated); `web` gained a **Nearby NWR stations** panel, sorted by distance. Building
+  the panel led to a live-feedback sidebar rework (user request against a screenshot of the
+  RF channels table): Spectrum moved to the top of the sidebar with RF channels directly
+  under it, and RF channels itself was rebuilt from a 6-column table into a compact row list
+  matching the Services/Stations panels, since the table forced horizontal scroll even
+  before the reorder and would have been worse squeezed under the waterfall. Separately,
+  extending `nws_poller` with optional `NWS_POLLER_ZONES` (additive to `NWS_POLLER_AREAS`,
+  per a Vertex-project config the user referenced) surfaced a real pre-existing bug: `Poller`
+  tracked "seen" alerts per request target, so the same CAP alert reaching two overlapping
+  request targets (which zones nested inside an area's geography make the common case, not
+  an edge case) was emitted to `fusion` twice -- and `fusion.store.ingest_cap` has no
+  id-based dedup to catch it, so this would have surfaced as duplicate alert rows. Fixed with
+  one `SeenAlertTracker` shared across every area and the zone request instead of one per
+  target; this also silently fixes the pre-existing two-overlapping-areas case (e.g. a marine
+  warning matching both `OR` and `WA`). Verified: `api` 109 passed (up from 103), `nws_poller`
+  28 passed (up from 21), `web`'s `tsc --noEmit`/`vite build` clean, and headless Chromium at
+  1280px/380px against a stub API -- correct panel order, distance-sorted station list with
+  the coordinateless station last, dead-channel row flagged, zero horizontal overflow either
+  width, no unexpected console errors. Not verified: a real `up` against a live Postgres/
+  Redis/`api.weather.gov` -- still no Docker daemon or outbound access to those specific
+  hosts confirmed in this sandbox.

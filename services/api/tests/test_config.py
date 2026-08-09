@@ -87,3 +87,23 @@ def test_from_env_empty_static_dir_disables_the_spa_mount(monkeypatch):
     config = ApiConfig.from_env()
 
     assert config.static_dir is None
+
+
+def test_from_env_defaults_to_no_operator_location(monkeypatch):
+    monkeypatch.delenv("TOCSIN_LATITUDE", raising=False)
+    monkeypatch.delenv("TOCSIN_LONGITUDE", raising=False)
+
+    config = ApiConfig.from_env()
+
+    assert config.latitude is None
+    assert config.longitude is None
+
+
+def test_from_env_reads_operator_location(monkeypatch):
+    monkeypatch.setenv("TOCSIN_LATITUDE", "45.5152")
+    monkeypatch.setenv("TOCSIN_LONGITUDE", "-122.6784")
+
+    config = ApiConfig.from_env()
+
+    assert config.latitude == 45.5152
+    assert config.longitude == -122.6784

@@ -72,12 +72,21 @@ class ApiConfig:
     # normal "browse to the Pi on the LAN" case, and overridable for
     # deployments behind a reverse proxy where it isn't.
     icecast_public_url: str | None
+    # Operator's approximate location, decimal degrees. Both unset (the
+    # default) means reference.py's stations table carries no distance_km --
+    # there's nothing wrong with that, it's the same "cosmetic lookup table,
+    # degrade rather than fail" posture as the rest of this file. See
+    # data/nwr_stations_or.yaml and services/api/README.md.
+    latitude: float | None
+    longitude: float | None
 
     @classmethod
     def from_env(cls) -> "ApiConfig":
         static_dir = os.environ.get("API_STATIC_DIR", DEFAULT_STATIC_DIR)
         data_dir = os.environ.get("TOCSIN_DATA_DIR")
         captures_dir = os.environ.get("API_CAPTURES_DIR")
+        latitude = os.environ.get("TOCSIN_LATITUDE")
+        longitude = os.environ.get("TOCSIN_LONGITUDE")
         return cls(
             postgres_dsn=_postgres_dsn_from_env(),
             redis_url=os.environ.get("API_REDIS_URL", DEFAULT_REDIS_URL),
@@ -91,4 +100,6 @@ class ApiConfig:
             icecast_host=os.environ.get("ICECAST_HOST", DEFAULT_ICECAST_HOST),
             icecast_port=int(os.environ.get("ICECAST_PORT", DEFAULT_ICECAST_PORT)),
             icecast_public_url=os.environ.get("ICECAST_PUBLIC_URL") or None,
+            latitude=float(latitude) if latitude else None,
+            longitude=float(longitude) if longitude else None,
         )

@@ -5,143 +5,231 @@
 # adds/relocates transmitters occasionally; confirm against the current list
 # before an operational deployment.
 #
-# Source: https://www.weather.gov/nwr/stations?State=OR (fetched 2026-08-09).
+# `api`'s `/reference` endpoint (services/api/src/api/reference.py) serves
+# this file and, when TOCSIN_LATITUDE/TOCSIN_LONGITUDE are set, annotates
+# each entry with distance_km from the operator so the web UI can list
+# nearby stations -- see that module's docstring. This does not replace the
+# empirical waterfall confirmation the §12 open item calls for; it narrows
+# down which callsign/frequency to expect at a given antenna location.
 #
-# Fields:
-#   name           -- transmitter site name
+# Fields, and where each came from:
+#   name           -- transmitter site name. Source: weather.gov/nwr/stations?State=OR
+#                      (fetched 2026-08-09).
 #   frequency_mhz  -- carrier frequency in MHz (one of the seven NWR channels;
-#                      see services/sdr_rx/src/sdr_rx/channels.py)
-#   power          -- broadcast power rating as published (NORMAL/HIGH/LOW)
+#                      see services/sdr_rx/src/sdr_rx/channels.py). Same source.
+#   status         -- operational status as published (e.g. NORMAL). Same source.
 #   wfo            -- NWS Weather Forecast Office that operates the transmitter
 #                      (not necessarily in Oregon -- e.g. Burns Butte is run out
-#                      of Boise ID, Brookings out of Eureka CA)
-#
-# This does not replace the empirical waterfall confirmation the open item
-# calls for; it narrows down which callsign/frequency to expect at a given
-# antenna location before you go looking.
+#                      of Boise ID, Brookings out of Eureka CA). Same source.
+#   power_watts    -- transmitter power in watts. Source: radiostation.info
+#                      (fetched 2026-08-09) -- weather.gov's station list doesn't
+#                      publish wattage, only the `status` field above.
+#   lat / lon      -- transmitter coordinates, decimal degrees. Same source as
+#                      power_watts; a third-party aggregator, not NWS's own
+#                      published coordinates (no public NWS page serving them was
+#                      reachable while authoring this file -- see the open item
+#                      this data feeds). Treat as approximate. `null` for the two
+#                      stations (WZ2522 Carney Butte, WZ2559 Enterprise) where
+#                      that source had no coordinates either -- distance_km is
+#                      omitted for those rather than guessed.
 
 KEC42:
   name: Eugene
   frequency_mhz: 162.400
-  power: NORMAL
+  status: NORMAL
   wfo: Portland OR
+  power_watts: 100
+  lat: 44.1138499
+  lon: -123.2122064
 KHB30:
   name: Burns Butte
   frequency_mhz: 162.475
-  power: NORMAL
+  status: NORMAL
   wfo: Boise ID
+  power_watts: 300
+  lat: 43.5644288
+  lon: -119.1512722
 KIG98:
   name: Portland
   frequency_mhz: 162.550
-  power: NORMAL
+  status: NORMAL
   wfo: Portland OR
+  power_watts: 330
+  lat: 45.1311691
+  lon: -122.2918063
 KIH32:
   name: Coos Bay
   frequency_mhz: 162.400
-  power: NORMAL
+  status: NORMAL
   wfo: Medford OR
+  power_watts: 330
+  lat: 43.3904463
+  lon: -124.1311365
 KIH33:
   name: Newport
   frequency_mhz: 162.550
-  power: NORMAL
+  status: NORMAL
   wfo: Portland OR
+  power_watts: 500
+  lat: 44.7560554
+  lon: -124.0473926
 KIH37:
   name: Brookings
   frequency_mhz: 162.550
-  power: NORMAL
+  status: NORMAL
   wfo: Eureka CA
+  power_watts: 1000
+  lat: 42.1265007
+  lon: -124.2269289
 WNG559:
   name: Fossil
   frequency_mhz: 162.550
-  power: NORMAL
+  status: NORMAL
   wfo: Pendleton OR
+  power_watts: 300
+  lat: 44.9604253
+  lon: -119.9516273
 WNG560:
   name: John Day
   frequency_mhz: 162.500
-  power: NORMAL
+  status: NORMAL
   wfo: Pendleton OR
+  power_watts: 100
+  lat: 44.2967092
+  lon: -119.0378040
 WNG596:
   name: Cape Blanco
   frequency_mhz: 162.425
-  power: NORMAL
+  status: NORMAL
   wfo: Medford OR
+  power_watts: 300
+  lat: 42.7445067
+  lon: -124.5031911
 WNG674:
   name: Florence
   frequency_mhz: 162.500
-  power: NORMAL
+  status: NORMAL
   wfo: Portland OR
+  power_watts: 100
+  lat: 44.1240591
+  lon: -124.0119070
 WNG697:
   name: Mt Hebo
   frequency_mhz: 162.525
-  power: NORMAL
+  status: NORMAL
   wfo: Portland OR
+  power_watts: 100
+  lat: 45.2131509
+  lon: -123.7551767
 WWF80:
   name: Bend/Redmond
   frequency_mhz: 162.500
-  power: NORMAL
+  status: NORMAL
   wfo: Pendleton OR
+  power_watts: 100
+  lat: 44.1945937
+  lon: -120.9777492
 WWF94:
   name: Neahkahnie
   frequency_mhz: 162.425
-  power: NORMAL
+  status: NORMAL
   wfo: Portland OR
+  power_watts: 100
+  lat: 45.7472200
+  lon: -123.9513900
 WWF95:
   name: Tillamook
   frequency_mhz: 162.475
-  power: NORMAL
+  status: NORMAL
   wfo: Portland OR
+  power_watts: 100
+  lat: 45.4658495
+  lon: -123.9203739
 WWF97:
   name: Mt. Ashland
   frequency_mhz: 162.475
-  power: NORMAL
+  status: NORMAL
   wfo: Medford OR
+  power_watts: 100
+  lat: 42.0809930
+  lon: -122.7202731
 WWH28:
   name: Heppner
   frequency_mhz: 162.425
-  power: NORMAL
+  status: NORMAL
   wfo: Pendleton OR
+  power_watts: 100
+  lat: 45.3502226
+  lon: -119.5097816
 WXL85:
   name: Medford
   frequency_mhz: 162.400
-  power: NORMAL
+  status: NORMAL
   wfo: Medford OR
+  power_watts: 500
+  lat: 42.4279944
+  lon: -123.0022001
 WXL95:
   name: Spout Springs
   frequency_mhz: 162.400
-  power: NORMAL
+  status: NORMAL
   wfo: Pendleton OR
+  power_watts: 330
+  lat: 45.7250000
+  lon: -118.0250000
 WXL96:
   name: Salem
   frequency_mhz: 162.475
-  power: NORMAL
+  status: NORMAL
   wfo: Portland OR
+  power_watts: 100
+  lat: 44.8475022
+  lon: -123.1117737
 WXL97:
   name: Klamath Falls
   frequency_mhz: 162.550
-  power: NORMAL
+  status: NORMAL
   wfo: Medford OR
+  power_watts: 100
+  lat: 42.2430600
+  lon: -121.7050000
 WXL98:
   name: Roseburg
   frequency_mhz: 162.550
-  power: NORMAL
+  status: NORMAL
   wfo: Medford OR
+  power_watts: 100
+  lat: 43.1193031
+  lon: -123.2436097
 WXM34:
   name: The Dalles
   frequency_mhz: 162.400
-  power: NORMAL
+  status: NORMAL
   wfo: Pendleton OR
+  power_watts: 300
+  lat: 45.7067712
+  lon: -121.0925746
 WZ2509:
   name: Reedsport
   frequency_mhz: 162.525
-  power: NORMAL
+  status: NORMAL
   wfo: Medford OR
+  power_watts: 100
+  lat: 43.6574247
+  lon: -124.1876614
 WZ2522:
   name: Carney Butte
   frequency_mhz: 162.475
-  power: NORMAL
+  status: NORMAL
   wfo: Pendleton OR
+  power_watts: null
+  lat: null
+  lon: null
 WZ2559:
   name: Enterprise
   frequency_mhz: 162.425
-  power: NORMAL
+  status: NORMAL
   wfo: Pendleton OR
+  power_watts: null
+  lat: null
+  lon: null

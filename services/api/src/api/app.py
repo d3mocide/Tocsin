@@ -50,7 +50,11 @@ def create_app(
     app.state.broadcaster = broadcaster or Broadcaster()
     app.state.config = config
     app.state.http_get = http_get
-    app.state.reference = reference_module.load(config.data_dir if config else None)
+    app.state.reference = reference_module.load(
+        config.data_dir if config else None,
+        config.latitude if config else None,
+        config.longitude if config else None,
+    )
 
     mode = config.mode if config else None
     captures_dir = config.captures_dir if config else None
