@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from . import heartbeat as heartbeat_module
-from .audio_conditioning import SQUELCH_DEFAULT_THRESHOLD
+from .audio_conditioning import SQUELCH_OPEN_DB
 from .bus import Publisher
 from .capture import DEFAULT_GAIN_DB, SoapySDRDevice, enumerate_devices, parse_device_config
 from .channels import nwr_bins
@@ -92,11 +92,11 @@ def main() -> None:
     # setup, not a universal value; antenna, cable loss, and distance to
     # the transmitter all shift what's correct for a given site.
     gain_db = float(os.environ.get("SDR_RX_GAIN_DB", DEFAULT_GAIN_DB))
-    # Same "starting point, not universal" caveat as gain: how much
-    # discriminator noise-band energy counts as "no carrier" depends on the
-    # site's actual noise floor -- see audio_conditioning.py's docstring for
-    # where the default comes from.
-    squelch_threshold = float(os.environ.get("SDR_RX_SQUELCH_THRESHOLD", SQUELCH_DEFAULT_THRESHOLD))
+    # Unlike gain, this squelch threshold is self-calibrating (see
+    # audio_conditioning.py's module docstring) -- the default should work
+    # across sites and dongles without retuning. Still overridable for a
+    # site that wants a different quieting margin.
+    squelch_open_db = float(os.environ.get("SDR_RX_SQUELCH_OPEN_DB", SQUELCH_OPEN_DB))
     publisher = Publisher(bind_addr)
 
     redis_client = _build_redis_client()
@@ -135,7 +135,7 @@ def main() -> None:
             ring_buffers,
             health=health,
             spectrum=spectrum,
-            squelch_threshold=squelch_threshold,
+            squelch_open_db=squelch_open_db,
         )
         device.start()
         thread = threading.Thread(

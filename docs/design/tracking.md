@@ -196,6 +196,43 @@ part of the stated exit criteria, which are now all met):
   assertions still pass unmodified -- CLAUDE.md's bar for touching this file. 96 tests
   passing in `sdr_rx`, up from 93.
 
+- **2026-08-09 (squelch upgrade):** Replaced `audio_conditioning.Squelch`'s fixed-RMS-
+  threshold design with a self-calibrating noise-quieting squelch, ported from
+  `d3mocide/op25-downstream`'s `squelch_core.NoiseSquelch` (credited there to Pieter-Tjerk de
+  Boer PA3FWM's "Squelch algorithms" technote) -- see the Session Log entry this date for the
+  full writeup, including why GNU Radio itself was ruled out as a wholesale replacement.
+  Dropped the reference's `disc_gain`/`deviation` normalization (this discriminator's output
+  is already unit-gain radians per sample) and its optional DB1NV voice detector (no
+  P25/DMR-style voice-vs-data distinction applies to a feed already split from raw SAME
+  decode). Kept: a runtime-tracked, rise-only no-carrier reference so `open_db`/`hyst_db` are
+  portable dB-relative thresholds instead of one fixed number needing per-site tuning, and the
+  4-state (closed/opening/open/hang) machine with a rehold margin that avoids the open<->hang
+  chatter a single hysteresis threshold falls into at the boundary. `SQUELCH_REF_POWER_INIT`
+  and the 8 kHz noise band were calibrated against this channelizer's *real* DC-block/PFB/
+  discriminator chain fed AWGN (not an idealized approximation) -- consistently ~0.62 rad^2
+  across all seven NWR bins. Found and fixed one real bug this calibration surfaced: the
+  discriminator output for a synthetic test tone needs the baseband *offset* from the LO
+  (`(k + 0.5) * 25000` Hz), not `channels.bin_frequency_hz()`'s absolute RF frequency --
+  using the latter by mistake in a scratch calibration script produced a wildly aliased
+  "carrier" that showed no quieting at all, which is what caught the mistake. Also fixed a
+  real bug in the port itself once real signals were used to test it: `noise_power` seeded
+  from the same deliberately-low `SQUELCH_REF_POWER_INIT` as the reference caused a strong,
+  genuine carrier's low noise-band power to take several `POWER_TAU_MS` windows to smooth in
+  from that unrelated starting point, delaying every open decision -- now the first real
+  measurement snaps `noise_power` directly instead of smoothing in from an arbitrary seed.
+  Config: `SDR_RX_SQUELCH_THRESHOLD` (an absolute number needing per-site tuning) replaced by
+  `SDR_RX_SQUELCH_OPEN_DB` (a portable dB value, default 8.0, matching the reference
+  algorithm's own default). Verified: `sdr_rx` 102 passed (up from 96) -- new tests include a
+  direct port of the reference implementation's own threshold-jitter-doesn't-thrash regression
+  test (driving the state machine directly, the same technique its own test suite uses, rather
+  than trying to synthesize audio landing on an exact dB value) and two tests running the real
+  channelizer chain end to end (AWGN never opens the gate; a clean carrier does), trimmed from
+  an initial 3-5s of simulated IQ per case down to 0.75s once the behavior was confirmed stable
+  at that length, to keep the suite fast (full suite: 28s -> 9.5s). Not verified: real hardware
+  -- the calibration is against this channelizer's own simulated chain, not an actual dongle's
+  noise floor, which will differ in absolute terms (though the self-calibration is exactly the
+  mechanism meant to absorb that difference without retuning).
+
 ---
 
 ## Phase 2 — SAME decode end to end
@@ -1948,3 +1985,29 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   actual CPU numbers on the reporting Pi after this fix -- no way to reproduce Postgres/Redis
   load at that rate in this sandbox, so this is confirmed by tracing the exact call path and
   its frequency, not by reproducing the observed CPU drop directly.
+
+- **2026-08-09 (squelch upgrade + GNU Radio question):** Two follow-ups from the same
+  conversation. First, whether `sdr_rx` should be rewritten on GNU Radio (op25-downstream's
+  own foundation) rather than the custom NumPy/SciPy channelizer. Answered without
+  implementing anything: op25 being faster is expected (compiled C++ blocks with VOLK SIMD
+  kernels vs. Python/NumPy is a genuinely different execution model) but not new information,
+  and porting `sdr_rx`'s core would mean re-deriving and re-verifying every hazard CLAUDE.md
+  calls out (odd-stacked phase correction, batched FFT, DC-blocking order) inside a
+  flowgraph model that's substantially harder to unit-test at the granularity
+  `test_channelizer.py` currently achieves with pure synthetic NumPy arrays and no hardware.
+  Recommended against it for now: the CPU problem this session already turned from "falling
+  behind" into "thin but real margin" (the two PRs above), which changes the cost/benefit of
+  a full rewrite considerably from where it stood before those fixes landed. Flagged as a real
+  v2 architecture decision to revisit later if headroom is still a problem after squeezing
+  what's left in the current approach, not something to fold into an optimization pass.
+
+  Second, porting op25-downstream's noise squelch (`squelch_core.py`) into
+  `sdr_rx.audio_conditioning.Squelch`, replacing its fixed-RMS-threshold design -- see Phase
+  1's note this date for the technical writeup (self-calibrating reference, dB-relative
+  thresholds, the 4-state hysteresis machine, the two real bugs found and fixed while
+  calibrating and testing against this system's actual channelizer chain rather than trusting
+  the port by inspection). Config env var renamed `SDR_RX_SQUELCH_THRESHOLD` ->
+  `SDR_RX_SQUELCH_OPEN_DB` to match (`README.md`, `pipeline.py`, `__init__.py`,
+  `test_pipeline.py`'s force-closed test updated to the new dB semantics). Verified: `sdr_rx`
+  102 passed (up from 96). Not verified: real hardware -- calibrated against this system's own
+  simulated DC-block/PFB/discriminator chain, not a live dongle's actual noise floor.
