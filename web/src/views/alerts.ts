@@ -1,5 +1,5 @@
 import { captureUrl, fetchDispatches, fetchTranscripts } from "../api";
-import { badge, el, field, replaceChildren } from "../dom";
+import { badge, el, field, reconcile, replaceChildren } from "../dom";
 import {
   absoluteTime,
   apiSource,
@@ -267,26 +267,6 @@ export class AlertFeedView {
       detail ? transcriptPanel(detail.transcripts) : el("p", { class: "empty", text: "Loading detail…" }),
       detail ? dispatchPanel(detail.dispatches, now) : null,
     );
-  }
-}
-
-/** Keyed in-place patch: nodes already in the right order are left
- * untouched, so an unchanged card is never detached and re-inserted --
- * detaching is what reset the feed's scroll position and stopped playback
- * on any capture that was mid-play. */
-function reconcile(container: HTMLElement, desired: HTMLElement[]): void {
-  let cursor = container.firstChild;
-  for (const node of desired) {
-    if (cursor === node) {
-      cursor = cursor.nextSibling;
-      continue;
-    }
-    container.insertBefore(node, cursor);
-  }
-  while (cursor) {
-    const next = cursor.nextSibling;
-    container.removeChild(cursor);
-    cursor = next;
   }
 }
 

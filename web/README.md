@@ -76,7 +76,10 @@ you opened the page for below the fold.
   to the noise floor dropping.
 - **Live audio** (`views/streams.ts`) -- an `<audio>` player per Icecast
   mount. These streams always worked; nothing in the UI ever mentioned
-  them.
+  them. Each mount's player is created once and kept for the panel's
+  lifetime: the panel repaints on every 15s `/streams` poll, and a media
+  element removed from the document is paused by the browser, so a panel
+  that rebuilt its rows cut playback off within seconds of starting it.
 - **Activity** (`views/activity.ts`) -- a merged transcript/dispatch log.
   The feed answers "what happened to this alert"; this answers "is
   anything happening at all," and is where a transcript with no matching

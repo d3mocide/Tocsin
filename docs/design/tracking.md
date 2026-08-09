@@ -32,7 +32,7 @@ completion of the phase's actual exit criteria.
 | 5 | NWS poller + fusion | In Progress | 2026-08-08 |
 | 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
 | 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-08 |
-| 8 | API + web UI | In Progress | 2026-08-08 |
+| 8 | API + web UI | In Progress | 2026-08-09 |
 
 ---
 
@@ -962,6 +962,26 @@ FastAPI service, and the first TypeScript in this repo.
     has ever been decoded from actual RF in this repo's history -- unchanged from every
     prior phase.
 
+- **2026-08-09:** Live-audio playback stopped a few seconds after it started, reported from
+  a running deployment. The Icecast side was fine (the source is continuous -- `sdr_rx`
+  publishes a block per channel per cycle whether or not anything is on air); the UI was
+  killing its own player. `renderStreams` rebuilt the whole panel with `replaceChildren` on
+  every `/streams` poll, and the HTML spec requires a media element removed from the
+  document to pause -- so the next 15s poll ended playback. Worse, that poll is *guaranteed*
+  to carry new data for a listener, because starting playback is what increments Icecast's
+  listener count. This is the same defect the 2026-08-08 session fixed for the alert feed's
+  capture player; the streams panel never got the treatment. It is now a `StreamsView` that
+  keeps one `<li>` and one `<audio>` per mount for the panel's lifetime, patches the header
+  around them, and assigns `src` only when the URL actually changes (assigning it reloads
+  the element even when the value is unchanged). `reconcile` moved from `views/alerts.ts`
+  to `dom.ts` now that two views need it. A failed `/streams` poll also no longer replaces
+  the list with an error banner -- the banner goes above the last known rows, since one bad
+  request means the API didn't answer, not that the mounts went away. Measured in headless
+  Chromium against a stub API and a chunked audio mount: before, the element was detached
+  and rebuilt within the first repaint and `currentTime` never left 0; after, 25s of
+  uninterrupted playback across two polls (listener count visibly advancing) on the same
+  element, zero detachments.
+
 **Not started / open:**
 - No auth (design doc §9: "reverse proxy + Argon2id local backend auth") -- out of scope for
   this phase, which is about the data path, not the deploy-behind-Caddy story.
@@ -1562,3 +1582,13 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   123 API_ONLY alerts and a live health SSE stream. Not verified: a real `up` -- still no
   Docker daemon in this sandbox, so the remote-only STT path and the poller's heartbeat
   cadence are covered by unit tests with injected clocks/heartbeats rather than observed.
+
+- **2026-08-09:** Live weather-feed playback stopped a few seconds after starting, reported
+  from a running deployment. The streams panel rebuilt its `<audio>` elements on every 15s
+  `/streams` poll, and a media element removed from the document is paused by the browser
+  per spec — the same tear-down the alert feed's capture player was fixed for on 2026-08-08.
+  `renderStreams` is now `StreamsView`, holding one row and one player per mount across
+  repaints, and a failed poll leaves the list (and any playing audio) in place instead of
+  replacing it with an error banner. Verified in headless Chromium against a stub API
+  serving a continuous audio mount: 25s of uninterrupted playback across two polls on the
+  same element, against a pre-fix build that lost it inside the first repaint.
