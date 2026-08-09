@@ -53,9 +53,14 @@ def main() -> None:
         site_names=site_names,
         channel_names=channel_names,
     )
+    # Empty/unset means "no filter" -- stream every channel sdr-rx
+    # publishes, same as before this existed -- not an empty allowlist
+    # that would stream nothing; see Streamer's docstring (service.py).
+    raw_channels = [c.strip().upper() for c in os.environ.get("LIVE_AUDIO_CHANNELS", "").split(",") if c.strip()]
+    allowed_channels = frozenset(raw_channels) if raw_channels else None
 
     subscriber = StreamAudioSubscriber(connect_addr)
-    streamer = Streamer(icecast, metadata)
+    streamer = Streamer(icecast, metadata, allowed_channels=allowed_channels)
     heartbeat = heartbeat_module.build(_build_redis_client())
     print(f"live-audio: subscribed to {connect_addr}, pushing to {icecast.host}:{icecast.port}", flush=True)
     try:

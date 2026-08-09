@@ -92,6 +92,14 @@ services:
       # fusion sees them") instead of only logging to stdout.
       SAME_DECODER_REDIS_URL: redis://redis:6379/0
       LIVE_AUDIO_ZMQ_CONNECT: tcp://localhost:5555
+      # Empty by default -- streams every channel sdr-rx publishes. Most
+      # sites only have usable signal on one or two of the seven NWR
+      # channels; the rest otherwise run a permanent ffmpeg/vorbis encode
+      # and Icecast connection for no listener. Narrow it to just what's
+      # actually useful at this site, e.g. LIVE_AUDIO_CHANNELS=WX5,WX7 --
+      # see .env.example. SAME decode and the alert ring buffer are
+      # unaffected either way; this only gates live_audio's own streams.
+      LIVE_AUDIO_CHANNELS: ${LIVE_AUDIO_CHANNELS:-}
       ICECAST_HOST: icecast
       ICECAST_PORT: ${ICECAST_PORT:-8000}
       ICECAST_SOURCE_USER: source
