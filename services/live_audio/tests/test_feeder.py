@@ -53,6 +53,12 @@ def _fake_ffmpeg_command_that_exits_immediately() -> list[str]:
     return [sys.executable, "-c", "pass"]
 
 
+def _fake_ffmpeg_command_that_never_reads_stdin() -> list[str]:
+    """Stand-in for a wedged ffmpeg -- e.g. blocked writing to a stalled
+    Icecast TCP connection -- that never drains stdin at all."""
+    return [sys.executable, "-c", "import time; time.sleep(60)"]
+
+
 def test_write_does_not_raise_against_a_live_process():
     feeder = FFmpegFeeder(_fake_ffmpeg_command())
     feeder.write(b"\x00\x00\x00\x00")
@@ -73,3 +79,19 @@ def test_is_alive_false_once_the_process_exits_on_its_own():
         time.sleep(0.02)
     assert not feeder.is_alive()
     feeder.close()
+
+
+def test_write_never_blocks_even_when_ffmpeg_stalls():
+    """The regression this whole buffering scheme exists for: a wedged
+    downstream process must never make write() block, since upstream that
+    would stall live_audio's single-threaded ZMQ receive loop."""
+    feeder = FFmpegFeeder(_fake_ffmpeg_command_that_never_reads_stdin(), queue_maxsize=4)
+    chunk = b"\x00" * 4096
+    start = time.monotonic()
+    for _ in range(200):
+        feeder.write(chunk)
+    elapsed = time.monotonic() - start
+    assert elapsed < 1.0
+    assert feeder.is_alive()
+    feeder.close()  # also exercises close()'s stuck-writer-thread branch
+    assert not feeder.is_alive()

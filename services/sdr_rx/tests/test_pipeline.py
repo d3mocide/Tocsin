@@ -69,6 +69,29 @@ def test_process_is_a_no_op_below_the_channelizer_history_length():
         assert publisher.calls == []
 
 
+def test_squelch_gates_only_the_stt_topic_leaving_same_untouched(tmp_path):
+    publisher = FakePublisher()
+    ring_buffers = _ring_buffers(tmp_path)
+    # Always-closed gate (RMS is never negative) isolates what squelching
+    # touches: the "stt" topic (live_audio/Icecast) should come out silent,
+    # while "same" (multimon-ng decode) must be unaffected -- a misfiring
+    # gate must never be able to eat a real SAME header.
+    pipeline = DevicePipeline("site-a", publisher, ring_buffers, squelch_threshold=-1.0)
+
+    n_samples = 200_000
+    t = np.arange(n_samples) / FS
+    freq = 12_500.0 + 300.0 * np.sin(2 * np.pi * 3.0 * t)  # WX5 (k=0), frequency-modulated
+    phase = 2 * np.pi * np.cumsum(freq) / FS
+    tone = np.exp(1j * phase)
+    pipeline.process(tone)
+
+    same_wx5 = next(pcm for topic, _, channel, _, pcm in publisher.calls if topic == "same" and channel == "WX5")
+    stt_wx5 = next(pcm for topic, _, channel, _, pcm in publisher.calls if topic == "stt" and channel == "WX5")
+
+    assert np.any(same_wx5 != 0)
+    assert np.all(stt_wx5 == 0)
+
+
 def test_missing_ring_buffer_for_an_nwr_channel_raises(tmp_path):
     publisher = FakePublisher()
     ring_buffers = _ring_buffers(tmp_path)
