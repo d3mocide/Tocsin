@@ -21,6 +21,13 @@ help:
 	@echo ""
 	@echo "See README.md and docs/design/master-prompt.md for details."
 
+# TOCSIN_MODE selects the compose profile; see docs/design/master-prompt.md §1, §8.
+up-offgrid:
+	TOCSIN_MODE=offgrid docker compose --profile offgrid up --build
+
+up-hybrid:
+	TOCSIN_MODE=hybrid docker compose --profile hybrid up --build
+
 # Frontend-only dev server with realistic mock data & live SSE events (starts in < 1s)
 dev-ui:
 	cd web && npm run dev
@@ -32,6 +39,7 @@ dev-stack:
 	TOCSIN_MODE=hybrid docker compose --profile hybrid up --build
 
 up-dev: dev-stack
+
 
 
 
