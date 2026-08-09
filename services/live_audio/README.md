@@ -50,6 +50,7 @@ already-not-low-latency stream.
 | Env var | Default | Purpose |
 |---|---|---|
 | `LIVE_AUDIO_ZMQ_CONNECT` | `tcp://localhost:5555` | Address to connect to sdr-rx's ZMQ PUB socket -- `localhost`, since both run in the same container now (see above). |
+| `LIVE_AUDIO_CHANNELS` | *(unset -- all channels)* | Comma-separated NWR channel allowlist, e.g. `WX5,WX7`. Gates which channels ever get a feeder (`service.py`'s `Streamer`) -- a channel not in the list never spawns an ffmpeg process or opens an Icecast source connection, rather than streaming silence. Most sites only have usable signal on one or two of the seven channels; the rest otherwise ran a permanent encode/connection for no listener (`docs/design/tracking.md`). SAME decode and the alert ring buffer are sdr-rx's, not this service's, and keep watching every channel regardless -- this only trims the audible feed. `sdr-rx` reads this same variable to skip producing that channel's audio in the first place (`services/sdr_rx/README.md`) -- set it once, in the one container both of these run in. |
 | `ICECAST_HOST` | `icecast` | Icecast server hostname. |
 | `ICECAST_PORT` | `8000` | Icecast server port. Compose sets this from the top-level `ICECAST_PORT` in `.env`, which also drives Icecast's own listen socket and the published host port -- see the root README's "Ports". |
 | `ICECAST_SOURCE_USER` | `source` | Icecast source-client username (Icecast's convention: always `source`). |

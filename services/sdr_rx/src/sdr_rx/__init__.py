@@ -97,6 +97,15 @@ def main() -> None:
     # across sites and dongles without retuning. Still overridable for a
     # site that wants a different quieting margin.
     squelch_open_db = float(os.environ.get("SDR_RX_SQUELCH_OPEN_DB", SQUELCH_OPEN_DB))
+    # Same env var live_audio reads (LIVE_AUDIO_CHANNELS, not an SDR_RX_*
+    # name -- both run in this one container, and this is what it's
+    # gating: skip the STT-topic-only work below for a channel no consumer
+    # of TOPIC_STT wants, rather than doing it and having live_audio throw
+    # the result away). Empty/unset means "no filter" -- run it for every
+    # channel, same as before this existed. SAME decode, the ring buffer,
+    # and health stay on all seven regardless; see pipeline.py's docstring.
+    raw_stt_channels = [c.strip().upper() for c in os.environ.get("LIVE_AUDIO_CHANNELS", "").split(",") if c.strip()]
+    stt_channels = frozenset(raw_stt_channels) if raw_stt_channels else None
     publisher = Publisher(bind_addr)
 
     redis_client = _build_redis_client()
@@ -136,6 +145,7 @@ def main() -> None:
             health=health,
             spectrum=spectrum,
             squelch_open_db=squelch_open_db,
+            stt_channels=stt_channels,
         )
         device.start()
         thread = threading.Thread(

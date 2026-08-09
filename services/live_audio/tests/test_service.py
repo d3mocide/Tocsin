@@ -130,3 +130,24 @@ def test_mounts_still_reports_a_feeder_that_died():
 
 def test_mounts_of_a_streamer_that_has_fed_nothing_is_empty():
     assert Streamer(ICECAST, feeder_factory=FakeFeeder).mounts() == []
+
+
+def test_channel_outside_allowlist_never_gets_a_feeder():
+    streamer = Streamer(ICECAST, feeder_factory=FakeFeeder, allowed_channels=frozenset({"WX5"}))
+    streamer.feed("home", "WX1", 16000, b"\x00\x00")
+    assert FakeFeeder.instances == []
+    assert streamer.mounts() == []
+
+
+def test_channel_inside_allowlist_streams_normally():
+    streamer = Streamer(ICECAST, feeder_factory=FakeFeeder, allowed_channels=frozenset({"WX5"}))
+    streamer.feed("home", "WX5", 16000, b"\x00\x00")
+    assert len(FakeFeeder.instances) == 1
+    assert FakeFeeder.instances[0].writes == [b"\x00\x00"]
+
+
+def test_no_allowlist_streams_every_channel():
+    streamer = Streamer(ICECAST, feeder_factory=FakeFeeder, allowed_channels=None)
+    streamer.feed("home", "WX1", 16000, b"\x00\x00")
+    streamer.feed("home", "WX7", 16000, b"\x00\x00")
+    assert len(FakeFeeder.instances) == 2

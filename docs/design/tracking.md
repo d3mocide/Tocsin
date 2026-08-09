@@ -2117,3 +2117,58 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   Pi -- a Pi core is roughly 3-4x slower than this sandbox's, which is consistent with the
   pre-fix pipeline (48.9% here) being reported as pegged there, but that scaling is inferred,
   not measured.
+- **2026-08-09 (squelch env wiring + per-channel live-audio gating)** — Two follow-ups from
+  the user tuning a real deployment after the CPU-cut entry above. First, a bug: `sdr_rx`
+  already read `SDR_RX_SQUELCH_OPEN_DB` from the environment (added with the squelch itself,
+  the entry above's predecessor), but `compose.yaml`'s `sdr-rx` service never forwarded it
+  into the container the way it does `SDR_RX_GAIN_DB` -- so setting it in `.env` silently did
+  nothing. Wired it through `compose.yaml` and documented it in `.env.example` next to gain
+  (previously only in `services/sdr_rx/README.md`'s config table).
+
+  Second, an optimization: the user noticed one channel (WX7) never producing audio and asked
+  whether monitoring all seven NWR channels at once was itself a real CPU cost worth cutting
+  for a deployment that only has usable signal on one or two. Traced it to `live_audio`'s
+  `Streamer.feed()` (`service.py`): a channel gets its ffmpeg/vorbis encoder and Icecast
+  source connection lazily on first audio, but "lazily" only means "on first message ever
+  received" -- since sdr-rx publishes all seven channels continuously, every deployment ran
+  seven permanent ffmpeg processes regardless of whether 0 or 7 people were listening (visible
+  in the user's `htop` output as seven always-on `ffmpeg -c:a libvorbis` processes). The
+  channelizer itself was left alone -- it captures the whole 162.400-162.550 MHz band in one
+  PFB pass regardless of channel count, and narrowing capture would mean losing SAME/alert
+  decode on the other channels entirely, the actual safety feature this project exists for.
+  Added `LIVE_AUDIO_CHANNELS`, a comma-separated allowlist (`Streamer.__init__`'s new
+  `allowed_channels: frozenset[str] | None`, gated at the top of `feed()` before a feeder is
+  ever created) -- empty/unset streams every channel, same as before this existed, matching
+  `NWS_POLLER_ZONES`'s "optional, additive-or-absent" env-var shape rather than requiring the
+  full `WX1..WX7` list up front. Deliberately not filtered at the ZMQ subscribe level or
+  inside sdr-rx: SAME decode and the alert ring buffer are sdr-rx's other two consumers of the
+  same per-channel audio and must keep watching every channel regardless of what a listener
+  cares about -- the gate only ever narrows what `live_audio` itself does with a channel it
+  still receives.
+
+  Verified: `live_audio` 37 passed (up from 34) -- three new cases cover a channel outside the
+  allowlist never spawning a feeder or appearing in `mounts()`, one inside it streaming
+  normally, and `None` (no allowlist) still streaming every channel unchanged. `sdr_rx`
+  `test_main.py` 3 passed for the compose/env fix. Not verified: real hardware -- ffmpeg and a
+  live Icecast server aren't available in this sandbox, consistent with this module's existing
+  "Status" note in `services/live_audio/README.md`.
+
+  Follow-up, same session: asked whether `live_audio` gating unwanted channels was worth
+  extending into `sdr_rx` itself, since `DevicePipeline.process()` still ran voice-filter,
+  squelch, resampling, and s16 encoding for all seven channels every chunk regardless of
+  `LIVE_AUDIO_CHANNELS` -- `live_audio`'s gate just discarded the result. Revisits the "not
+  filtered... inside sdr-rx" call two paragraphs up: safe to extend once confirmed
+  `TOPIC_STT` (`bus.py`) has exactly one consumer in this codebase (`live_audio`'s
+  subscriber, `TOPIC_PREFIX = "stt."`) -- `stt_worker`'s real transcription pipeline
+  subscribes to `segment_capture`'s `capture.*` topic instead, itself fed from
+  `same.<site>.<channel>` (raw discriminator `audio`, read before the squelch/voice-filter
+  gate, same as the ring buffer), so gating `TOPIC_STT` cannot touch alert-relevant
+  transcription. Reused `LIVE_AUDIO_CHANNELS` rather than an `SDR_RX_*`-named var -- both
+  processes run in the one `sdr-rx` container and compose.yaml's `environment:` block is
+  shared between them, so one variable is simpler for an operator than two that always need
+  to move together. `DevicePipeline.__init__` gained `stt_channels: frozenset[str] | None`;
+  `process()` now publishes `TOPIC_SAME` (and writes the ring buffer, samples health)
+  unconditionally per channel as before, then skips voice-filter/squelch/resample/encode/
+  `TOPIC_STT`-publish entirely for a channel outside the set. `sdr_rx` 126 passed (up from
+  124) -- two new cases cover the STT topic being absent for a gated-out channel while SAME
+  and the ring buffer still see it, and `None` still running STT for every channel unchanged.

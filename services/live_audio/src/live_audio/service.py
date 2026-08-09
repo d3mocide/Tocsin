@@ -20,16 +20,36 @@ class Streamer:
     """Creates one FFmpegFeeder per (site, channel) lazily, the first time
     audio for that key arrives, and stops feeding (rather than crashing the
     whole process) if that channel's ffmpeg dies -- one bad mountpoint
-    shouldn't take every other channel's stream down."""
+    shouldn't take every other channel's stream down.
 
-    def __init__(self, icecast: IcecastConfig, metadata: MetadataConfig | None = None, feeder_factory=FFmpegFeeder):
+    `allowed_channels`, when given, gates which channels ever get a feeder
+    at all -- `None` (the default) streams every channel sdr-rx publishes,
+    same as before this existed. Most deployments only have usable signal
+    on one or two of the seven NWR channels; the other five/six otherwise
+    ran a permanent ffmpeg/vorbis encode and Icecast source connection for
+    no listener, ever (see `docs/design/tracking.md`'s entry on this). The
+    gate lives here rather than at the ZMQ subscribe level so SAME decode
+    and the alert ring buffer -- sdr-rx's other two consumers of the same
+    per-channel audio -- are entirely unaffected; this only ever narrows
+    what live_audio itself does with a channel it still receives."""
+
+    def __init__(
+        self,
+        icecast: IcecastConfig,
+        metadata: MetadataConfig | None = None,
+        feeder_factory=FFmpegFeeder,
+        allowed_channels: frozenset[str] | None = None,
+    ):
         self._icecast = icecast
         self._metadata = metadata or MetadataConfig()
         self._feeder_factory = feeder_factory
+        self._allowed_channels = allowed_channels
         self._feeders: dict[tuple[str, str], FFmpegFeeder] = {}
         self._dead: set[tuple[str, str]] = set()
 
     def feed(self, site: str, channel: str, sample_rate_hz: int, pcm_bytes: bytes) -> None:
+        if self._allowed_channels is not None and channel not in self._allowed_channels:
+            return
         key = (site, channel)
         if key in self._dead:
             return
