@@ -85,6 +85,13 @@ trimming (`trim.py`), the whisper-cli subprocess wrapper and JSON parsing
 timeout/error/empty-text, Tier B never racing, and that a slow/hanging
 remote thread doesn't block the caller past its budget), the hallucination
 guard (`guard.py`), and the Redis Streams sink (`redis_sink.py`).
+
+A remote timeout or error always falls back to the local result silently
+*to the pipeline* (availability over quality, per design doc §6) but is
+still logged to stderr as `stt-worker: remote STT failed, using local
+result instead: ...` -- `docker compose logs stt-worker` is enough to
+notice a remote endpoint that's failing on every capture, without having
+to go find that endpoint's own dashboard.
 whisper.cpp itself, a real ggml model, and a real remote endpoint aren't
 available in this authoring sandbox, so neither provider's real wire
 behavior (as opposed to the researched/documented shape) is verified end

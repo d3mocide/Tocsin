@@ -1693,3 +1693,24 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   and after the resize to mobile -- pagination state survives a viewport change since it's the
   same view instance): zero horizontal overflow either width, no unexpected console errors.
   `npm run build` clean. No Python changed this round.
+
+- **2026-08-09 (stt-worker remote logging):** Reported from a live hybrid deployment: every
+  `STT_CHAIN=local,remote` transcription was failing against the remote endpoint (a gRPC-backed
+  self-hosted whisper server, per the reported error shape -- `rpc error: ... ffmpeg ... Invalid
+  data found when processing input`, immediate/sub-200ms failures consistent with the remote
+  backend rejecting every upload before ever reaching the model), but nothing in `stt-worker`'s
+  own logs said so -- the only place it showed up was that remote backend's own request-log UI.
+  Root cause of the *invisibility* (not the remote backend's own decode failure, which is
+  external infrastructure outside this repo): `service.py`'s `_transcribe` race deliberately
+  swallows any remote exception/timeout to fall back to local (design doc §6 -- "a remote hiccup
+  degrades quality, never availability"), but did so with a bare `except Exception: return
+  local_transcript` and no logging at all, so a remote endpoint that fails on literally every
+  capture was silently indistinguishable from one working fine and simply losing the race. Added
+  a `stt-worker: remote STT failed, using local result instead: ...` stderr log at that catch
+  site (`docker compose logs stt-worker` now surfaces it) without changing the fallback behavior
+  itself. 2 new tests (`test_remote_failure_is_logged_not_silent`,
+  `test_remote_timeout_is_logged_not_silent`) plus README's Status section documents the log
+  line; 51 `stt_worker` tests passing. Did not change `remote_http.py`'s request shape (multipart
+  `file`/`model` fields, filename/content-type both already correctly `.wav`/`audio/wav`) since
+  nothing in this repo's client code reproduces the remote server's decode failure -- that half
+  is the operator's remote endpoint to fix or reconfigure, now that it's actually visible.

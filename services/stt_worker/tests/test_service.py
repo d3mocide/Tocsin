@@ -253,6 +253,47 @@ def test_local_wins_when_remote_raises(tmp_path):
     assert sink.transcripts[0].text == "local text"
 
 
+def test_remote_failure_is_logged_not_silent(tmp_path, capsys):
+    """A remote endpoint failing on every capture used to be invisible from
+    stt-worker's own logs -- the only sign was the remote backend's own
+    dashboard. Local still wins (availability over quality), but the
+    failure now shows up in `docker compose logs stt-worker` too."""
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path="/models/m.bin",
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_slow_local(0.02, Transcript(text="local text", segments=())),
+        remote_run=_slow_remote(0.0, raises=RuntimeError("connection refused")),
+        remote_budget_seconds=1.0,
+    )
+    worker.handle_capture(_payload(wav_path, tier="A"))
+
+    err = capsys.readouterr().err
+    assert "remote STT failed" in err
+    assert "connection refused" in err
+
+
+def test_remote_timeout_is_logged_not_silent(tmp_path, capsys):
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path="/models/m.bin",
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_slow_local(0.02, Transcript(text="local text", segments=())),
+        remote_run=_slow_remote(1.0, Transcript(text="remote text", segments=())),
+        remote_budget_seconds=0.1,
+    )
+    worker.handle_capture(_payload(wav_path, tier="A"))
+
+    err = capsys.readouterr().err
+    assert "remote STT failed" in err
+
+
 def test_local_wins_when_remote_returns_empty_text(tmp_path):
     wav_path = tmp_path / "clip.wav"
     _write_wav(wav_path, [1, 2, 3])
