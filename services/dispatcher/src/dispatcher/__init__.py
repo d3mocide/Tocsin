@@ -54,6 +54,14 @@ DEFAULT_CONSUMER_NAME = "dispatcher"
 _FALSEY = {"false", "0", "no", "off"}
 
 
+def _channel_index() -> int | None:
+    """`None` when `MESHTASTIC_CHANNEL_INDEX` is unset -- both egress
+    clients already default to the node's Primary channel without it, so
+    this only forwards an override when one is actually configured."""
+    value = os.environ.get("MESHTASTIC_CHANNEL_INDEX", "").strip()
+    return int(value) if value else None
+
+
 def _build_mqtt_client() -> MeshtasticMqttClient | None:
     """`None` when no gateway node is configured -- there's nothing to
     publish to. Safe to build even in `offgrid` mode: unlike
@@ -68,6 +76,7 @@ def _build_mqtt_client() -> MeshtasticMqttClient | None:
         port=int(os.environ.get("MQTT_PORT", DEFAULT_MQTT_PORT)),
         gateway_node_id=int(gateway_node_id),
         region=os.environ.get("MESHTASTIC_MQTT_REGION", DEFAULT_REGION),
+        channel=_channel_index(),
     )
 
 
@@ -120,7 +129,7 @@ def _build_node_client(transport: str) -> MeshtasticNodeClient | None:
         target = os.environ.get("MESHTASTIC_SERIAL_DEV_PATH") or "autodetected serial device"
 
     try:
-        client = MeshtasticNodeClient(factory)
+        client = MeshtasticNodeClient(factory, channel_index=_channel_index())
     except Exception as exc:
         print(
             f"dispatcher: could not open Meshtastic node at {target}: {exc}\n"

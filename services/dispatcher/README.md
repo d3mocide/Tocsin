@@ -106,6 +106,7 @@ a delivered message into a crashed poll cycle.
 | `MESHTASTIC_SERIAL_DEV_PATH` | *(unset -- autodetect)* | Serial device path, e.g. `/dev/ttyUSB0`. Only needed if more than one serial device is attached to the host. Ignored when transport is `tcp`. |
 | `MESHTASTIC_TCP_HOST` | *(unset)* | Hostname/IP of the node. Required when transport is `tcp`; missing is a startup error, not a silent fall back to serial. |
 | `MESHTASTIC_TCP_PORT` | `4403` | Meshtastic's default network API port. |
+| `MESHTASTIC_CHANNEL_INDEX` | *(unset -- node's Primary channel)* | Channel index (0-7) to send on. Applies to both the direct node send and the MQTT fallback leg. |
 | `MESHTASTIC_GATEWAY_NODE_ID` | *(unset -- MQTT fallback disabled)* | Decimal node ID of the Meshtastic node that will relay MQTT-injected messages onto the mesh. |
 | `MQTT_HOST` / `MQTT_PORT` | `mosquitto` / `1883` | The local MQTT broker (`compose.yaml`'s `mosquitto` service). |
 | `MESHTASTIC_MQTT_REGION` | `US` | Region segment of the `msh/{region}/2/json/mqtt/` topic -- must match the gateway node's configured region. |

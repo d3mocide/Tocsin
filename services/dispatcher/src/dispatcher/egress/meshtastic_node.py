@@ -33,6 +33,8 @@ from typing import Callable
 
 DEFAULT_ACK_TIMEOUT_SECONDS = 15.0
 DEFAULT_TCP_PORT = 4403
+# meshtastic-python's own sendText default -- the node's Primary channel.
+DEFAULT_CHANNEL_INDEX = 0
 
 InterfaceFactory = Callable[[], object]
 
@@ -69,9 +71,11 @@ class MeshtasticNodeClient:
         self,
         interface_factory: InterfaceFactory,
         ack_timeout_seconds: float = DEFAULT_ACK_TIMEOUT_SECONDS,
+        channel_index: int | None = None,
     ):
         self._interface = interface_factory()
         self._ack_timeout_seconds = ack_timeout_seconds
+        self._channel_index = DEFAULT_CHANNEL_INDEX if channel_index is None else channel_index
 
     def send_text(self, text: str) -> SendResult:
         acked_event = threading.Event()
@@ -82,7 +86,9 @@ class MeshtasticNodeClient:
             response["error_reason"] = routing.get("errorReason")
             acked_event.set()
 
-        self._interface.sendText(text, wantAck=True, onResponse=on_response)
+        self._interface.sendText(
+            text, wantAck=True, onResponse=on_response, channelIndex=self._channel_index
+        )
         got_response = acked_event.wait(timeout=self._ack_timeout_seconds)
         if not got_response:
             return SendResult(acked=False, error_reason="TIMEOUT")

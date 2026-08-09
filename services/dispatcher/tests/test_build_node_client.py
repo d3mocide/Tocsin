@@ -11,6 +11,7 @@ def _clean_env(monkeypatch):
         "MESHTASTIC_TCP_HOST",
         "MESHTASTIC_TCP_PORT",
         "MESHTASTIC_SERIAL_DEV_PATH",
+        "MESHTASTIC_CHANNEL_INDEX",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -20,8 +21,9 @@ def _capture_client(monkeypatch):
     handed, without ever building a real interface."""
     seen = {}
 
-    def fake_client(factory):
+    def fake_client(factory, channel_index=None):
         seen["factory"] = factory
+        seen["channel_index"] = channel_index
         return "client"
 
     monkeypatch.setattr(dispatcher, "MeshtasticNodeClient", fake_client)
@@ -41,6 +43,25 @@ def test_defaults_to_enabled_when_unset(monkeypatch):
     _capture_client(monkeypatch)
 
     assert dispatcher._build_node_client("serial") == "client"
+
+
+def test_channel_index_defaults_to_none(monkeypatch):
+    """Unset MESHTASTIC_CHANNEL_INDEX forwards None -- MeshtasticNodeClient
+    itself substitutes the Primary channel, not this function."""
+    seen = _capture_client(monkeypatch)
+
+    dispatcher._build_node_client("serial")
+
+    assert seen["channel_index"] is None
+
+
+def test_channel_index_is_passed_through(monkeypatch):
+    monkeypatch.setenv("MESHTASTIC_CHANNEL_INDEX", "3")
+    seen = _capture_client(monkeypatch)
+
+    dispatcher._build_node_client("serial")
+
+    assert seen["channel_index"] == 3
 
 
 def test_serial_dev_path_is_passed_through(monkeypatch):
