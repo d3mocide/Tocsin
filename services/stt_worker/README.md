@@ -86,6 +86,12 @@ timeout/error/empty-text, Tier B never racing, and that a slow/hanging
 remote thread doesn't block the caller past its budget), the hallucination
 guard (`guard.py`), and the Redis Streams sink (`redis_sink.py`).
 
+The remote upload's Content-Type is derived via `mimetypes.guess_type`
+rather than a hardcoded string (`.wav` -> `audio/x-wav`) -- see
+`remote_http.py`'s docstring. A literal `"audio/wav"` once made every
+remote call fail against a real self-hosted backend that didn't recognize
+that exact string and silently mis-detected the upload as mp3.
+
 A remote timeout or error always falls back to the local result silently
 *to the pipeline* (availability over quality, per design doc §6) but is
 still logged to stderr as `stt-worker: remote STT failed, using local

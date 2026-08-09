@@ -41,6 +41,24 @@ def test_run_posts_multipart_and_parses_text(tmp_path):
     assert "file" in call["files"]
 
 
+def test_run_sends_mimetypes_guessed_content_type_for_wav(tmp_path):
+    """Regression test: a hardcoded `"audio/wav"` content type once caused
+    every remote call to fail against a real self-hosted backend that
+    didn't recognize that exact string and silently mis-detected the
+    upload as mp3 (see `remote_http.py`'s docstring). `mimetypes` maps
+    `.wav` to `audio/x-wav` -- matching what openai/httpx (and therefore
+    Vertex's own whisper client, confirmed working against the same
+    backend) actually send."""
+    wav_path = tmp_path / "clip.wav"
+    wav_path.write_bytes(b"RIFF....WAVEfmt ")
+    fake_post = FakePost(FakeResponse(200, {"text": "ok"}))
+
+    run(wav_path, base_url="http://litellm:4000", post=fake_post)
+
+    _filename, _fileobj, content_type = fake_post.calls[0]["files"]["file"]
+    assert content_type == "audio/x-wav"
+
+
 def test_run_strips_trailing_slash_on_base_url(tmp_path):
     wav_path = tmp_path / "clip.wav"
     wav_path.write_bytes(b"x")

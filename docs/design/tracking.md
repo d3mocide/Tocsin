@@ -1714,3 +1714,28 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   `file`/`model` fields, filename/content-type both already correctly `.wav`/`audio/wav`) since
   nothing in this repo's client code reproduces the remote server's decode failure -- that half
   is the operator's remote endpoint to fix or reconfigure, now that it's actually visible.
+
+- **2026-08-09 (follow-up, actual root cause found):** The user reported the same host+model
+  works fine through `d3mocide/Vertex` (a sibling project, also self-hosted, also transcribing
+  against this same remote whisper backend) and asked what's different -- which turned "the
+  remote backend is broken" from an assumption into a falsifiable question, since the previous
+  entry's guess (nothing wrong with `remote_http.py`'s request shape) was wrong. Cloned Vertex
+  and traced its actual remote-STT path (`transcription/main.py`): it calls
+  `litellm.atranscription(file=(path.name, audio_bytes), ...)` -- a 2-tuple with no explicit
+  content-type, which routes through the `openai` SDK's `_transform_file` into `httpx`'s
+  `FileField._guess_content_type`, which calls `mimetypes.guess_type(filename)`. Verified directly
+  (installed both packages, read the source, ran it): for a `.wav` filename this resolves to
+  `audio/x-wav`, not `audio/wav`. `remote_http.py` was hardcoding the literal string `"audio/wav"`
+  in the multipart file tuple's content-type slot -- so the previous entry's "already correctly
+  `.wav`/`audio/wav`" was the bug itself, not evidence against one. A self-hosted whisper backend
+  that keys its upload-format detection off the declared Content-Type, doesn't recognize
+  `"audio/wav"` specifically, and falls back to assuming mp3 explains every observed symptom at
+  once: the `.mp3`-named temp file in the original error, the ffmpeg demuxer failure on genuinely
+  valid WAV bytes, and the 100%/every-single-request failure rate (deterministic on a header
+  string, independent of audio content). Fixed by deriving the content-type via
+  `mimetypes.guess_type` (matching httpx's own logic) instead of a hardcoded literal. 1 new
+  regression test (`test_run_sends_mimetypes_guessed_content_type_for_wav`); 52 `stt_worker` tests
+  passing. Not verified against the actual remote backend (no access to it from this sandbox) --
+  the fix is confirmed correct by tracing both SDKs' real source down to the exact
+  `mimetypes.guess_type` call and its output on this filename pattern, not by reproducing the
+  failure against the live host.
