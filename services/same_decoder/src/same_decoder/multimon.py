@@ -38,7 +38,8 @@ class MultimonProcess:
     def _drain_stdout(self) -> None:
         assert self._process.stdout is not None
         for raw_line in self._process.stdout:
-            self._lines.put(raw_line.decode(errors="replace").rstrip("\n"))
+            self._lines.put(raw_line.decode(errors="replace").rstrip("\r\n"))
+
 
     def write(self, pcm_bytes: bytes) -> None:
         assert self._process.stdin is not None

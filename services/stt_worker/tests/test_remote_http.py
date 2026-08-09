@@ -56,7 +56,8 @@ def test_run_sends_mimetypes_guessed_content_type_for_wav(tmp_path):
     run(wav_path, base_url="http://litellm:4000", post=fake_post)
 
     _filename, _fileobj, content_type = fake_post.calls[0]["files"]["file"]
-    assert content_type == "audio/x-wav"
+    assert content_type in ("audio/x-wav", "audio/wav")
+
 
 
 def test_run_strips_trailing_slash_on_base_url(tmp_path):

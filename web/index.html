@@ -5,21 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <title>Tocsin</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/src/style.css" />
+
   </head>
   <body>
     <header class="app-header">
       <div class="brand">
+        <img src="/favicon.svg" alt="Tocsin emblem" class="brand-logo" />
         <h1>Tocsin</h1>
+        <span class="brand-subtitle">NOAA Weather Radio & CAP Alert Relay</span>
         <div id="mode-chip"></div>
       </div>
       <div id="connection-status"></div>
     </header>
 
+
+
     <main class="layout">
       <div class="main-column">
         <section class="panel panel-streams" aria-labelledby="streams-heading">
-          <div class="panel-head"><h2 id="streams-heading">Live audio</h2></div>
+          <div class="panel-head">
+            <h2 id="streams-heading">Live audio</h2>
+            <div id="streams-header-summary" class="panel-head-summary"></div>
+          </div>
           <div id="streams"></div>
         </section>
 
@@ -41,7 +50,10 @@
         </section>
 
         <section class="panel" aria-labelledby="activity-heading">
-          <div class="panel-head"><h2 id="activity-heading">Activity</h2></div>
+          <div class="panel-head">
+            <h2 id="activity-heading">Activity</h2>
+            <div id="activity-header-summary" class="panel-head-summary"></div>
+          </div>
           <div id="activity"></div>
         </section>
       </div>
@@ -56,26 +68,39 @@
         </section>
 
         <section class="panel" aria-labelledby="rf-health-heading">
-          <div class="panel-head"><h2 id="rf-health-heading">RF channels</h2></div>
+          <div class="panel-head">
+            <h2 id="rf-health-heading">RF channels</h2>
+            <div id="rf-health-header-summary" class="panel-head-summary"></div>
+          </div>
           <div id="rf-health"></div>
         </section>
 
         <section class="panel" aria-labelledby="stats-heading">
-          <div class="panel-head"><h2 id="stats-heading">System health</h2></div>
+          <div class="panel-head">
+            <h2 id="stats-heading">System health</h2>
+            <div id="stats-header-summary" class="panel-head-summary"></div>
+          </div>
           <div id="stats" class="stats-grid"></div>
         </section>
 
         <section class="panel" aria-labelledby="services-heading">
-          <div class="panel-head"><h2 id="services-heading">Services</h2></div>
+          <div class="panel-head">
+            <h2 id="services-heading">Services</h2>
+            <div id="services-header-summary" class="panel-head-summary"></div>
+          </div>
           <div id="services"></div>
         </section>
 
         <section class="panel" aria-labelledby="dispatch-heading">
-          <div class="panel-head"><h2 id="dispatch-heading">Dispatch</h2></div>
+          <div class="panel-head">
+            <h2 id="dispatch-heading">Dispatch</h2>
+            <div id="dispatch-header-summary" class="panel-head-summary"></div>
+          </div>
           <div id="dispatch"></div>
         </section>
       </div>
     </main>
+
 
     <footer>
       <p>

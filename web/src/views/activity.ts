@@ -1,4 +1,4 @@
-import { badge, el, replaceChildren } from "../dom";
+import { badge, byIdOptional, el, replaceChildren } from "../dom";
 import { absoluteTime, relativeTime } from "../format";
 import type { Store } from "../store";
 import type { Dispatch, Transcript } from "../types";
@@ -38,6 +38,14 @@ export function renderActivity(container: HTMLElement, store: Store): void {
     })),
   ].sort((a, b) => b.at - a.at);
 
+  const headerSummary = byIdOptional("activity-header-summary");
+  if (headerSummary) {
+    replaceChildren(
+      headerSummary,
+      el("span", { class: "badge badge-status-idle", text: `${entries.length} LOGGED` })
+    );
+  }
+
   if (entries.length === 0) {
     replaceChildren(container, el("p", { class: "empty", text: "Nothing recorded yet." }));
     return;
@@ -48,6 +56,7 @@ export function renderActivity(container: HTMLElement, store: Store): void {
     el("ul", { class: "activity-list" }, ...entries.slice(0, 60).map(entryRow)),
   );
 }
+
 
 function entryRow(entry: Entry): HTMLElement {
   const iso = new Date(entry.at).toISOString();

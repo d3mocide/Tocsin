@@ -150,6 +150,19 @@ function createRow(row: StreamRow, url: string, oggPlayable: boolean): Row {
     ? el("audio", { class: "stream-audio", attrs: { controls: "", preload: "none", src: url } })
     : null;
   const link = el("a", { class: "stream-link", text: row.mount, attrs: { href: url, rel: "noreferrer" } });
+
+  if (audio) {
+    audio.addEventListener("play", () => {
+      header.querySelector(".stream-equalizer")?.classList.add("eq-active");
+    });
+    audio.addEventListener("pause", () => {
+      header.querySelector(".stream-equalizer")?.classList.remove("eq-active");
+    });
+    audio.addEventListener("ended", () => {
+      header.querySelector(".stream-equalizer")?.classList.remove("eq-active");
+    });
+  }
+
   const node = el("li", {}, header, audio, link);
   return { node, header, audio, link, url };
 }
@@ -158,12 +171,23 @@ function headerParts(row: StreamRow): (HTMLElement | null)[] {
   const label = row.site && row.channel ? `${row.site} · ${row.channel}` : row.mount;
   return [
     el("span", { class: "stream-name", text: label }),
+    equalizerVisualizer(),
     row.on_air ? badge("on air", "alive") : badge("off air", "dead"),
-    // `null` and `false` mean different things here: live_audio doesn't
-    // know about this mount at all, versus it knows the feeder died.
     row.feeder_alive === false ? badge("feeder dead", "dead") : null,
     typeof row.listeners === "number"
       ? el("span", { class: "stream-listeners", text: `${row.listeners} listening` })
       : null,
   ];
 }
+
+function equalizerVisualizer(): HTMLElement {
+  return el(
+    "div",
+    { class: "stream-equalizer" },
+    el("span", { class: "eq-bar eq-bar-1" }),
+    el("span", { class: "eq-bar eq-bar-2" }),
+    el("span", { class: "eq-bar eq-bar-3" }),
+    el("span", { class: "eq-bar eq-bar-4" })
+  );
+}
+

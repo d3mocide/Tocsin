@@ -50,11 +50,14 @@ function poll(fn: () => void, intervalMs: number): void {
 }
 
 async function main(): Promise<void> {
+  initPanelCollapsing();
+
   const alertsView = new AlertFeedView(byId("alerts"), store);
   const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
   const streamsView = new StreamsView(byId("streams"), store);
   const stationsView = new StationsView(byId("nwr-stations"), store);
   const refreshFilterSites = mountFilters(byId("filters"), store);
+
 
   // Each panel repaints only when something it actually reads changed.
   // `clock` is in the list for every panel showing a relative time, and
@@ -204,4 +207,58 @@ function updateDocumentTitle(): void {
   document.title = urgent.length > 0 ? `(${urgent.length}) ⚠ Tocsin` : "Tocsin";
 }
 
+function initPanelCollapsing(): void {
+  const STORAGE_KEY = "tocsin_collapsed_panels";
+  const rawStorage = localStorage.getItem(STORAGE_KEY);
+  let collapsedSet: Set<string>;
+
+  if (rawStorage !== null) {
+    try {
+      collapsedSet = new Set(JSON.parse(rawStorage));
+    } catch {
+      collapsedSet = new Set();
+    }
+  } else {
+    // Default collapsed panels on first launch to keep dashboard focused on alerts
+    collapsedSet = new Set(["activity", "dispatch"]);
+  }
+
+  document.querySelectorAll<HTMLElement>("section.panel").forEach((panel) => {
+    const head = panel.querySelector<HTMLElement>(".panel-head");
+    if (!head) return;
+
+    const heading = head.querySelector("h2");
+    const panelKey = (heading?.textContent ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+
+    const isCollapsed = collapsedSet.has(panelKey);
+    if (isCollapsed) panel.classList.add("panel-collapsed");
+
+    const btn = el("button", {
+      class: "panel-collapse-btn",
+      text: isCollapsed ? "+" : "−",
+      attrs: { type: "button", title: "Collapse/expand panel", "aria-label": "Toggle panel collapse" },
+    });
+
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const nowCollapsed = panel.classList.toggle("panel-collapsed");
+      btn.textContent = nowCollapsed ? "+" : "−";
+      if (nowCollapsed) {
+        collapsedSet.add(panelKey);
+      } else {
+        collapsedSet.delete(panelKey);
+      }
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([...collapsedSet]));
+      } catch {
+        // Storage un-writeable
+      }
+    });
+
+    head.append(btn);
+  });
+}
+
 void main();
+

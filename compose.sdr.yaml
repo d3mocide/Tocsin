@@ -1,0 +1,8 @@
+# Tocsin -- RTL-SDR USB passthrough overlay.
+# Include in COMPOSE_FILE (e.g. COMPOSE_FILE=compose.yaml:compose.sdr.yaml:compose.mesh.yaml)
+# when physical RTL-SDR USB hardware is attached to the host.
+
+services:
+  sdr-rx:
+    devices:
+      - /dev/bus/usb:/dev/bus/usb

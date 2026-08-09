@@ -1,4 +1,4 @@
-.PHONY: help up-offgrid up-hybrid down bench-channelizer sdr-devices fetch-models test
+.PHONY: help up-offgrid up-hybrid dev dev-ui dev-stack down bench-channelizer sdr-devices fetch-models test test-stt-remote
 
 .DEFAULT_GOAL := help
 
@@ -8,22 +8,32 @@
 help:
 	@echo "Tocsin -- available make targets:"
 	@echo ""
+	@printf "  %-17s %s\n" "dev-ui" "Start frontend UI dev server with rich mock data (no Docker required)"
+	@printf "  %-17s %s\n" "dev-stack" "Start full hybrid Docker stack for local dev (no SDR hardware required)"
 	@printf "  %-17s %s\n" "up-offgrid" "Start the stack in offgrid mode (no network dependency)"
 	@printf "  %-17s %s\n" "up-hybrid" "Start the stack in hybrid mode (adds network-only components)"
 	@printf "  %-17s %s\n" "down" "Stop the stack"
 	@printf "  %-17s %s\n" "test" "Run the test suite for every service that has one"
+	@printf "  %-17s %s\n" "test-stt-remote" "Test remote Whisper HTTP transcription endpoint"
 	@printf "  %-17s %s\n" "sdr-devices" "List rtlsdr device serials, for setting SDR_RX_DEVICES"
 	@printf "  %-17s %s\n" "bench-channelizer" "Run the channelizer CPU throughput benchmark"
 	@printf "  %-17s %s\n" "fetch-models" "Pre-stage STT model weights into ./models/ (offgrid-required)"
 	@echo ""
 	@echo "See README.md and docs/design/master-prompt.md for details."
 
-# TOCSIN_MODE selects the compose profile; see docs/design/master-prompt.md §1, §8.
-up-offgrid:
-	TOCSIN_MODE=offgrid docker compose --profile offgrid up --build
+# Frontend-only dev server with realistic mock data & live SSE events (starts in < 1s)
+dev-ui:
+	cd web && npm run dev
 
-up-hybrid:
+dev: dev-ui
+
+# Full hybrid docker stack (runs without hardware dongles attached)
+dev-stack:
 	TOCSIN_MODE=hybrid docker compose --profile hybrid up --build
+
+up-dev: dev-stack
+
+
 
 # Both profiles, always. Every service in compose.yaml declares
 # `profiles:`, and a profiled service is not selected unless its profile is
@@ -75,3 +85,8 @@ test:
 	cd services/dispatcher && uv sync && uv run pytest
 	cd services/api && uv sync && uv run pytest
 	cd web && npm install && npm run build
+
+# Diagnostic CLI tool for testing remote Whisper HTTP endpoints
+test-stt-remote:
+	cd services/stt_worker && uv sync && uv run python -m stt_worker.test_remote $(WAV)
+

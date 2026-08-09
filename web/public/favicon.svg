@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+
+    <!-- Signal Arc Gradient (Cyan to Amber) -->
+    <linearGradient id="signal-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+
+    <!-- Bell / Alarm Core Gradient -->
+    <linearGradient id="bell-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Dark Rounded Container -->
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#bg-grad)" stroke="#334155" stroke-width="1.2"/>
+
+  <!-- Radio / Weather Broadcast Signal Waves -->
+  <path d="M 6.5 12 A 11 11 0 0 1 25.5 12" fill="none" stroke="url(#signal-grad)" stroke-width="2" stroke-linecap="round" opacity="0.4"/>
+  <path d="M 9.5 15 A 7.5 7.5 0 0 1 22.5 15" fill="none" stroke="url(#signal-grad)" stroke-width="2.2" stroke-linecap="round" opacity="0.75"/>
+  <path d="M 12.5 18 A 4 4 0 0 1 19.5 18" fill="none" stroke="url(#signal-grad)" stroke-width="2.2" stroke-linecap="round"/>
+
+  <!-- Tocsin Alarm Bell Icon -->
+  <path d="M 16 13.5 C 13.5 13.5 12.5 16 12.5 19 L 11.5 21.5 C 11.2 22.1 11.6 22.8 12.3 22.8 L 19.7 22.8 C 20.4 22.8 20.8 22.1 20.5 21.5 L 19.5 19 C 19.5 16 18.5 13.5 16 13.5 Z" fill="url(#bell-grad)"/>
+
+  <!-- Bell Clapper / Pulse Dot -->
+  <circle cx="16" cy="24.8" r="1.5" fill="#f59e0b"/>
+
+  <!-- Center RF Tower Pulse Point -->
+  <circle cx="16" cy="11" r="1.2" fill="#38bdf8"/>
+</svg>

@@ -63,8 +63,9 @@ def test_build_command_shape():
     cmd = build_command("whisper-cli", "/models/m.bin", Path("/tmp/in.wav"), Path("/tmp/out"), "en", None)
     assert cmd[0] == "whisper-cli"
     assert cmd[cmd.index("-m") + 1] == "/models/m.bin"
-    assert cmd[cmd.index("-f") + 1] == "/tmp/in.wav"
-    assert cmd[cmd.index("-of") + 1] == "/tmp/out"
+    assert cmd[cmd.index("-f") + 1] == str(Path("/tmp/in.wav"))
+    assert cmd[cmd.index("-of") + 1] == str(Path("/tmp/out"))
+
     assert "-oj" in cmd and "-ojf" in cmd
     assert "--prompt" not in cmd
 

@@ -58,24 +58,29 @@ def main() -> None:
         sys.exit(1)
 
     areas = [a.strip() for a in os.environ.get("NWS_POLLER_AREAS", "").split(",") if a.strip()]
-    if not areas:
+    zones = [z.strip() for z in os.environ.get("NWS_POLLER_ZONES", "").split(",") if z.strip()]
+
+    if not areas and not zones:
         print(
-            "nws-poller: NWS_POLLER_AREAS is empty -- nothing to poll, refusing to start",
+            "nws-poller: both NWS_POLLER_AREAS and NWS_POLLER_ZONES are empty -- nothing to poll, refusing to start",
             file=sys.stderr,
         )
         sys.exit(1)
-    # Optional and additive, not a replacement for NWS_POLLER_AREAS: a
-    # narrower filter (public forecast zones, e.g. ORZ006) for operators who
-    # want tighter-than-statewide CAP polling, on top of the area coverage
-    # above rather than instead of it -- see client.py's docstring for why
-    # zones go out as one combined request instead of one per zone.
-    zones = [z.strip() for z in os.environ.get("NWS_POLLER_ZONES", "").split(",") if z.strip()]
+
+    strict_zone_filter_raw = os.environ.get("NWS_POLLER_STRICT_ZONE_FILTER", "").lower()
+    strict_zone_filter = strict_zone_filter_raw in ("true", "1", "yes")
 
     interval = float(os.environ.get("NWS_POLLER_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS))
 
     redis_client = _build_redis_client()
     client = NwsAlertsClient(user_agent=user_agent)
-    poller = Poller(client, areas, sink=_build_sink(redis_client), zones=zones)
+    poller = Poller(
+        client,
+        areas,
+        sink=_build_sink(redis_client),
+        zones=zones,
+        strict_zone_filter=strict_zone_filter,
+    )
     heartbeat = heartbeat_module.build(redis_client)
     # A silently unreachable api.weather.gov and a genuinely quiet night
     # produce identical output from this service, so the heartbeat carries
@@ -87,6 +92,7 @@ def main() -> None:
     print(
         f"nws-poller: polling areas {areas}"
         + (f" and zones {zones}" if zones else "")
+        + (f" (strict filtering enabled)" if strict_zone_filter else "")
         + f" every {interval}s",
         flush=True,
     )

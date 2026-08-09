@@ -57,16 +57,13 @@ def test_process_writes_tone_energy_into_the_target_channels_ring_buffer(tmp_pat
     assert wx1.size > 0
 
 
-def test_process_is_a_no_op_below_the_channelizer_history_length():
+def test_process_is_a_no_op_below_the_channelizer_history_length(tmp_path):
     publisher = FakePublisher()
-    from pathlib import Path
-    import tempfile
+    ring_buffers = _ring_buffers(tmp_path)
+    pipeline = DevicePipeline("site-a", publisher, ring_buffers)
+    pipeline.process(np.ones(10, dtype=complex))
+    assert publisher.calls == []
 
-    with tempfile.TemporaryDirectory() as d:
-        ring_buffers = _ring_buffers(Path(d))
-        pipeline = DevicePipeline("site-a", publisher, ring_buffers)
-        pipeline.process(np.ones(10, dtype=complex))
-        assert publisher.calls == []
 
 
 def test_squelch_gates_only_the_stt_topic_leaving_same_untouched(tmp_path):

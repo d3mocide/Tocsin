@@ -100,6 +100,8 @@ export class StationsView {
 
 function stationCard(callsign: string, station: NwrStation): HTMLElement {
   const abnormal = station.status.toUpperCase() !== "NORMAL";
+  const distText = station.distance_km !== null ? `${station.distance_km.toFixed(1)} km` : null;
+
   return el(
     "li",
     { class: `station-card${abnormal ? " station-abnormal" : ""}` },
@@ -108,18 +110,18 @@ function stationCard(callsign: string, station: NwrStation): HTMLElement {
       { class: "station-card-head" },
       el("span", { class: "station-dot", attrs: { "aria-hidden": "true" } }),
       el("span", { class: "station-name", text: station.name }),
+      distText ? el("span", { class: "station-dist-pill", text: distText }) : null
     ),
-    el("div", { class: "station-callsign", text: callsign }),
-    el("div", {
-      class: "station-distance",
-      text: station.distance_km !== null ? `${station.distance_km.toFixed(1)} km` : "—",
-      title: station.distance_km === null ? "operator location unset, or this station's coordinates are unconfirmed" : "",
-    }),
-    el("div", {
-      class: "station-detail",
-      text: abnormal
-        ? `${station.frequency_mhz.toFixed(3)} MHz · ${station.wfo} · ${station.status}`
-        : `${station.frequency_mhz.toFixed(3)} MHz · ${station.wfo}`,
-    }),
+    el(
+      "div",
+      { class: "station-card-sub" },
+      el("span", { class: "station-callsign", text: callsign }),
+      el("span", { class: "station-bullet", text: "·" }),
+      el("span", { class: "station-freq", text: `${station.frequency_mhz.toFixed(3)} MHz` }),
+      el("span", { class: "station-bullet", text: "·" }),
+      el("span", { class: "station-wfo", text: station.wfo }),
+      abnormal ? el("span", { class: "station-status-tag", text: station.status }) : null
+    )
   );
 }
+

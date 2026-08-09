@@ -1,12 +1,7 @@
-import { badge, el, replaceChildren } from "../dom";
+import { badge, byIdOptional, el, replaceChildren } from "../dom";
 import { durationSeconds, relativeTime, serviceLabel } from "../format";
 import type { Store } from "../store";
 import type { ServiceRow } from "../types";
-
-/** The strip across the top: mode, service liveness, and whether anything
- * is actually reaching the mesh. All three were previously unknowable
- * from this page -- mode wasn't exposed at all, no service published a
- * heartbeat, and dispatch outcomes existed only in container logs. */
 
 export function renderModeChip(container: HTMLElement, store: Store): void {
   const mode = store.state.system?.mode;
@@ -39,17 +34,38 @@ export function renderServices(container: HTMLElement, store: Store): void {
     return;
   }
 
-  const down = services.filter((row) => row.expected && row.status === "down");
+  const expectedServices = services.filter((r) => r.expected);
+  const upServices = expectedServices.filter((r) => r.status === "up");
+  const downServices = expectedServices.filter((r) => r.status === "down");
+
+  const isAllGood = downServices.length === 0;
+
+  const headerSummary = byIdOptional("services-header-summary");
+  if (headerSummary) {
+    replaceChildren(
+      headerSummary,
+      el("span", {
+        class: `badge ${isAllGood ? "badge-status-synced" : "badge-status-divergent"}`,
+        text: isAllGood ? `${upServices.length}/${expectedServices.length} ONLINE` : `${downServices.length} DOWN`,
+      })
+    );
+  }
 
   replaceChildren(
     container,
-    down.length > 0
-      ? el("p", {
-          class: "services-summary bad",
-          text: `${down.length} of ${services.filter((r) => r.expected).length} services down`,
-        })
-      : el("p", { class: "services-summary good", text: "All expected services reporting" }),
-    el("ul", { class: "service-list" }, ...services.map(serviceRow)),
+    el(
+      "div",
+      { class: "services-container" },
+      !isAllGood
+        ? el(
+            "div",
+            { class: "services-summary-bar summary-bad" },
+            el("span", { class: "badge badge-status-divergent", text: `${downServices.length} DOWN` }),
+            el("span", { class: "services-summary-text", text: `${downServices.length} service(s) require attention` })
+          )
+        : null,
+      el("ul", { class: "service-list" }, ...services.map(serviceRow))
+    )
   );
 }
 
@@ -58,38 +74,46 @@ function serviceRow(row: ServiceRow): HTMLElement {
   return el(
     "li",
     { class: `service service-${row.status}` },
-    el("span", { class: "service-dot", attrs: { "aria-hidden": "true" } }),
-    el("span", { class: "service-name", text: serviceLabel(row.service) }),
-    el("span", {
-      class: "service-age",
-      text: row.status === "down" ? "no heartbeat" : relativeTime(row.updated_at),
-      title: row.updated_at ?? "never reported",
-    }),
-    detail ? el("span", { class: "service-detail", text: detail }) : null,
+    el(
+      "div",
+      { class: "service-left" },
+      el("span", { class: "service-dot-pulse", attrs: { "aria-hidden": "true" } }),
+      el("span", { class: "service-name", text: serviceLabel(row.service) })
+    ),
+    el(
+      "div",
+      { class: "service-right" },
+      detail ? el("span", { class: "service-chip", text: detail }) : null,
+      el("span", {
+        class: "service-age",
+        text: row.status === "down" ? "no heartbeat" : relativeTime(row.updated_at),
+        title: row.updated_at ?? "never reported",
+      })
+    )
   );
 }
 
-/** Surfaces the few heartbeat details that answer a question the row
- * itself can't. nws-poller's is the important one: it reports "up" while
- * failing every call to api.weather.gov, which looks exactly like a quiet
- * night from anywhere else on this page. */
 function describeDetail(row: ServiceRow): string | null {
   const detail = row.detail ?? {};
   if (row.service === "nws_poller") {
     const lastError = detail.last_error;
-    if (typeof lastError === "string" && lastError) return `last poll failed: ${lastError}`;
+    if (typeof lastError === "string" && lastError) return `failed: ${lastError}`;
     const lastSuccess = detail.last_success;
-    if (typeof lastSuccess === "string") return `last poll ${relativeTime(lastSuccess)}`;
+    if (typeof lastSuccess === "string") return `polled ${relativeTime(lastSuccess)}`;
     return null;
   }
   if (row.service === "sdr_rx") {
     const running = detail.devices_running;
     const configured = detail.devices_configured;
     if (typeof running === "number" && typeof configured === "number") {
-      return running === configured ? `${running} device(s)` : `${running}/${configured} devices running`;
+      return running === configured ? `${running} dev` : `${running}/${configured} dev`;
     }
   }
-  if (row.service === "dispatcher" && detail.stage2 === false) return "stage 2 disabled";
+  if (row.service === "stt_worker") {
+    const chain = detail.chain;
+    if (typeof chain === "string") return `chain: ${chain}`;
+  }
+  if (row.service === "dispatcher" && detail.stage2 === false) return "stage 2 off";
   return null;
 }
 
@@ -101,25 +125,38 @@ export function renderDispatchSummary(container: HTMLElement, store: Store): voi
   }
 
   const total = dispatch.sent + dispatch.skipped;
+  const sentPct = total > 0 ? (dispatch.sent / total) * 100 : 0;
+  const skippedPct = total > 0 ? (dispatch.skipped / total) * 100 : 0;
+
   const topReasons = Object.entries(dispatch.by_reason)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4);
+
+  const headerSummary = byIdOptional("dispatch-header-summary");
+  if (headerSummary) {
+    replaceChildren(
+      headerSummary,
+      el("span", { class: "badge badge-status-synced", text: `${dispatch.sent} SENT` }),
+      el("span", { class: "badge badge-status-rfonly", text: `${dispatch.skipped} SKIPPED` })
+    );
+  }
 
   replaceChildren(
     container,
     el(
       "div",
-      { class: "dispatch-summary" },
+      { class: "dispatch-summary-container" },
       el(
-        "p",
-        { class: "dispatch-headline" },
-        el("strong", { text: String(dispatch.sent) }),
-        ` sent · ${dispatch.skipped} skipped`,
+        "div",
+        { class: "dispatch-header-row" },
+        el("span", { class: "dispatch-window-tag", text: `${durationSeconds(dispatch.since_seconds)} window` })
       ),
-      el("p", {
-        class: "dispatch-window",
-        text: `last ${durationSeconds(dispatch.since_seconds)}`,
-      }),
+      el(
+        "div",
+        { class: "dispatch-bar-container", title: `Sent: ${dispatch.sent}, Skipped: ${dispatch.skipped}` },
+        el("div", { class: "dispatch-bar-segment segment-sent", style: `width: ${sentPct}%` }),
+        el("div", { class: "dispatch-bar-segment segment-skipped", style: `width: ${skippedPct}%` })
+      ),
       total === 0
         ? el("p", { class: "empty", text: "Nothing dispatched in this window." })
         : el(
@@ -128,14 +165,29 @@ export function renderDispatchSummary(container: HTMLElement, store: Store): voi
             ...topReasons.map(([reason, count]) =>
               el(
                 "li",
-                { class: "reason" },
-                el("span", { class: "reason-name", text: reason }),
-                el("span", { class: "reason-count", text: String(count) }),
-              ),
-            ),
-          ),
-    ),
+                { class: "reason-item" },
+                el("span", { class: "reason-name", text: formatReason(reason) }),
+                el("span", { class: "reason-count-badge", text: String(count) })
+              )
+            )
+          )
+    )
   );
+}
+
+
+
+
+function formatReason(reason: string): string {
+  const map: Record<string, string> = {
+    duplicate: "Duplicate Alert",
+    tier_c: "Tier C (Log Only)",
+    disabled: "Dispatch Disabled",
+    no_device: "No Hardware Device",
+    low_confidence: "Low Confidence",
+    rate_limited: "Rate Limited",
+  };
+  return map[reason] ?? reason.replace(/_/g, " ");
 }
 
 export function renderConnection(container: HTMLElement, store: Store): void {

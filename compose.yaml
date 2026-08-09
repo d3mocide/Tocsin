@@ -143,17 +143,12 @@ services:
     volumes:
       - ./data:/app/data:ro
       - segment-captures:/var/lib/segment_capture/captures
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-    # /dev/bus/usb gives the container the whole USB bus rather than one
-    # device node, because RTL-SDR dongles enumerate under a bus-relative
-    # path that isn't stable across replugs -- device selection happens in
-    # the app layer by serial (SDR_RX_DEVICES), not by bind-mounting one
-    # /dev/bus/usb/BBB/DDD path. The host also needs the udev rule in
-    # deploy/udev/ so the dongle is group-readable without running the
-    # container privileged -- see this service's README for the full
-    # bring-up sequence (blacklist, udev rule, `make sdr-devices`).
+    # No `devices:` here on purpose -- it lives in compose.sdr.yaml.
+    # Docker refuses to *start* a container whose `devices:` host path is
+    # absent (e.g. Windows/Mac/dev environments without physical SDRs), so
+    # adding compose.sdr.yaml to COMPOSE_FILE maps the USB bus when hardware is attached.
     profiles: [offgrid, hybrid]
+
 
   icecast:
     build: ./deploy/icecast

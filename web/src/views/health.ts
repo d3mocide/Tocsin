@@ -1,4 +1,4 @@
-import { badge, el, replaceChildren } from "../dom";
+import { badge, byIdOptional, el, replaceChildren } from "../dom";
 import { absoluteTime, relativeTime } from "../format";
 import { healthKey, type Store } from "../store";
 import type { HealthSample } from "../types";
@@ -29,6 +29,17 @@ export function renderHealth(container: HTMLElement, store: Store): void {
 
   const deadCount = samples.filter((sample) => sample.dead).length;
 
+  const headerSummary = byIdOptional("rf-health-header-summary");
+  if (headerSummary) {
+    replaceChildren(
+      headerSummary,
+      el("span", {
+        class: `badge ${deadCount > 0 ? "badge-status-divergent" : "badge-status-synced"}`,
+        text: deadCount > 0 ? `${deadCount} DEAD` : `${samples.length} ALIVE`,
+      })
+    );
+  }
+
   replaceChildren(
     container,
     deadCount > 0
@@ -36,14 +47,16 @@ export function renderHealth(container: HTMLElement, store: Store): void {
           class: "health-summary bad",
           text: `${deadCount} channel${deadCount === 1 ? "" : "s"} dead — flat carrier over 30s`,
         })
-      : el("p", { class: "health-summary good", text: `${samples.length} channels alive` }),
+      : null,
     el(
       "ul",
       { class: "health-grid" },
       ...samples.map((sample) => card(sample, healthHistory.get(healthKey(sample.site, sample.channel)) ?? [])),
     ),
   );
+
 }
+
 
 /** One card per `(site, channel)` in a multi-column grid (`.health-grid`)
  * rather than one full-width row per channel -- a single column wasted most
@@ -103,11 +116,42 @@ function sparkline(series: number[], dead: boolean): SVGElement {
     })
     .join(" ");
 
+  const color = dead ? "var(--dead)" : "var(--accent)";
+  const gradientId = `sparkline-grad-${Math.random().toString(36).substring(2, 7)}`;
+
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  const linearGrad = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+  linearGrad.setAttribute("id", gradientId);
+  linearGrad.setAttribute("x1", "0");
+  linearGrad.setAttribute("y1", "0");
+  linearGrad.setAttribute("x2", "0");
+  linearGrad.setAttribute("y2", "1");
+
+  const stop1 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+  stop1.setAttribute("offset", "0%");
+  stop1.setAttribute("stop-color", color);
+  stop1.setAttribute("stop-opacity", "0.25");
+
+  const stop2 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+  stop2.setAttribute("offset", "100%");
+  stop2.setAttribute("stop-color", color);
+  stop2.setAttribute("stop-opacity", "0.0");
+
+  linearGrad.append(stop1, stop2);
+  defs.append(linearGrad);
+  svg.append(defs);
+
+  const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+  polygon.setAttribute("points", `${points} ${SPARKLINE_WIDTH},${SPARKLINE_HEIGHT} 0,${SPARKLINE_HEIGHT}`);
+  polygon.setAttribute("fill", `url(#${gradientId})`);
+  svg.append(polygon);
+
   const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
   polyline.setAttribute("points", points);
   polyline.setAttribute("fill", "none");
-  polyline.setAttribute("stroke", dead ? "var(--dead)" : "var(--accent)");
+  polyline.setAttribute("stroke", color);
   polyline.setAttribute("stroke-width", "1.5");
   svg.append(polyline);
   return svg;
 }
+

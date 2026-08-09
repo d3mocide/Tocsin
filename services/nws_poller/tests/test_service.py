@@ -182,3 +182,38 @@ def test_two_overlapping_areas_also_share_the_dedup_tracker():
 
     assert emitted == 1
     assert len(sink.alerts) == 1
+
+
+def test_zone_only_polling_without_areas():
+    feature = _feature()
+    client = FakeClient({}, zone_results=[FetchResult(not_modified=False, etag="z1", features=(feature,))])
+    sink = FakeSink()
+    poller = Poller(client, areas=[], zones=["ORZ006"], sink=sink)
+
+    emitted = poller.poll_once()
+
+    assert emitted == 1
+    assert client.calls == []
+    assert client.zone_calls == [(["ORZ006"], None)]
+    assert len(sink.alerts) == 1
+
+
+def test_strict_zone_filter_discards_unmatched_alerts():
+    matching_feature = _feature(id="urn:oid:matching", geocode={"UGC": ["ORZ006"]})
+    unmatched_feature = _feature(id="urn:oid:unmatched", geocode={"UGC": ["ORZ099"]})
+    client = FakeClient(
+        {},
+        zone_results=[
+            FetchResult(not_modified=False, etag="z1", features=(matching_feature, unmatched_feature))
+        ],
+    )
+    sink = FakeSink()
+    poller = Poller(client, areas=[], zones=["ORZ006"], sink=sink, strict_zone_filter=True)
+
+    emitted = poller.poll_once()
+
+    assert emitted == 1
+    assert len(sink.alerts) == 1
+    assert sink.alerts[0].id == "urn:oid:matching"
+
+

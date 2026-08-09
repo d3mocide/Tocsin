@@ -12,16 +12,18 @@ type Child = Node | string | null | undefined | false;
 
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
-  options: { class?: string; text?: string; title?: string; attrs?: Record<string, string> } = {},
+  options: { class?: string; text?: string; title?: string; style?: string; attrs?: Record<string, string> } = {},
   ...children: Child[]
 ): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (options.class) node.className = options.class;
   if (options.text !== undefined) node.textContent = options.text;
   if (options.title) node.title = options.title;
+  if (options.style) node.style.cssText = options.style;
   for (const [name, value] of Object.entries(options.attrs ?? {})) {
     node.setAttribute(name, value);
   }
+
   for (const child of children) {
     if (child === null || child === undefined || child === false) continue;
     node.append(typeof child === "string" ? document.createTextNode(child) : child);
@@ -34,6 +36,11 @@ export function byId<T extends HTMLElement>(id: string): T {
   if (!node) throw new Error(`missing #${id}`);
   return node as T;
 }
+
+export function byIdOptional<T extends HTMLElement>(id: string): T | null {
+  return (document.getElementById(id) as T) || null;
+}
+
 
 export function replaceChildren(container: HTMLElement, ...children: Child[]): void {
   container.replaceChildren();
