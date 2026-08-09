@@ -93,6 +93,13 @@ class PolyphaseChannelizer:
         # Half-bin modulation period in samples: exp(-j*pi*n/M) repeats every 2M samples.
         self._mod_period = 2 * num_bins
         self._sample_index = 0  # position of the next unmodulated input sample, mod _mod_period
+        # The demodulation ramp only ever takes `_mod_period` distinct values
+        # (it's periodic) -- precomputing them once and gathering by index in
+        # `_demodulate` avoids calling the transcendental `exp()` on every
+        # sample of every chunk, which profiling showed was a real cost at
+        # 1.2 MS/s (docs/design/tracking.md's 2026-08-09 entry). Same values,
+        # just computed once instead of on every call.
+        self._ramp_lut = np.exp(-1j * np.pi * np.arange(self._mod_period) / num_bins)
 
         self._history = np.zeros(self.num_taps - self.decimation, dtype=complex)  # already-modulated tail
         self._frame_parity = 0  # global output-frame counter mod 2
@@ -103,8 +110,8 @@ class PolyphaseChannelizer:
         self._frame_parity = 0
 
     def _demodulate(self, samples: np.ndarray) -> np.ndarray:
-        n = self._sample_index + np.arange(len(samples))
-        ramp = np.exp(-1j * np.pi * (n % self._mod_period) / self.num_bins)
+        idx = (self._sample_index + np.arange(len(samples))) % self._mod_period
+        ramp = self._ramp_lut[idx]
         self._sample_index = (self._sample_index + len(samples)) % self._mod_period
         return samples * ramp
 

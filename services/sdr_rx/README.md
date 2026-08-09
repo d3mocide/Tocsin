@@ -47,6 +47,25 @@ that's the first thing to check (see the Dockerfile's fallback note).
 real dongle, CPU headroom on a Pi 5 (`make bench-channelizer` has only run
 on the dev sandbox), and the full bring-up sequence below end to end.
 
+**Performance (2026-08-09):** a live deployment report of near-100% CPU on
+the `sdr-rx` process led to profiling `DevicePipeline.process()` end to end.
+Three real, unrelated-to-each-other inefficiencies came out of it, all fixed
+with no behavior change (see `docs/design/tracking.md`'s entry this date for
+the full writeup and profiled numbers): `resample.py`'s two `resample_poly`
+calls were redesigning their anti-aliasing FIR filter -- one of them ~20,000
+taps -- from scratch on every chunk instead of once (over a third of total
+CPU time); `ring_buffer.py`'s `write()` called `mmap.flush()` every chunk,
+which is pointless on the tmpfs this buffer is documented to live on
+(cross-process visibility doesn't need msync for a `MAP_SHARED` mapping of
+the same file); and `channelizer.py`'s `_demodulate()` recomputed `exp()` for
+every sample of every chunk even though the demodulation ramp only ever
+takes 96 distinct values. Combined: ~2.4x throughput improvement on the
+sandbox benchmark (1.41x -> 3.44x real-time margin per dongle, single-core).
+Still not verified against the actual Pi CPU headroom this was reported
+against -- the sandbox's per-core speed is unknown relative to target
+hardware, so the *ratio* of improvement is the trustworthy number here, not
+the absolute real-time factor.
+
 ## Hardware bring-up
 
 See the repo root README's hardware bring-up runbook for the full
