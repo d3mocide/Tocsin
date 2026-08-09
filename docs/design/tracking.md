@@ -322,6 +322,13 @@ and unit tested," not "verified against real audio."
   over `localhost:5555` instead of `tcp://sdr-rx:5555`. See Phase 1's notes and the Session
   Log entry this date.
 
+- **2026-08-09:** Audio-quality report from a live deployment (static on a marginal channel,
+  occasional cutouts) led to three fixes, see the Session Log entry this date for the full
+  writeup: a squelch + voice-band filter (`sdr_rx/audio_conditioning.py`) applied only to the
+  `stt` ZMQ topic (never SAME decode or the ring buffer), and a bounded queue + writer thread
+  in `live_audio/feeder.py` so a stalled ffmpeg-to-Icecast write can no longer block the ZMQ
+  receive loop and cause silent frame drops upstream.
+
 ---
 
 ## Phase 4 — Segment capture + local STT
@@ -1693,6 +1700,51 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   and after the resize to mobile -- pagination state survives a viewport change since it's the
   same view instance): zero horizontal overflow either width, no unexpected console errors.
   `npm run build` clean. No Python changed this round.
+
+- **2026-08-09 (later same day):** User feedback against the live PDX site: static on a
+  marginal channel and occasional audio cutouts on the Icecast live-audio stream, plus a
+  question about whether the default 30 dB gain was too high. Root-caused two independent
+  issues rather than one:
+  1. **Static** was the FM discriminator's raw phase output streaming unfiltered -- no
+     squelch, no band-limiting -- so any dip below FM capture threshold passed through as
+     full-scale noise, hard-clipped by `to_s16le`'s `[-1, 1]` clamp on top of that. New
+     `sdr_rx/audio_conditioning.py`: `VoiceBandFilter` (streaming Butterworth bandpass,
+     ~300 Hz-3 kHz, NWR's voice bandwidth) and `Squelch` (noise gate keyed on energy above
+     8 kHz -- the classic FM "noise triangle" proxy for no-carrier, since level alone can't
+     tell a strong carrier's floor from a weak one -- with hang time and a short crossfade so
+     the gate doesn't chatter or click). Threshold (`SQUELCH_DEFAULT_THRESHOLD = 0.6`) picked
+     from synthetic no-carrier-vs-carrier discriminator output (~1.5-1.8 vs. ~0.04-0.4 RMS in
+     the noise band, see the module docstring and its tests), configurable per site via
+     `SDR_RX_SQUELCH_THRESHOLD` -- same "starting point, not universal" posture as gain.
+     Wired into `pipeline.py` on the `stt` topic publish **only**: SAME decode and the ring
+     buffer `segment_capture` reads alert audio from both stay on the raw, unfiltered
+     discriminator output, since a misfiring gate must never be able to eat a real SAME header
+     or clip a warning clip. `test_pipeline.py` gained a regression test asserting exactly
+     that split (forced-closed squelch silences `stt` while `same` stays untouched).
+  2. **Cutouts** turned out to be architectural, not RF: `live_audio`'s `main()` loop is
+     single-threaded (`subscriber.recv()` -> `streamer.feed()` -> `feeder.write()` in
+     lockstep), and `write()` was a blocking `stdin.write()` to ffmpeg. A network stall
+     between ffmpeg and Icecast blocked that write, which stalled the whole loop, which
+     stopped draining the ZMQ SUB socket -- whose receive buffer then silently dropped frames
+     once its HWM filled (`subscriber.py`'s deliberate drop-under-load policy, meant for
+     genuine overload, not a downstream network blip). Fixed in `feeder.py`: `write()` now
+     pushes onto a small bounded queue (`DEFAULT_QUEUE_MAXSIZE = 40`, ~2s of audio) drained by
+     a dedicated writer thread that owns the actual blocking call; once full, the oldest
+     buffered chunk is dropped for the newest. `close()` reworked to match: join the writer
+     briefly first (the common case drains and exits cleanly), only force-terminating ffmpeg
+     early if the writer is actually stuck mid-write.
+  3. **Gain** wasn't changed in code -- 30 dB is a per-site starting point already documented
+     as such (`capture.DEFAULT_GAIN_DB`, `SDR_RX_GAIN_DB`), not a bug, and it's one dongle
+     shared across all seven channels so it can't be tuned per-channel; answered by pointing
+     at the existing `SDR_RX_GAIN_DB` knob and explaining the FM threshold effect rather than
+     touching anything.
+
+  Verified: `sdr_rx` 93 passed (up from 92, +1 net given the new `audio_conditioning.py` test
+  module counted in both the before/after comparison -- see the new tests themselves for the
+  synthetic-signal validation of the squelch/filter behavior), `live_audio` 34 passed (up from
+  33). Not verified: real hardware -- no RTL-SDR, ffmpeg, or Icecast available in this sandbox,
+  same standing limitation as the rest of Phase 1/3; the actual static/cutout improvement is
+  unconfirmed against a live signal until a user reports back.
 
 - **2026-08-09 (stt-worker remote logging):** Reported from a live hybrid deployment: every
   `STT_CHAIN=local,remote` transcription was failing against the remote endpoint (a gRPC-backed
