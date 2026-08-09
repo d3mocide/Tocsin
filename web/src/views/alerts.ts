@@ -3,6 +3,7 @@ import { badge, el, field, reconcile, replaceChildren } from "../dom";
 import {
   absoluteTime,
   apiSource,
+  areaLabel,
   captureName,
   countyNames,
   durationSeconds,
@@ -180,6 +181,8 @@ export class AlertFeedView {
     });
     header.addEventListener("click", () => this.toggle(alert));
 
+    const area = areaLabel(alert, reference);
+
     header.append(
       el(
         "div",
@@ -189,7 +192,7 @@ export class AlertFeedView {
         !active ? badge("expired", "expired") : null,
       ),
       el("h3", { class: "alert-title", text: alert.event_name }),
-      el("p", { class: "alert-counties", text: countyNames(alert.fips_codes, reference) }),
+      el("p", { class: "alert-counties", text: area.text, attrs: { title: area.title } }),
       el(
         "p",
         { class: "alert-meta" },

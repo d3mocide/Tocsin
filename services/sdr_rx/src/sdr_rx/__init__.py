@@ -23,7 +23,12 @@ from .capture import DEFAULT_GAIN_DB, SoapySDRDevice, enumerate_devices, parse_d
 from .channels import nwr_bins
 from .health import HealthTracker
 from .pipeline import DevicePipeline
-from .prerequisites import ConflictingKernelModuleError, assert_rtlsdr_module_not_loaded
+from .prerequisites import (
+    ConflictingKernelModuleError,
+    MissingUsbPassthroughError,
+    assert_rtlsdr_module_not_loaded,
+    assert_usb_bus_mapped,
+)
 from .ring_buffer import ChannelRingBuffer
 from .spectrum import SpectrumTracker
 
@@ -52,6 +57,11 @@ def main() -> None:
         sys.exit(1)
 
     if os.environ.get("SDR_RX_LIST_DEVICES"):
+        try:
+            assert_usb_bus_mapped()
+        except MissingUsbPassthroughError as exc:
+            print(f"sdr-rx: {exc}", file=sys.stderr)
+            sys.exit(1)
         try:
             found = enumerate_devices()
         except RuntimeError as exc:
@@ -84,6 +94,17 @@ def main() -> None:
             "services/sdr_rx/README.md."
         )
         return
+
+    # After the `not devices` return above, never before it: a hardware-free
+    # dev stack (`make dev-stack`, no SDR_RX_DEVICES set) legitimately runs
+    # with no USB bus mapped and must still exit 0 without retrying, the way
+    # entrypoint.sh's sdr-rx loop expects. Once serials *are* configured, a
+    # missing bus is a misconfiguration worth failing loudly on.
+    try:
+        assert_usb_bus_mapped()
+    except MissingUsbPassthroughError as exc:
+        print(f"sdr-rx: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     bind_addr = os.environ.get("SDR_RX_ZMQ_BIND", DEFAULT_ZMQ_BIND)
     ring_dir = Path(os.environ.get("SDR_RX_RING_BUFFER_DIR", str(DEFAULT_RING_BUFFER_DIR)))

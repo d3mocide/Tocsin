@@ -1,6 +1,15 @@
-# Tocsin -- RTL-SDR USB passthrough overlay.
-# Include in COMPOSE_FILE (e.g. COMPOSE_FILE=compose.yaml:compose.sdr.yaml:compose.mesh.yaml)
-# when physical RTL-SDR USB hardware is attached to the host.
+# Tocsin -- RTL-SDR USB passthrough overlay, merged on top of compose.yaml via
+# COMPOSE_FILE (see .env.example). Included by default; it exists as a separate
+# file only so a machine with no USB subsystem can still bring the stack up
+# (Docker refuses to start a container whose `devices:` host path is missing),
+# not because a real station is expected to run without it.
+#
+# `make up-offgrid` and `make up-hybrid` append this to COMPOSE_FILE if .env
+# left it out -- both are deployment modes and a station with no SDR receives
+# nothing. `make dev-stack` is the one target that deliberately runs without it.
+# Drop it from a bare `docker compose` invocation only when no dongle is
+# attached; sdr-rx fails loudly at startup if SDR_RX_DEVICES is set and the bus
+# isn't mapped (services/sdr_rx/src/sdr_rx/prerequisites.py).
 
 services:
   sdr-rx:

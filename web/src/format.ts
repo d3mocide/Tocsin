@@ -93,6 +93,41 @@ export function countyNames(fipsCodes: string[], reference: Reference | null): s
   return fipsCodes.map((code) => countyName(code, reference)).join(" · ");
 }
 
+/** How many areas an alert card shows before collapsing the rest into a
+ * count. A regional NWS alert routinely covers a dozen-plus counties, and
+ * printing all of them buried the alert's actual content under a line of
+ * codes nobody reads. The full list stays in the card's `title` and in the
+ * expanded detail, so nothing is lost -- just not shown at a glance. */
+const MAX_AREA_ITEMS = 3;
+
+/** The areas an alert covers, in the most human form available.
+ *
+ * NWS writes its own plain-prose `areaDesc` ("Greater Portland Metro Area;
+ * Central Willamette Valley"), which is what a person actually recognizes,
+ * so it wins whenever the alert has an API source. A SAME-only alert has
+ * nothing but PSSCCC digits, so those resolve through data/fips.csv; a code
+ * that table doesn't cover still prints raw, which is the honest fallback
+ * but never the first choice. */
+export function areaList(alert: Alert, reference: Reference | null): string[] {
+  const areaDesc = apiSource(alert)?.area_desc?.trim();
+  if (areaDesc) {
+    return areaDesc
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return alert.fips_codes.map((code) => countyName(code, reference));
+}
+
+export function areaLabel(alert: Alert, reference: Reference | null): { text: string; title: string } {
+  const areas = areaList(alert, reference);
+  if (areas.length === 0) return { text: "Area not specified", title: "" };
+  const full = areas.join(" · ");
+  if (areas.length <= MAX_AREA_ITEMS) return { text: full, title: full };
+  const shown = areas.slice(0, MAX_AREA_ITEMS).join(" · ");
+  return { text: `${shown} · +${areas.length - MAX_AREA_ITEMS} more`, title: full };
+}
+
 const RELATIVE_UNITS: [limitSeconds: number, divisor: number, unit: Intl.RelativeTimeFormatUnit][] = [
   [60, 1, "second"],
   [3600, 60, "minute"],
