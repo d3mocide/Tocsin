@@ -15,7 +15,7 @@ import {
 } from "./api";
 import { byId, el, replaceChildren } from "./dom";
 import { isActive, tierOf } from "./format";
-import { healthKey, Store } from "./store";
+import { ALL_TOPICS, healthKey, Store, type Topic } from "./store";
 import { renderActivity } from "./views/activity";
 import { AlertFeedView } from "./views/alerts";
 import { mountFilters } from "./views/filters";
@@ -53,24 +53,29 @@ async function main(): Promise<void> {
   const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
   const refreshFilterSites = mountFilters(byId("filters"), store);
 
-  const render = () => {
-    renderModeChip(byId("mode-chip"), store);
-    renderConnection(byId("connection-status"), store);
-    renderStats(byId("stats"), store);
-    renderServices(byId("services"), store);
-    renderDispatchSummary(byId("dispatch"), store);
-    renderHealth(byId("rf-health"), store);
-    renderStreams(byId("streams"), store);
-    renderActivity(byId("activity"), store);
-    alertsView.render();
-    refreshFilterSites();
-    updateDocumentTitle();
+  // Each panel repaints only when something it actually reads changed.
+  // `clock` is in the list for every panel showing a relative time, and
+  // is the only reason most of them repaint on a quiet system.
+  const render = (changed: ReadonlySet<Topic>) => {
+    const touched = (...topics: Topic[]) => topics.some((topic) => changed.has(topic));
+    if (touched("system")) renderModeChip(byId("mode-chip"), store);
+    if (touched("connection")) renderConnection(byId("connection-status"), store);
+    if (touched("stats")) renderStats(byId("stats"), store);
+    if (touched("services", "clock")) renderServices(byId("services"), store);
+    if (touched("stats")) renderDispatchSummary(byId("dispatch"), store);
+    if (touched("health", "clock")) renderHealth(byId("rf-health"), store);
+    if (touched("streams")) renderStreams(byId("streams"), store);
+    if (touched("activity", "clock")) renderActivity(byId("activity"), store);
+    if (touched("alerts", "filters", "system", "clock")) alertsView.render();
+    if (touched("alerts")) refreshFilterSites();
+    if (touched("alerts", "clock")) updateDocumentTitle();
   };
+  const renderAll = () => render(new Set(ALL_TOPICS));
   store.subscribe(render);
 
   const siteSelect = byId<HTMLSelectElement>("spectrum-site-select");
   siteSelect.addEventListener("change", () => {
-    store.update((state) => {
+    store.update("spectrum", (state) => {
       state.spectrumSite = siteSelect.value || null;
     });
     // The waterfall's history belongs to one site; carrying it across a
@@ -123,7 +128,7 @@ async function main(): Promise<void> {
     onTranscript: (transcript) => store.prependTranscript(transcript),
     onDispatch: (dispatch) => store.prependDispatch(dispatch),
     onStatusChange: (connected) =>
-      store.update((state) => {
+      store.update("connection", (state) => {
         state.connected = connected;
       }),
   });
@@ -151,9 +156,9 @@ async function main(): Promise<void> {
       }),
     STATS_POLL_MS,
   );
-  setInterval(() => store.notify(), CLOCK_TICK_MS);
+  setInterval(() => store.notify("clock"), CLOCK_TICK_MS);
 
-  render();
+  renderAll();
 
   async function refreshSpectrumSites(): Promise<void> {
     await store.load("spectrum", fetchSpectrumSites, (sites, state) => {

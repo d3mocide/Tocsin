@@ -165,6 +165,8 @@ services:
     # is still picked up with no manual intervention, without the restart
     # loop that used to reprint the same line every few seconds into the
     # shared `docker compose logs` stream (see stt_worker's await_model).
+    # STT_CHAIN=remote skips that wait entirely -- MODEL_PATH below is set
+    # unconditionally but only read when the chain contains `local`.
     restart: on-failure
     environment:
       # sdr-rx, not segment-capture -- segment-capture no longer has its

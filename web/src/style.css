@@ -254,6 +254,12 @@ body {
   border-left: 3px solid var(--border-bright);
   border-radius: 8px;
   overflow: hidden;
+  /* Not optional, and not cosmetic: `overflow: hidden` above zeroes a flex
+     item's automatic minimum size, so in this capped-height flex column
+     every card shrank to a bare line once the feed had more alerts than
+     fit -- the whole feed rendered as a stack of empty slivers instead of
+     scrolling. */
+  flex-shrink: 0;
 }
 
 .alert-card.state-confirmed { border-left-color: var(--confirmed); }
@@ -274,6 +280,23 @@ body {
 
 .alert-card.expired {
   opacity: 0.62;
+}
+
+.feed-more {
+  flex-shrink: 0;
+  padding: 0.5rem;
+  background: none;
+  border: 1px dashed var(--border-bright);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.feed-more:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .alert-header {

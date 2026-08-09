@@ -1514,3 +1514,51 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   the real checked-in `schema.sql` and asserts every fragment starts with `CREATE`/`SELECT`
   and that `dispatches` survives. `api` suite 103 passed. Not verified: a real `up` against
   a live Postgres -- still no Docker daemon in this sandbox.
+
+- **2026-08-08:** Four bugs reported from a live hybrid deployment with screenshots: the
+  alert feed rendering as a stack of blank lines and flashing constantly, `stt-worker` and
+  `nws-poller` both showing "no heartbeat", and the spectrum panel looking wrong.
+  1. **Feed of blank lines.** Not a data problem -- 123 real API_ONLY alerts were being
+     rendered, then squashed. `.alert-feed` is a flex column with `max-height: 62vh`, and
+     `.alert-card`'s `overflow: hidden` (there for the rounded corners) zeroes a flex
+     item's *automatic minimum size*, so once the feed held more alerts than fit, every
+     card shrank to a ~5px sliver with its content clipped. Measured in a headless
+     Chromium against a stub API: 118.25px per card with `flex-shrink: 0`, 4.97px without.
+  2. **Flashing.** `Store.notify()` repainted every panel on every change, and `health`
+     delivers one SSE sample per channel per second (seven channels here), so the entire
+     alert feed was torn down and rebuilt ~10x/second -- which also dropped its scroll
+     position and stopped any capture mid-playback. Changes now declare a topic and
+     listeners get the set that changed; `AlertFeedView` additionally reuses each card
+     unless its rendered content would differ (signature includes the two clock-derived
+     strings) and patches the list in place. Measured: 0 DOM mutations under `#alerts`
+     over 10s of live health SSE, against ~1200 node rebuilds/s before.
+  3. **Paging.** There was none -- the feed built every alert it held. Now 40 at a time
+     with a "show more" button, reset when a filter changes. A scrolling log wants
+     incremental reveal, not numbered pages.
+  4. **`stt-worker`: no heartbeat.** The deployment transcribes against a remote endpoint
+     and never staged a ggml model, but `main()` blocked in `await_model` before the
+     heartbeat loop -- forever, for a file that was never coming. `STT_CHAIN` now accepts
+     `remote` with no `local`: no model required, no wait, and every tier goes remote
+     (Tier B's local-only rule exists to prefer a free local provider; there isn't one).
+     `await_model` also beats while waiting, so a genuinely-waiting worker is
+     distinguishable from a crashed one. Unrelated but adjacent: `handle_capture` failures
+     no longer kill the loop and drop every later capture.
+  5. **`nws-poller`: no heartbeat.** A healthy poller flapping. The heartbeat key's TTL is
+     30s and it beat once per poll cycle, which defaults to 60s -- so the key was expired
+     for half of every cycle. It now sleeps in 5s slices and beats in each one.
+  6. **Spectrum.** Three things: the channel axis carried NOAA/scanner numbering
+     (WX1=162.550) while the rest of the system uses design doc §3's ascending numbering,
+     so the axis read "WX2 WX4 WX5 WX3 WX6 WX7 WX1" left to right; the canvas backing
+     store stayed at its 640x260 attributes while laid out at `width: 100%`, so the image
+     was stretched; and the hardcoded -110..-20 dB window doesn't fit uncalibrated
+     channelizer magnitudes, which bunched every bin into one flat yellow wash. Fixed the
+     numbering against `channels.py`, sized the canvas to its box times the device pixel
+     ratio, and replaced the fixed window with a smoothed percentile range over the
+     retained history (still one scale for every row on screen -- the property a per-frame
+     min/max lacked -- with the actual dB numbers drawn on the axis).
+
+  Verified: `stt_worker` 49 passed, `nws_poller` 21 passed, `tsc --noEmit` and `vite build`
+  clean, and the four UI claims measured in headless Chromium against a stub `api` serving
+  123 API_ONLY alerts and a live health SSE stream. Not verified: a real `up` -- still no
+  Docker daemon in this sandbox, so the remote-only STT path and the poller's heartbeat
+  cadence are covered by unit tests with injected clocks/heartbeats rather than observed.

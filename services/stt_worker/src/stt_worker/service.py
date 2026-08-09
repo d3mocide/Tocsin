@@ -63,6 +63,14 @@ class TranscriptionWorker:
     floor... always completes"`); remote gets up to `remote_budget_seconds`
     *from the start of the race*, not a fresh clock after local finishes.
 
+    `local_enabled=False` (`STT_CHAIN=remote`) is the hybrid-only case with
+    no floor at all: no ggml model is staged, `model_path` may be `None`,
+    and every capture goes to the remote endpoint. Off-grid deployments
+    must never be configured this way -- it makes transcription depend on
+    the network, which CLAUDE.md's connectivity rule forbids for a core
+    path -- but a hybrid box transcribing against a remote endpoint has no
+    reason to carry a model it will never load.
+
     "Remote wins if it returns within budget with a better score" (design
     doc §6) simplifies here to "remote wins if it returns within budget
     with non-empty text": a real cross-provider confidence comparison
@@ -75,17 +83,19 @@ class TranscriptionWorker:
 
     def __init__(
         self,
-        model_path: str,
+        model_path: str | None,
         work_dir: Path,
         sink: TranscriptSink | None = None,
         binary: str = whispercpp.DEFAULT_BINARY,
         language: str = whispercpp.DEFAULT_LANGUAGE,
         initial_prompt: str | None = None,
         whisper_run=whispercpp.run,
+        local_enabled: bool = True,
         remote_run: Callable[[Path], Transcript] | None = None,
         remote_budget_seconds: float = DEFAULT_REMOTE_BUDGET_SECONDS,
     ):
         self._model_path = model_path
+        self._local_enabled = local_enabled
         self._work_dir = work_dir
         self._sink = sink or LoggingTranscriptSink()
         self._binary = binary
@@ -128,6 +138,15 @@ class TranscriptionWorker:
         )
 
     def _transcribe(self, trimmed_path: Path, tier: str | None) -> Transcript:
+        if not self._local_enabled:
+            # `STT_CHAIN=remote`: no local floor exists, so remote takes
+            # every tier rather than only Tier A. Tier B being local-only
+            # (design doc §6) is a rule about not spending network on the
+            # lower tier when a free local provider is right there; with
+            # no local provider it would just mean silently dropping Tier
+            # B transcripts.
+            assert self._remote_run is not None  # main() refuses to start otherwise
+            return self._remote_run(trimmed_path)
         if self._remote_run is None or tier != "A":
             return self._run_local(trimmed_path)
 
