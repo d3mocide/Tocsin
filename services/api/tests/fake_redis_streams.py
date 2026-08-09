@@ -51,7 +51,8 @@ class FakeAsyncRedisStreams:
                     result.append((stream, pending_entries))
         return result
 
-    async def xack(self, stream, group, entry_id):
+    async def xack(self, stream, group, *entry_ids):
         key = (stream, group)
         for consumer_pel in self._groups[key]["pel"].values():
-            consumer_pel.pop(entry_id, None)
+            for entry_id in entry_ids:
+                consumer_pel.pop(entry_id, None)

@@ -1060,6 +1060,29 @@ FastAPI service, and the first TypeScript in this repo.
   `/events` request. `api` suite 109 passed (up from 103), `web`'s `tsc --noEmit`/`vite
   build` clean.
 
+- **2026-08-09:** Live deployment follow-up to the `sdr-rx` CPU fix earlier this date (Phase
+  1's note this date): `api` at 38.9% CPU and `postgres` at 23.9% were unexpectedly high for
+  a lightweight polling REST API. Traced it to `sdr_rx.HealthTracker` publishing a Redis
+  stream entry on every `sample()` call -- once per NWR channel per capture chunk, ~128/sec
+  for a single seven-channel dongle -- each one round-tripping through `api`'s consumer into
+  a Postgres `INSERT` and an SSE broadcast to every connected browser, for a signal whose
+  only job is detecting a carrier flat for 30 continuous seconds (`FLAT_CARRIER_SECONDS`).
+  Fixed at the source, not the consumer: `HealthTracker.sample()` still updates flat-carrier
+  state on every call (in-process, effectively free, zero loss of detection fidelity) but
+  only forwards to the sink at most once per `report_interval_s` (new parameter, default
+  1.0s) per `(site, channel)` -- an ~18x cut in Redis/Postgres/SSE traffic for this stream.
+  Also batched `api.redis_bus.StreamConsumer`'s per-entry `XACK` into one call per batch
+  (`xreadgroup` already reads a batch in one round trip; acking one at a time threw that away
+  on the write side) -- preserves the exact at-least-once/idempotent-replay semantics the
+  original per-entry ack had via a `try/finally` that still acks everything that succeeded
+  before a later entry's handler raised. Verified: `sdr_rx` 98 passed (up from 96, new tests
+  assert reports are throttled per-channel while dead-detection timing is unaffected),
+  `api` 111 passed (up from 109, new tests assert a multi-entry batch acks in one call and
+  that a mid-batch failure still acks everything that completed before it). Not verified:
+  the actual CPU drop on the reporting Pi -- the fix targets the mechanism the profiling
+  data pointed at, not a number reproduced in this sandbox (no Postgres/Redis load-test
+  harness here).
+
 **Not started / open:**
 - No auth (design doc §9: "reverse proxy + Argon2id local backend auth") -- out of scope for
   this phase, which is about the data path, not the deploy-behind-Caddy story.
@@ -1865,3 +1888,63 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   whether 3.44x-on-this-sandbox is comfortably above or still uncomfortably close to 1.0x on the
   real hardware is an open question until measured there directly (`make bench-channelizer`,
   or better, timing the real `DevicePipeline.process()` loop against a live dongle).
+
+- **2026-08-09 (later same day):** Follow-up screenshots from the same live deployment, before
+  vs. after merging the `sdr-rx` CPU PR: `sdr-rx` now sits around 85-88% of one core (both its
+  threads combined) instead of pegged at 99.7% -- consistent with roughly the 1.17x-1.2x
+  real-time margin the earlier sandbox numbers predicted once corrected for a Pi core being
+  slower than the sandbox's, up from an estimated well-under-1.0x before that fix (matching the
+  original "pegged solid, buffering broken" report). But the user's real question was about the
+  *aggregate* jump: all four cores at 84-91% with `api` at 38.9% and `postgres` at 23.9%, on a
+  Pi that also runs an independent ADS-B feeder (`readsb`) and a P25 trunked-scanner stack
+  (`op25`/`liquidsoap`) against other SDRs, unrelated to Tocsin. First worth ruling out: the
+  screenshot showed two rows each for `sdr-rx`, `live_audio`, `same_decoder`, and
+  `segment_capture` -- not duplicate containers (a real concern, would mean a bad redeploy):
+  every pair had byte-identical VIRT/RES/SHR, the signature of two *threads* of one process
+  (sdr-rx's capture thread + its mostly-idle main loop; libzmq's background I/O thread for the
+  other three), not two separate processes.
+
+  Root-caused the actual `api`/`postgres` cost by reading `sdr_rx.health`, `api.redis_bus`, and
+  `api.ingest` together rather than profiling blind: `HealthTracker.sample()` is called once
+  per NWR channel per capture chunk in `DevicePipeline.process()` -- seven times every ~55ms,
+  ~128/sec for one dongle -- and every call unconditionally published to the `tocsin:health`
+  Redis stream. `api`'s consumer reads that stream in batches of up to 100 but then processed
+  each entry with its own individual Postgres `INSERT` *and* its own individual SSE broadcast to
+  every connected browser, sequentially, awaited one at a time. None of that per-chunk
+  granularity serves the signal's actual purpose -- `FLAT_CARRIER_SECONDS = 30.0`, detecting a
+  channel dead for 30 continuous seconds -- so fixed it at the source rather than patching the
+  consumer's batching alone: `HealthTracker` now throttles how often it forwards to the sink
+  (default once per second per channel, `report_interval_s`) while still updating its internal
+  flat-carrier timer on every call, so dead-channel detection timing is provably unaffected (new
+  test drives it through the full 30s boundary on the *unthrottled* per-chunk cadence and
+  confirms `dead` still flips at the right instant). This alone is an ~18x cut in Redis
+  XADDs/Postgres inserts/SSE broadcasts for this one stream. Also batched `api.redis_bus`'s
+  per-entry `XACK` into one call per batch, since `xreadgroup` already reads a batch in a single
+  round trip and acking it back one entry at a time threw that away -- done via a `try/finally`
+  so a handler that raises partway through a batch still acks everything that completed before
+  it, preserving the exact at-least-once semantics the original per-entry ack had (two new
+  tests: one asserting a 3-entry batch acks in a single call, one asserting a mid-batch failure
+  still acks the entries that succeeded before it).
+
+  Separately, the user pointed at `d3mocide/op25-downstream` (a GNU Radio-based P25 decoder,
+  also streaming to Icecast) asking whether it has transferable optimizations. Cloned and read
+  it rather than assuming: its DSP core is GNU Radio -- compiled C++ blocks with VOLK SIMD
+  kernels, not Python/NumPy -- which is a different, and faster, execution model than Tocsin's
+  channelizer, but adopting it would mean rewriting `sdr_rx`'s signal chain onto a different
+  framework entirely, not a portable optimization; out of scope here and flagged as a real
+  architecture decision rather than attempted piecemeal. Its Icecast path (`liquidsoap` instead
+  of `live_audio`'s `ffmpeg` subprocess) isn't a lead either -- `live_audio` measured at ~5% CPU
+  total in the same htop capture, not a hot spot, so there's no profiling evidence a swap would
+  help. The one genuinely useful find: `squelch_core.py`'s noise squelch (credited to PA3FWM/
+  DB1NV) is a materially more sophisticated design than `sdr_rx.audio_conditioning.Squelch` --
+  self-calibrating against a rise-only-tracked no-carrier reference (dB-of-quieting, no
+  per-site threshold hunting, directly answering the "how do I pick `SDR_RX_SQUELCH_THRESHOLD`"
+  question left open in the squelch PR) with a proper 4-state attack/hang/rehold machine to
+  avoid chatter at the threshold. Worth a follow-up quality pass on the squelch itself; it is
+  not a CPU fix (if anything slightly more compute than the current version) so left for a
+  separate task rather than folded into this one.
+
+  Verified: `sdr_rx` 98 passed (up from 96), `api` 111 passed (up from 109). Not verified: the
+  actual CPU numbers on the reporting Pi after this fix -- no way to reproduce Postgres/Redis
+  load at that rate in this sandbox, so this is confirmed by tracing the exact call path and
+  its frequency, not by reproducing the observed CPU drop directly.
