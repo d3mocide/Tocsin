@@ -1672,3 +1672,24 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   width, no unexpected console errors. Not verified: a real `up` against a live Postgres/
   Redis/`api.weather.gov` -- still no Docker daemon or outbound access to those specific
   hosts confirmed in this sandbox.
+
+- **2026-08-09 (follow-up):** Layout feedback against a screenshot of the merged PR running
+  live (real `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` configured -- the RF/distance numbers in the
+  screenshot were real, not stub data): RF channels' single-column row list wasted most of the
+  panel's width on seven short rows, and Nearby NWR stations, sorted correctly, still read as
+  one long scroll for 25 entries. Both reworked into card grids. RF channels (`health.ts`)
+  became `.health-grid`, auto-fit columns (usually 2, sometimes 1 on a narrow phone) since it
+  stayed in the narrower right sidebar; the sparkline's fixed 72px width became `100%` with
+  `preserveAspectRatio="none"` so it stretches to whatever the card ends up. Nearby NWR
+  stations moved to the wider left column (under Live audio) and became `StationsView`, a
+  class rather than a render function -- the only panel here besides `WaterfallView`/
+  `StreamsView` that needs to remember state across repaints, in this case which page it's on.
+  Fixed 3 columns x 2 rows (6/page) with Prev/Next, per explicit direction to cap it and page
+  through the rest rather than scroll or "show more" -- `.station-grid` falls back to
+  `auto-fit` under 560px so 3 fixed columns don't get crushed on a phone (the existing 900px
+  breakpoint only collapses the two-column *page* layout, not a panel's own internal grid).
+  Verified in headless Chromium at 1400px and 380px against a stub API seeded with all 25 real
+  station names (page 1 -> Next -> page 2, "Page 2 of 5", 6 cards, correct entries both before
+  and after the resize to mobile -- pagination state survives a viewport change since it's the
+  same view instance): zero horizontal overflow either width, no unexpected console errors.
+  `npm run build` clean. No Python changed this round.

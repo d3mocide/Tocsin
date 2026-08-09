@@ -21,7 +21,7 @@ import { AlertFeedView } from "./views/alerts";
 import { mountFilters } from "./views/filters";
 import { renderHealth } from "./views/health";
 import { WaterfallView } from "./views/spectrum";
-import { renderStations } from "./views/stations";
+import { StationsView } from "./views/stations";
 import { renderStats } from "./views/stats";
 import { renderConnection, renderDispatchSummary, renderModeChip, renderServices } from "./views/status";
 import { StreamsView } from "./views/streams";
@@ -53,6 +53,7 @@ async function main(): Promise<void> {
   const alertsView = new AlertFeedView(byId("alerts"), store);
   const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
   const streamsView = new StreamsView(byId("streams"), store);
+  const stationsView = new StationsView(byId("nwr-stations"), store);
   const refreshFilterSites = mountFilters(byId("filters"), store);
 
   // Each panel repaints only when something it actually reads changed.
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
   const render = (changed: ReadonlySet<Topic>) => {
     const touched = (...topics: Topic[]) => topics.some((topic) => changed.has(topic));
     if (touched("system")) renderModeChip(byId("mode-chip"), store);
-    if (touched("system")) renderStations(byId("nwr-stations"), store);
+    if (touched("system")) stationsView.render();
     if (touched("connection")) renderConnection(byId("connection-status"), store);
     if (touched("stats")) renderStats(byId("stats"), store);
     if (touched("services", "clock")) renderServices(byId("services"), store);
