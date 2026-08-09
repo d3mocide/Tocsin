@@ -44,7 +44,7 @@ directory that's actually there).
 | `GET /services` | Per-service liveness from the heartbeat keys, compared against the set expected *in this mode* -- a crashed service is reported `down`, not omitted. |
 | `GET /system` | `TOCSIN_MODE` and the browser-facing Icecast URL. |
 | `GET /streams` | Icecast mountpoints, merged from Icecast's `status-json.xsl` and `live_audio`'s heartbeat. |
-| `GET /reference` | `data/`'s SAME event codes (name + tier) and FIPS -> county table, served once for the UI to resolve client-side. |
+| `GET /reference` | `data/`'s SAME event codes (name + tier), FIPS -> county table, and NWR station list, served once for the UI to resolve client-side. Each station carries `distance_km` from `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` when both are set, else `null`. |
 | `GET /captures/{name}` | One finished capture WAV. Basename only, re-checked to be inside `API_CAPTURES_DIR` after resolution -- `wav_path` reaches this from a Redis payload, so trusting it as a filesystem path would make this an arbitrary-file read. |
 
 ## Status
@@ -84,7 +84,8 @@ sandbox).
 | `API_HOST` / `API_PORT` | `0.0.0.0` / `8000` | uvicorn bind address *inside the container*. Compose publishes it on the host as `TOCSIN_WEB_PORT` (default `8080`) -- see the root README's "Ports". |
 | `API_STATIC_DIR` | `/app/static` | Directory containing `web/`'s built `dist/`. Mounted at `/` if it exists; set to empty to disable the SPA mount entirely. |
 | `TOCSIN_MODE` | `offgrid` | Reported by `GET /system` and used to decide which services `GET /services` expects (`nws_poller` is hybrid-only). |
-| `TOCSIN_DATA_DIR` | *(unset)* | Directory holding `same_event_codes.yaml` and `fips.csv` for `GET /reference`. Unset or missing degrades to an empty reference rather than refusing to start -- unlike every other service, where a missing tier table would mean mis-tiering a real warning. |
+| `TOCSIN_DATA_DIR` | *(unset)* | Directory holding `same_event_codes.yaml`, `fips.csv`, and `nwr_stations_or.yaml` for `GET /reference`. Unset or missing degrades to an empty reference rather than refusing to start -- unlike every other service, where a missing tier table would mean mis-tiering a real warning. |
+| `TOCSIN_LATITUDE` / `TOCSIN_LONGITUDE` | *(unset)* | Operator's approximate location, decimal degrees. Both set adds `distance_km` to every station in `GET /reference`'s `stations` table (haversine, `reference.py`) so the UI can list nearby NWR transmitters; unset leaves `distance_km` `null` for all of them rather than a wrong or fabricated number. Two stations in `data/nwr_stations_or.yaml` (WZ2522, WZ2559) have no coordinates of their own yet and stay `null` regardless. |
 | `API_CAPTURES_DIR` | *(unset)* | `segment_capture`'s output directory. Unset makes `GET /captures/{name}` a 404. |
 | `ICECAST_HOST` / `ICECAST_PORT` | `icecast` / `8000` | Where *this process* reaches Icecast to read its status page. `ICECAST_PORT` is also what `GET /system` reports for the browser to build playback URLs from, so it must match the port Icecast is published on -- compose keeps the two sides equal on purpose. |
 | `ICECAST_PUBLIC_URL` | *(unset)* | Where the *browser* should reach Icecast. Unset means the page falls back to its own hostname on `ICECAST_PORT`, which is right for a LAN deployment; set it behind a reverse proxy. |

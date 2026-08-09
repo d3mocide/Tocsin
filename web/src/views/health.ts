@@ -38,41 +38,32 @@ export function renderHealth(container: HTMLElement, store: Store): void {
         })
       : el("p", { class: "health-summary good", text: `${samples.length} channels alive` }),
     el(
-      "table",
-      { class: "health-table" },
-      el(
-        "thead",
-        {},
-        el(
-          "tr",
-          {},
-          el("th", { text: "Site", attrs: { scope: "col" } }),
-          el("th", { text: "Channel", attrs: { scope: "col" } }),
-          el("th", { text: "RMS", attrs: { scope: "col" } }),
-          el("th", { text: "Trend", attrs: { scope: "col" } }),
-          el("th", { text: "Last sample", attrs: { scope: "col" } }),
-          el("th", { text: "Status", attrs: { scope: "col" } }),
-        ),
-      ),
-      el(
-        "tbody",
-        {},
-        ...samples.map((sample) => row(sample, healthHistory.get(healthKey(sample.site, sample.channel)) ?? [])),
-      ),
+      "ul",
+      { class: "health-list" },
+      ...samples.map((sample) => row(sample, healthHistory.get(healthKey(sample.site, sample.channel)) ?? [])),
     ),
   );
 }
 
+/** One row per `(site, channel)`, matching the Services/Stations panels'
+ * dot+name+detail layout instead of the wide table this replaced -- a
+ * 6-column table forced its own horizontal scroll in the sidebar, which
+ * only got worse once this panel moved above RF channels to sit in the
+ * same narrow column. */
 function row(sample: HealthSample, series: number[]): HTMLElement {
   return el(
-    "tr",
-    { class: sample.dead ? "row-dead" : "row-alive" },
-    el("td", { text: sample.site }),
-    el("td", { text: sample.channel }),
-    el("td", { class: "mono", text: sample.rms.toExponential(2) }),
-    el("td", {}, sparkline(series, sample.dead)),
-    el("td", { text: relativeTime(sample.sampled_at), title: absoluteTime(sample.sampled_at) }),
-    el("td", {}, badge(sample.dead ? "DEAD" : "alive", sample.dead ? "dead" : "alive")),
+    "li",
+    { class: `health-row ${sample.dead ? "row-dead" : "row-alive"}` },
+    el("span", { class: "health-dot", attrs: { "aria-hidden": "true" } }),
+    el("span", { class: "health-name", text: `${sample.site} · ${sample.channel}` }),
+    sparkline(series, sample.dead),
+    el(
+      "span",
+      { class: "health-detail" },
+      el("span", { class: "mono", text: sample.rms.toExponential(2) }),
+      el("span", { text: relativeTime(sample.sampled_at), title: absoluteTime(sample.sampled_at) }),
+      badge(sample.dead ? "DEAD" : "alive", sample.dead ? "dead" : "alive"),
+    ),
   );
 }
 

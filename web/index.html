@@ -42,6 +42,24 @@
       </div>
 
       <div class="sidebar">
+        <section class="panel" aria-labelledby="spectrum-heading">
+          <div class="panel-head">
+            <h2 id="spectrum-heading">Spectrum</h2>
+            <select id="spectrum-site-select" class="filter-select" aria-label="Spectrum site"></select>
+          </div>
+          <canvas id="spectrum-canvas" width="640" height="260"></canvas>
+        </section>
+
+        <section class="panel" aria-labelledby="rf-health-heading">
+          <div class="panel-head"><h2 id="rf-health-heading">RF channels</h2></div>
+          <div id="rf-health"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="nwr-stations-heading">
+          <div class="panel-head"><h2 id="nwr-stations-heading">Nearby NWR stations</h2></div>
+          <div id="nwr-stations"></div>
+        </section>
+
         <section class="panel" aria-labelledby="stats-heading">
           <div class="panel-head"><h2 id="stats-heading">System health</h2></div>
           <div id="stats" class="stats-grid"></div>
@@ -55,19 +73,6 @@
         <section class="panel" aria-labelledby="dispatch-heading">
           <div class="panel-head"><h2 id="dispatch-heading">Dispatch</h2></div>
           <div id="dispatch"></div>
-        </section>
-
-        <section class="panel" aria-labelledby="rf-health-heading">
-          <div class="panel-head"><h2 id="rf-health-heading">RF channels</h2></div>
-          <div id="rf-health" class="scroll-x"></div>
-        </section>
-
-        <section class="panel" aria-labelledby="spectrum-heading">
-          <div class="panel-head">
-            <h2 id="spectrum-heading">Spectrum</h2>
-            <select id="spectrum-site-select" class="filter-select" aria-label="Spectrum site"></select>
-          </div>
-          <canvas id="spectrum-canvas" width="640" height="260"></canvas>
         </section>
       </div>
     </main>

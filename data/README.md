@@ -14,3 +14,16 @@ Checked-in reference data, not code -- see `docs/design/master-prompt.md` §9 an
   counties relevant to your deployment, or replace it with the full
   Census Bureau county list, before relying on templated county names
   outside the Pacific Northwest.
+- `nwr_stations_or.yaml` -- NWR transmitter callsign -> site name, frequency,
+  status, WFO, power, and coordinates for every station covering Oregon, per
+  the §12 open item on verifying local transmitter frequencies. Name/
+  frequency/status/WFO are from <https://www.weather.gov/nwr/stations?State=OR>;
+  power/coordinates are from a third-party aggregator (see the file's header
+  comment) since no NWS page publishing them was reachable while authoring
+  this file, and two stations (WZ2522, WZ2559) have no coordinates at all --
+  treat lat/lon as approximate and `null` as "unconfirmed," not "no
+  transmitter." `api`'s `/reference` endpoint serves this file and adds a
+  `distance_km` per station when `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` are
+  set (see `services/api/README.md`). Narrows down what to expect at a given
+  antenna location; doesn't replace the empirical waterfall confirmation the
+  open item calls for.

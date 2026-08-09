@@ -73,3 +73,26 @@ def test_fetch_raises_on_http_error():
 
     with pytest.raises(RuntimeError):
         client.fetch("OR")
+
+
+def test_fetch_zones_sends_the_whole_list_as_one_repeated_param():
+    """Unlike `area`, `zone` is an array in the API's own OpenAPI spec --
+    one request covering every configured zone, not one request per zone."""
+    fake_get = FakeGet(FakeResponse(200, {"features": []}, headers={"ETag": "z1"}))
+    client = NwsAlertsClient(user_agent="tocsin (test@example.com)", get=fake_get)
+
+    result = client.fetch_zones(["ORZ006", "ORZ005"])
+
+    assert len(fake_get.calls) == 1
+    assert fake_get.calls[0]["params"] == {"zone": ["ORZ006", "ORZ005"]}
+    assert result == FetchResult(not_modified=False, etag="z1", features=())
+
+
+def test_fetch_zones_sends_if_none_match_when_etag_given():
+    fake_get = FakeGet(FakeResponse(304, headers={}))
+    client = NwsAlertsClient(user_agent="tocsin (test@example.com)", get=fake_get)
+
+    result = client.fetch_zones(["ORZ006"], etag="z1")
+
+    assert fake_get.calls[0]["headers"]["If-None-Match"] == "z1"
+    assert result == FetchResult(not_modified=True, etag="z1", features=())

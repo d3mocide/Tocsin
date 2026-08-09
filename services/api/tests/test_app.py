@@ -171,6 +171,8 @@ def _config(**overrides):
         icecast_host="icecast",
         icecast_port=8000,
         icecast_public_url=None,
+        latitude=None,
+        longitude=None,
     )
     defaults.update(overrides)
     return ApiConfig(**defaults)

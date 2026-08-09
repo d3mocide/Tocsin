@@ -177,7 +177,23 @@ export interface EventCodeEntry {
   tier: string | null;
 }
 
+/** One NWR transmitter, from `data/nwr_stations_or.yaml` via `GET
+ * /reference`. `distance_km` is `null` unless the operator has set
+ * `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` *and* this station has its own
+ * coordinates -- two of them (Carney Butte, Enterprise) don't yet. */
+export interface NwrStation {
+  name: string;
+  frequency_mhz: number;
+  status: string;
+  wfo: string;
+  power_watts: number | null;
+  lat: number | null;
+  lon: number | null;
+  distance_km: number | null;
+}
+
 export interface Reference {
   event_codes: Record<string, EventCodeEntry>;
   counties: Record<string, CountyEntry>;
+  stations: Record<string, NwrStation>;
 }
