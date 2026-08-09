@@ -28,9 +28,14 @@ class FMDiscriminator:
         self._prev = None
 
     def process(self, samples: np.ndarray) -> np.ndarray:
-        samples = np.asarray(samples, dtype=complex)
+        # Precision follows the input (see channelizer.py's "Sample
+        # precision"); float32 resolves phase to ~1e-7 rad against an FM
+        # deviation measured in tenths of a radian per sample.
+        samples = np.asarray(samples)
+        if samples.dtype.kind != "c":
+            samples = samples.astype(complex)
         if samples.size == 0:
-            return np.zeros(0)
-        joined = samples if self._prev is None else np.concatenate([[self._prev], samples])
+            return np.zeros(0, dtype=samples.real.dtype)
+        joined = samples if self._prev is None else np.concatenate([np.array([self._prev], samples.dtype), samples])
         self._prev = samples[-1]
         return np.angle(joined[1:] * np.conj(joined[:-1]))

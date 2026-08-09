@@ -44,3 +44,25 @@ def test_chunking_matches_single_call():
     chunked = np.concatenate(parts)
 
     np.testing.assert_allclose(whole, chunked, atol=1e-10)
+
+
+def test_precision_follows_the_input():
+    fs = 50_000.0
+    t = np.arange(4000) / fs
+    x = np.exp(1j * 2 * np.pi * 1500.0 * t)
+
+    assert FMDiscriminator().process(x.astype(np.complex64)).dtype == np.float32
+    assert FMDiscriminator().process(x.astype(np.complex128)).dtype == np.float64
+
+
+def test_float32_recovers_the_same_tone():
+    """float32 resolves phase to ~1e-7 rad against a per-sample FM
+    deviation measured in tenths of a radian, so narrowing must not move
+    the recovered frequency in any way that matters."""
+    fs = 50_000.0
+    t = np.arange(4000) / fs
+    x = np.exp(1j * 2 * np.pi * 1500.0 * t)
+
+    wide = FMDiscriminator().process(x)
+    narrow = FMDiscriminator().process(x.astype(np.complex64))
+    np.testing.assert_allclose(narrow, wide, atol=1e-5)

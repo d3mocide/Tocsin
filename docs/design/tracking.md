@@ -233,6 +233,32 @@ part of the stated exit criteria, which are now all met):
   noise floor, which will differ in absolute terms (though the self-calibration is exactly the
   mechanism meant to absorb that difference without retuning).
 
+- **2026-08-09 (CPU: blocked polyphase fold, float32 end to end):** Answering "should this be
+  rewritten in C / ported to GNU Radio," which turned out to be a question about how the
+  NumPy was written rather than about NumPy. `channelizer.py`'s fold no longer materializes
+  the 24x-expanded `sliding_window_view` temporary the direct formulation needs (25 MB per
+  chunk, which made the stage memory-bound rather than compute-bound); the multiply-accumulate
+  is reassociated into shifted block-slices of a `(n_blocks, decimation)` view -- see that
+  module's new "Blocked fold" section for the index algebra, and note the output is
+  bit-identical, not merely close. Separately, precision now follows the input through
+  `dc_block`, `channelizer`, `discriminator`, `audio_conditioning`, and `resample`, so
+  SoapySDR's `CF32` samples stay complex64 instead of being widened to complex128 at the
+  first stage; `np.fft` was swapped for `scipy.fft` because it silently upcasts complex64,
+  and `lfilter`/`sosfilt`/`resample_poly` coefficients are narrowed alongside their state for
+  the same reason. `Squelch.envelope()` rewritten to sum whole frames in one vectorized
+  reduction and describe its output as merged constant spans, rather than making several
+  NumPy calls per 2 ms frame to write a value almost always identical to the frame before it.
+  Combined: channelizer 3.05x -> 17.29x real-time, full pipeline 2.04x -> 6.96x (48.9% ->
+  14.4% of one core per dongle) on the sandbox benchmark. Every hazard assertion in
+  `test_channelizer.py` now runs at both precisions at the *same* tolerance -- CLAUDE.md's bar
+  for touching this file, met by strengthening the tests rather than by leaving them alone.
+  `bench_channelizer.py` now benchmarks the full `DevicePipeline` alongside the channelizer,
+  and on complex64: the channelizer alone stopped being the interesting number once it
+  stopped dominating, and a complex128 benchmark measures a precision this system no longer
+  runs at. See the Session Log entry this date for the full per-stage profile, the three
+  silent-re-promotion traps found while narrowing, and why both rewrites are recommended
+  against.
+
 ---
 
 ## Phase 2 — SAME decode end to end
@@ -2011,3 +2037,83 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   `test_pipeline.py`'s force-closed test updated to the new dB semantics). Verified: `sdr_rx`
   102 passed (up from 96). Not verified: real hardware -- calibrated against this system's own
   simulated DC-block/PFB/discriminator chain, not a live dongle's actual noise floor.
+
+- **2026-08-09 (sdr_rx CPU: blocked polyphase fold + float32 end to end)** — The user asked
+  whether `sdr_rx` should be rewritten in C or ported to GNU Radio, given how CPU-intensive
+  the container is. Profiled `DevicePipeline.process()` per stage before answering (the
+  earlier entries this date fixed three *incidental* inefficiencies -- a redesigned resample
+  filter, an mmap flush, a transcendental in the demod ramp -- without ever touching the
+  channelizer's own arithmetic). Per-stage, on the dev sandbox at the design's 1.2 MS/s /
+  65,536-sample chunk: channelizer 9.39 ms/chunk (64% of the pipeline), squelch 1.61 ms
+  (11%), DC block 1.02 ms, the two resamplers 1.46 ms, voice filter 0.49 ms, everything else
+  under 0.4 ms combined. So the answer to "rewrite in another language" turned on one
+  question: how much of that 64% was the algorithm's actual arithmetic, and how much was the
+  way it had been written in NumPy.
+
+  Almost all of it was the way it had been written. Two things, neither requiring a new
+  language:
+
+  - **The fold was memory-bound on a temporary it did not need.** `sliding_window_view` +
+    multiply + `reshape(...).sum(axis=1)` expands the input by `num_taps / decimation` = 24x
+    into a 25 MB intermediate per chunk before summing it straight back down. Reassociating
+    the multiply-accumulate (see `channelizer.py`'s new "Blocked fold" section for the index
+    algebra: `f*D + t*M + q*D + m0 == (f + t*R + q)*D + m0`) turns the whole fold into
+    `R * taps_per_bin` = 24 shifted block-slices of a `(n_blocks, decimation)` view, each
+    scaled by one row of the prototype and accumulated in place, with no expansion and each
+    step staying in cache. Same arithmetic, same summation order, **bit-identical** output --
+    asserted with `assert_array_equal` against the direct windowed form, not a tolerance,
+    since a reassociation that only agreed to within rounding would mean the order had drifted.
+  - **Nothing in the chain had any business being float64.** `capture.py` already asks
+    SoapySDR for `SOAPY_SDR_CF32`, and the source is an 8-bit ADC; every stage was then
+    widening that to complex128 on the way in (`np.asarray(x, dtype=complex)`), doubling the
+    traffic through the bandwidth-bound fold for ~96 dB of headroom over an ADC that offers
+    ~48. Precision now follows the input through `dc_block`, `channelizer`, `discriminator`,
+    `audio_conditioning`, and `resample`. Three traps found doing this, each of which would
+    have silently re-promoted the stream and produced a no-op: `np.fft` upcasts complex64 to
+    complex128 (switched to `scipy.fft`, which does not); `lfilter`/`sosfilt` take their
+    working type from the widest of signal, coefficients, and `zi`, so float64 taps alone
+    re-promote a float32 signal (coefficients and state now narrowed alongside); and
+    `resample_poly`'s window taps do the same (now cached per dtype).
+
+  Also rewrote `Squelch.envelope()`, the next item down. Its per-frame Python loop made
+  several NumPy calls per 2 ms frame -- 27 frames per chunk per channel, 7 channels -- to
+  write a gain value almost always identical to the frame before it. It now sums all whole
+  frames in one vectorized reduction, runs the state machine on scalars, and *describes* the
+  envelope as merged constant spans plus the occasional ramp (with a closed form for the
+  ramp endpoint, exact because the ramp is monotonic) rather than materializing it frame by
+  frame. Bit-identical to the direct form, verified against a transcription of the previous
+  implementation driven with chunk sizes coprime to the frame length.
+
+  Measured, same box, same benchmark, before vs after: **channelizer 3.05x -> 17.29x**
+  real-time (32.8% -> 5.8% of one core per dongle), **full pipeline 2.04x -> 6.96x** (48.9%
+  -> 14.4% of one core per dongle) -- 3.4x end to end, on top of the ~2.4x from the earlier
+  entry this date. `bench_channelizer.py` now reports both figures and runs on complex64,
+  since it was measuring a precision the system no longer runs at; the channelizer alone
+  stopped being the interesting number once it stopped dominating.
+
+  So: **recommended against both the C rewrite and the GNU Radio port**, more firmly than the
+  earlier entry this date did, and for a better reason than "the cost/benefit changed." The
+  arithmetic was never the problem -- 28.8M complex MACs/sec for the fold is nothing, and
+  NumPy already runs it in vectorized C. What cost 64% of the pipeline was a 24x memory
+  expansion and a 2x-too-wide sample type, both of which are Python-level authoring choices
+  that a rewrite would have "fixed" only incidentally, while re-deriving every hazard
+  CLAUDE.md calls out inside a framework that is much harder to unit-test at
+  `test_channelizer.py`'s granularity. The remaining profile is flat (channelizer 2.9 ms,
+  squelch 0.9 ms, resamplers 1.4 ms, DC block 0.85 ms) with no single dominant stage left,
+  which is the point at which a language change would start to be the honest answer -- but at
+  14.4% of a core per dongle there is nothing left to buy.
+
+  Verified: `sdr_rx` 124 passed (up from 102) -- the swept-tone amplitude, phase-stability,
+  bin-leakage, and chunk-invariance hazard tests are now parametrized over both precisions at
+  the *same* tolerances, not looser ones for float32 (measured: amplitude std <= 6e-8, phase
+  drift <= 2.8e-8, far-bin leakage <= 8.2e-7 against bars of 1e-6/1e-6/1e-3); plus new tests
+  for the blocked fold's bit-equality, the squelch spans' bit-equality, and dtype propagation
+  through every narrowed stage. `same_decoder` 29, `live_audio` 34, `segment_capture` 48 all
+  still pass. Additionally checked outside the suite: the complex128 path is bit-identical to
+  the pre-change implementation across ragged chunk boundaries, and the actual published PCM
+  for both ZMQ feeds, driven by a synthetic 1 kHz-tone-on-WX5 FM signal, differs by at most 1
+  LSB (0.009% of signal rms -- s16 quantization, not a signal change) with the recovered tone
+  still at 999.5/999.6 Hz. Not verified: real hardware, or the CPU numbers on the reporting
+  Pi -- a Pi core is roughly 3-4x slower than this sandbox's, which is consistent with the
+  pre-fix pipeline (48.9% here) being reported as pegged there, but that scaling is inferred,
+  not measured.

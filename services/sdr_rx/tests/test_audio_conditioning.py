@@ -1,10 +1,12 @@
 import numpy as np
+import pytest
 
 from sdr_rx.audio_conditioning import SQUELCH_REF_POWER_INIT, Squelch, VoiceBandFilter
 from sdr_rx.channelizer import PolyphaseChannelizer
 from sdr_rx.channels import nwr_bins
 from sdr_rx.dc_block import DCBlocker
 from sdr_rx.discriminator import FMDiscriminator
+from sdr_rx.resample import BIN_RATE_HZ
 
 FS = 50_000.0
 FS_IQ = 1_200_000.0
@@ -199,3 +201,101 @@ class TestSquelch:
         # sq.reference has now calibrated up to (approximately) the true
         # floor; the constant it started from must have been well below it.
         assert SQUELCH_REF_POWER_INIT < sq.reference / 4
+
+
+class TestPrecisionAndSpans:
+    """`envelope()` describes the gain envelope as merged constant spans plus
+    the occasional ramp rather than writing it frame by frame (see its
+    comments). These pin the two things that rewrite could have broken:
+    the spans have to reconstruct the same envelope the direct
+    frame-by-frame form produces, and precision has to follow the input the
+    way it does through the rest of the chain."""
+
+    @staticmethod
+    def _reference_envelope(sq, audio):
+        """The direct form: one segment at a time, no span merging, ramps
+        materialized per segment. Deliberately a transcription of the shape
+        `envelope()` used to have, so it is an independent check on the
+        span construction rather than the same code twice."""
+        from scipy.signal import sosfilt
+
+        noise, sq._zi = sosfilt(sq._sos, audio, zi=sq._zi)
+        noise2 = noise * noise
+        n = audio.size
+        env = np.empty(n, dtype=np.float64)
+        pos = 0
+        while pos < n:
+            take = min(n - pos, sq.frame_len - sq._acc_n)
+            seg = slice(pos, pos + take)
+            sq._acc_sum += float(np.sum(noise2[seg]))
+            sq._acc_n += take
+            level0, target = sq._envelope_level, sq._gate_target
+            if level0 == target:
+                env[seg] = level0
+            else:
+                step = sq.ramp_step if target > level0 else -sq.ramp_step
+                ramp = level0 + step * np.arange(1, take + 1, dtype=np.float64)
+                np.clip(ramp, min(level0, target), max(level0, target), out=ramp)
+                env[seg] = ramp
+                sq._envelope_level = float(ramp[-1])
+            if sq._acc_n >= sq.frame_len:
+                p = sq._acc_sum / sq._acc_n
+                if sq._noise_power_seeded:
+                    sq.noise_power += (p - sq.noise_power) * sq.power_alpha
+                else:
+                    sq.noise_power, sq._noise_power_seeded = p, True
+                sq._acc_sum, sq._acc_n = 0.0, 0
+                sq._frame_decision()
+            pos += take
+        return env
+
+    @staticmethod
+    def _gated_signal(rng):
+        """Alternating broadband noise and a quiet in-band tone, so the run
+        crosses closed/opening/open/hang in both directions and every ramp
+        gets exercised -- a steady signal would never leave a constant span
+        and would prove nothing about the merging."""
+        parts = []
+        for i in range(6):
+            t = np.arange(25_000) / BIN_RATE_HZ
+            parts.append(0.3 * np.sin(2 * np.pi * 1000.0 * t) if i % 2 else rng.standard_normal(25_000))
+        return np.concatenate(parts)
+
+    def test_span_construction_matches_the_direct_frame_by_frame_form(self):
+        signal = self._gated_signal(np.random.default_rng(3))
+        # Chunk sizes that share no factor with frame_len (100), so frames
+        # straddle chunk boundaries in every alignment.
+        chunks = [777, 2731, 13, 4096, 2731]
+
+        fast, reference = Squelch(), Squelch()
+        got, want, pos, i = [], [], 0, 0
+        while pos < signal.size:
+            block = signal[pos : pos + chunks[i % len(chunks)]]
+            got.append(fast.envelope(block))
+            want.append(self._reference_envelope(reference, block))
+            pos += block.size
+            i += 1
+
+        np.testing.assert_array_equal(np.concatenate(got), np.concatenate(want))
+        assert fast.state == reference.state
+
+    def test_gate_actually_opens_and_closes_in_that_signal(self):
+        """Guards the test above from silently becoming vacuous: if the
+        signal stopped driving transitions, comparing two all-ones
+        envelopes would still pass."""
+        sq = Squelch()
+        env = sq.envelope(self._gated_signal(np.random.default_rng(3)))
+        assert (env > 0.99).any() and (env < 0.01).any()
+        assert 0.0 < np.mean((env > 0.0) & (env < 1.0)) < 0.05  # brief ramps, not a slow drift
+
+    @pytest.mark.parametrize("dtype", [np.float32, np.float64])
+    def test_precision_follows_the_input(self, dtype):
+        audio = np.random.default_rng(0).standard_normal(5_000).astype(dtype)
+        assert Squelch().envelope(audio).dtype == dtype
+        assert VoiceBandFilter().process(audio).dtype == dtype
+
+    def test_float32_gate_decisions_match_float64(self):
+        signal = self._gated_signal(np.random.default_rng(3))
+        wide = Squelch().envelope(signal)
+        narrow = Squelch().envelope(signal.astype(np.float32))
+        np.testing.assert_allclose(narrow, wide, atol=1e-4)
