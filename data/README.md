@@ -14,3 +14,9 @@ Checked-in reference data, not code -- see `docs/design/master-prompt.md` §9 an
   counties relevant to your deployment, or replace it with the full
   Census Bureau county list, before relying on templated county names
   outside the Pacific Northwest.
+- `nwr_stations_or.yaml` -- NWR transmitter callsign -> site name, frequency,
+  power, and operating WFO for every station covering Oregon, per the §12
+  open item on verifying local transmitter frequencies. Sourced from
+  <https://www.weather.gov/nwr/stations?State=OR>; narrows down what to
+  expect at a given antenna location, but doesn't replace the empirical
+  waterfall confirmation the open item calls for.

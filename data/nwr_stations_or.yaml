@@ -1,0 +1,147 @@
+# NOAA Weather Radio (NWR) transmitter stations covering Oregon, per
+# docs/design/master-prompt.md §12 open item ("verify local transmitter
+# frequencies against the live waterfall before hardcoding"). Checked in as
+# data, not hardcoded, for the same reason as same_event_codes.yaml -- NWS
+# adds/relocates transmitters occasionally; confirm against the current list
+# before an operational deployment.
+#
+# Source: https://www.weather.gov/nwr/stations?State=OR (fetched 2026-08-09).
+#
+# Fields:
+#   name           -- transmitter site name
+#   frequency_mhz  -- carrier frequency in MHz (one of the seven NWR channels;
+#                      see services/sdr_rx/src/sdr_rx/channels.py)
+#   power          -- broadcast power rating as published (NORMAL/HIGH/LOW)
+#   wfo            -- NWS Weather Forecast Office that operates the transmitter
+#                      (not necessarily in Oregon -- e.g. Burns Butte is run out
+#                      of Boise ID, Brookings out of Eureka CA)
+#
+# This does not replace the empirical waterfall confirmation the open item
+# calls for; it narrows down which callsign/frequency to expect at a given
+# antenna location before you go looking.
+
+KEC42:
+  name: Eugene
+  frequency_mhz: 162.400
+  power: NORMAL
+  wfo: Portland OR
+KHB30:
+  name: Burns Butte
+  frequency_mhz: 162.475
+  power: NORMAL
+  wfo: Boise ID
+KIG98:
+  name: Portland
+  frequency_mhz: 162.550
+  power: NORMAL
+  wfo: Portland OR
+KIH32:
+  name: Coos Bay
+  frequency_mhz: 162.400
+  power: NORMAL
+  wfo: Medford OR
+KIH33:
+  name: Newport
+  frequency_mhz: 162.550
+  power: NORMAL
+  wfo: Portland OR
+KIH37:
+  name: Brookings
+  frequency_mhz: 162.550
+  power: NORMAL
+  wfo: Eureka CA
+WNG559:
+  name: Fossil
+  frequency_mhz: 162.550
+  power: NORMAL
+  wfo: Pendleton OR
+WNG560:
+  name: John Day
+  frequency_mhz: 162.500
+  power: NORMAL
+  wfo: Pendleton OR
+WNG596:
+  name: Cape Blanco
+  frequency_mhz: 162.425
+  power: NORMAL
+  wfo: Medford OR
+WNG674:
+  name: Florence
+  frequency_mhz: 162.500
+  power: NORMAL
+  wfo: Portland OR
+WNG697:
+  name: Mt Hebo
+  frequency_mhz: 162.525
+  power: NORMAL
+  wfo: Portland OR
+WWF80:
+  name: Bend/Redmond
+  frequency_mhz: 162.500
+  power: NORMAL
+  wfo: Pendleton OR
+WWF94:
+  name: Neahkahnie
+  frequency_mhz: 162.425
+  power: NORMAL
+  wfo: Portland OR
+WWF95:
+  name: Tillamook
+  frequency_mhz: 162.475
+  power: NORMAL
+  wfo: Portland OR
+WWF97:
+  name: Mt. Ashland
+  frequency_mhz: 162.475
+  power: NORMAL
+  wfo: Medford OR
+WWH28:
+  name: Heppner
+  frequency_mhz: 162.425
+  power: NORMAL
+  wfo: Pendleton OR
+WXL85:
+  name: Medford
+  frequency_mhz: 162.400
+  power: NORMAL
+  wfo: Medford OR
+WXL95:
+  name: Spout Springs
+  frequency_mhz: 162.400
+  power: NORMAL
+  wfo: Pendleton OR
+WXL96:
+  name: Salem
+  frequency_mhz: 162.475
+  power: NORMAL
+  wfo: Portland OR
+WXL97:
+  name: Klamath Falls
+  frequency_mhz: 162.550
+  power: NORMAL
+  wfo: Medford OR
+WXL98:
+  name: Roseburg
+  frequency_mhz: 162.550
+  power: NORMAL
+  wfo: Medford OR
+WXM34:
+  name: The Dalles
+  frequency_mhz: 162.400
+  power: NORMAL
+  wfo: Pendleton OR
+WZ2509:
+  name: Reedsport
+  frequency_mhz: 162.525
+  power: NORMAL
+  wfo: Medford OR
+WZ2522:
+  name: Carney Butte
+  frequency_mhz: 162.475
+  power: NORMAL
+  wfo: Pendleton OR
+WZ2559:
+  name: Enterprise
+  frequency_mhz: 162.425
+  power: NORMAL
+  wfo: Pendleton OR

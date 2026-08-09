@@ -45,6 +45,15 @@ Repo layout, `compose.yaml` (offgrid/hybrid profiles, validated with
 `data/*.yaml`/`data/fips.csv` (fips.csv seeded for the Portland WFO area only — see
 `data/README.md`), `CLAUDE.md`/`AGENTS.md`, this roadmap/tracking pair.
 
+**2026-08-09:** Added `data/nwr_stations_or.yaml`, the full NWR station listing for
+Oregon from weather.gov (callsign, site name, frequency, power, operating WFO), toward
+the §12 open item on verifying local transmitter frequencies. Confirms KIG98/Portland on
+162.550 as the master prompt's §12 open item already expected. The item's other guess,
+KEC91 (Naselle Ridge) on 162.400, is a Washington-side site and outside this
+Oregon-scoped list, so it's still unconfirmed by this data — Eugene's KEC42, also on
+162.400, is the only Portland-WFO 162.400 station this listing covers. Reference data
+only; doesn't replace the empirical waterfall confirmation the open item calls for.
+
 ---
 
 ## Phase 1 — Channelizer
