@@ -284,6 +284,9 @@ services:
       MESHTASTIC_TRANSPORT: ${MESHTASTIC_TRANSPORT:-serial}
       MESHTASTIC_TCP_HOST: ${MESHTASTIC_TCP_HOST:-}
       MESHTASTIC_TCP_PORT: ${MESHTASTIC_TCP_PORT:-4403}
+      # Unset -> node's Primary channel (index 0), both here and on the
+      # MQTT fallback leg below.
+      MESHTASTIC_CHANNEL_INDEX: ${MESHTASTIC_CHANNEL_INDEX:-}
       # MQTT fallback (design doc §7): only ever attempted under
       # TOCSIN_MODE=hybrid (see DualPathSender), and only if a gateway
       # node ID is actually configured -- both empty by default.
