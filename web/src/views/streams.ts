@@ -1,4 +1,4 @@
-import { badge, el, replaceChildren } from "../dom";
+import { badge, el, reconcile, replaceChildren } from "../dom";
 import type { Store } from "../store";
 import type { StreamRow } from "../types";
 
@@ -14,6 +14,16 @@ import type { StreamRow } from "../types";
  * benefit. `icecast:8000` only resolves inside the compose network, so
  * the browser-facing base URL comes from `/system` when configured and
  * otherwise falls back to this page's own hostname on the Icecast port.
+ *
+ * Why this is a view object rather than a render function: the panel
+ * repaints on every `/streams` poll (15s, and the listener count changes
+ * on that tick precisely *because* someone started listening), and a
+ * repaint that rebuilt the list detached the playing `<audio>` element --
+ * which the HTML spec requires the browser to pause. Listening therefore
+ * ended a few seconds after it began, every time. Each mount's `<li>` and
+ * its player are created once and kept; a repaint patches the header
+ * around them and never touches `src`, since assigning `src` reloads the
+ * media element even when the value is unchanged.
  *
  * One caveat is inherent to the format, not this code: `live_audio`
  * encodes Ogg/Vorbis (see `build_ffmpeg_command`), which Safari and iOS
@@ -37,83 +47,123 @@ function playbackUrl(row: StreamRow, publicBase: string | null, icecastPort: num
   return `${window.location.protocol}//${window.location.hostname}:${port}${row.mount}`;
 }
 
-export function renderStreams(container: HTMLElement, store: Store): void {
-  const { streams, system, errors } = store.state;
-  const error = errors.get("streams");
-  if (error) {
-    replaceChildren(container, el("p", { class: "panel-error", text: `Streams unavailable — ${error}` }));
-    return;
-  }
-  if (!streams) {
-    replaceChildren(container, el("p", { class: "empty", text: "Loading streams…" }));
-    return;
-  }
-
-  const oggPlayable = canPlayOgg();
-  const nodes: HTMLElement[] = [];
-
-  if (!streams.icecast_reachable) {
-    nodes.push(
-      el("p", {
-        class: "panel-error",
-        text: "Icecast is not reachable from the API — streams below are what live-audio believes it is sending.",
-      }),
-    );
-  }
-
-  if (streams.streams.length === 0) {
-    nodes.push(
-      el("p", {
-        class: "empty",
-        text: streams.icecast_reachable
-          ? "No streams running. live-audio creates a mount the first time audio arrives on a channel."
-          : "No streams known.",
-      }),
-    );
-    replaceChildren(container, ...nodes);
-    return;
-  }
-
-  if (!oggPlayable) nodes.push(el("p", { class: "note", text: OGG_UNSUPPORTED_NOTE }));
-
-  nodes.push(
-    el(
-      "ul",
-      { class: "stream-list" },
-      ...streams.streams.map((row) =>
-        streamRow(row, playbackUrl(row, system?.icecast_public_url ?? null, system?.icecast_port ?? null), oggPlayable),
-      ),
-    ),
-  );
-
-  replaceChildren(container, ...nodes);
+/** The long-lived nodes of one mount's row. */
+interface Row {
+  node: HTMLElement;
+  header: HTMLElement;
+  audio: HTMLAudioElement | null;
+  link: HTMLAnchorElement;
+  url: string;
 }
 
-function streamRow(row: StreamRow, url: string, oggPlayable: boolean): HTMLElement {
-  const label = row.site && row.channel ? `${row.site} · ${row.channel}` : row.mount;
+export class StreamsView {
+  private readonly container: HTMLElement;
+  private readonly store: Store;
+  private readonly rows = new Map<string, Row>();
+  private readonly list = el("ul", { class: "stream-list" });
+  private readonly oggPlayable = canPlayOgg();
 
-  return el(
-    "li",
-    { class: row.on_air ? "stream on-air" : "stream off-air" },
-    el(
-      "div",
-      { class: "stream-header" },
-      el("span", { class: "stream-name", text: label }),
-      row.on_air ? badge("on air", "alive") : badge("off air", "dead"),
-      // `null` and `false` mean different things here: live_audio doesn't
-      // know about this mount at all, versus it knows the feeder died.
-      row.feeder_alive === false ? badge("feeder dead", "dead") : null,
-      typeof row.listeners === "number"
-        ? el("span", { class: "stream-listeners", text: `${row.listeners} listening` })
-        : null,
-    ),
-    oggPlayable
-      ? el("audio", { class: "stream-audio", attrs: { controls: "", preload: "none", src: url } })
+  constructor(container: HTMLElement, store: Store) {
+    this.container = container;
+    this.store = store;
+  }
+
+  render(): void {
+    const { streams, system, errors } = this.store.state;
+    const error = errors.get("streams");
+    const nodes: HTMLElement[] = [];
+
+    if (error) {
+      nodes.push(el("p", { class: "panel-error", text: `Streams unavailable — ${error}` }));
+    }
+
+    if (!streams) {
+      this.rows.clear();
+      if (!error) nodes.push(el("p", { class: "empty", text: "Loading streams…" }));
+      replaceChildren(this.container, ...nodes);
+      return;
+    }
+
+    // A failed poll says the API didn't answer, not that the mounts went
+    // away: the banner goes above the last known list rather than
+    // replacing it, so one bad request doesn't cut off a listener.
+    if (!streams.icecast_reachable) {
+      nodes.push(
+        el("p", {
+          class: "panel-error",
+          text: "Icecast is not reachable from the API — streams below are what live-audio believes it is sending.",
+        }),
+      );
+    }
+
+    if (streams.streams.length === 0) {
+      this.rows.clear();
+      nodes.push(
+        el("p", {
+          class: "empty",
+          text: streams.icecast_reachable
+            ? "No streams running. live-audio creates a mount the first time audio arrives on a channel."
+            : "No streams known.",
+        }),
+      );
+      replaceChildren(this.container, ...nodes);
+      return;
+    }
+
+    if (!this.oggPlayable) nodes.push(el("p", { class: "note", text: OGG_UNSUPPORTED_NOTE }));
+
+    const publicBase = system?.icecast_public_url ?? null;
+    const icecastPort = system?.icecast_port ?? null;
+    const visible = streams.streams.map((row) => this.rowFor(row, playbackUrl(row, publicBase, icecastPort)));
+    for (const mount of [...this.rows.keys()]) {
+      if (!streams.streams.some((row) => row.mount === mount)) this.rows.delete(mount);
+    }
+    reconcile(this.list, visible);
+
+    nodes.push(this.list);
+    reconcile(this.container, nodes);
+  }
+
+  private rowFor(row: StreamRow, url: string): HTMLElement {
+    let entry = this.rows.get(row.mount);
+    if (!entry) {
+      entry = createRow(row, url, this.oggPlayable);
+      this.rows.set(row.mount, entry);
+    }
+
+    entry.node.className = row.on_air ? "stream on-air" : "stream off-air";
+    replaceChildren(entry.header, ...headerParts(row));
+    if (url !== entry.url) {
+      entry.url = url;
+      entry.link.href = url;
+      // Only on an actual change: assigning `src` reloads the element,
+      // which would stop playback on every repaint again.
+      if (entry.audio) entry.audio.src = url;
+    }
+    return entry.node;
+  }
+}
+
+function createRow(row: StreamRow, url: string, oggPlayable: boolean): Row {
+  const header = el("div", { class: "stream-header" });
+  const audio = oggPlayable
+    ? el("audio", { class: "stream-audio", attrs: { controls: "", preload: "none", src: url } })
+    : null;
+  const link = el("a", { class: "stream-link", text: row.mount, attrs: { href: url, rel: "noreferrer" } });
+  const node = el("li", {}, header, audio, link);
+  return { node, header, audio, link, url };
+}
+
+function headerParts(row: StreamRow): (HTMLElement | null)[] {
+  const label = row.site && row.channel ? `${row.site} · ${row.channel}` : row.mount;
+  return [
+    el("span", { class: "stream-name", text: label }),
+    row.on_air ? badge("on air", "alive") : badge("off air", "dead"),
+    // `null` and `false` mean different things here: live_audio doesn't
+    // know about this mount at all, versus it knows the feeder died.
+    row.feeder_alive === false ? badge("feeder dead", "dead") : null,
+    typeof row.listeners === "number"
+      ? el("span", { class: "stream-listeners", text: `${row.listeners} listening` })
       : null,
-    el("a", {
-      class: "stream-link",
-      text: row.mount,
-      attrs: { href: url, rel: "noreferrer" },
-    }),
-  );
+  ];
 }

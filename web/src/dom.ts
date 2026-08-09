@@ -4,8 +4,9 @@
  * spectrum site `<select>` built its options by string interpolation,
  * which was the one injection point in this app.
  *
- * Not a framework and not a step toward one: four functions covering
- * element/text/attribute, which is the whole surface the views need. */
+ * Not a framework and not a step toward one: element/text/attribute
+ * construction plus in-place child patching, which is the whole surface
+ * the views need. */
 
 type Child = Node | string | null | undefined | false;
 
@@ -39,6 +40,26 @@ export function replaceChildren(container: HTMLElement, ...children: Child[]): v
   for (const child of children) {
     if (child === null || child === undefined || child === false) continue;
     container.append(typeof child === "string" ? document.createTextNode(child) : child);
+  }
+}
+
+/** Patches `container`'s children to match `desired` in place, moving and
+ * removing nodes rather than rebuilding them. Nodes carried over from the
+ * previous render keep their identity -- which is what lets a panel repaint
+ * without interrupting a playing `<audio>` element inside it. */
+export function reconcile(container: HTMLElement, desired: HTMLElement[]): void {
+  let cursor = container.firstChild;
+  for (const node of desired) {
+    if (cursor === node) {
+      cursor = cursor.nextSibling;
+      continue;
+    }
+    container.insertBefore(node, cursor);
+  }
+  while (cursor) {
+    const next = cursor.nextSibling;
+    container.removeChild(cursor);
+    cursor = next;
   }
 }
 

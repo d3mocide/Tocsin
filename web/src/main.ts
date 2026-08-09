@@ -23,7 +23,7 @@ import { renderHealth } from "./views/health";
 import { WaterfallView } from "./views/spectrum";
 import { renderStats } from "./views/stats";
 import { renderConnection, renderDispatchSummary, renderModeChip, renderServices } from "./views/status";
-import { renderStreams } from "./views/streams";
+import { StreamsView } from "./views/streams";
 
 // What still polls, and why. Alerts, health, transcripts, and dispatches
 // arrive over SSE now and are not polled at all. These three have no push
@@ -51,6 +51,7 @@ function poll(fn: () => void, intervalMs: number): void {
 async function main(): Promise<void> {
   const alertsView = new AlertFeedView(byId("alerts"), store);
   const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
+  const streamsView = new StreamsView(byId("streams"), store);
   const refreshFilterSites = mountFilters(byId("filters"), store);
 
   // Each panel repaints only when something it actually reads changed.
@@ -64,7 +65,7 @@ async function main(): Promise<void> {
     if (touched("services", "clock")) renderServices(byId("services"), store);
     if (touched("stats")) renderDispatchSummary(byId("dispatch"), store);
     if (touched("health", "clock")) renderHealth(byId("rf-health"), store);
-    if (touched("streams")) renderStreams(byId("streams"), store);
+    if (touched("streams", "system")) streamsView.render();
     if (touched("activity", "clock")) renderActivity(byId("activity"), store);
     if (touched("alerts", "filters", "system", "clock")) alertsView.render();
     if (touched("alerts")) refreshFilterSites();
