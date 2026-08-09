@@ -2152,3 +2152,23 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   `test_main.py` 3 passed for the compose/env fix. Not verified: real hardware -- ffmpeg and a
   live Icecast server aren't available in this sandbox, consistent with this module's existing
   "Status" note in `services/live_audio/README.md`.
+
+  Follow-up, same session: asked whether `live_audio` gating unwanted channels was worth
+  extending into `sdr_rx` itself, since `DevicePipeline.process()` still ran voice-filter,
+  squelch, resampling, and s16 encoding for all seven channels every chunk regardless of
+  `LIVE_AUDIO_CHANNELS` -- `live_audio`'s gate just discarded the result. Revisits the "not
+  filtered... inside sdr-rx" call two paragraphs up: safe to extend once confirmed
+  `TOPIC_STT` (`bus.py`) has exactly one consumer in this codebase (`live_audio`'s
+  subscriber, `TOPIC_PREFIX = "stt."`) -- `stt_worker`'s real transcription pipeline
+  subscribes to `segment_capture`'s `capture.*` topic instead, itself fed from
+  `same.<site>.<channel>` (raw discriminator `audio`, read before the squelch/voice-filter
+  gate, same as the ring buffer), so gating `TOPIC_STT` cannot touch alert-relevant
+  transcription. Reused `LIVE_AUDIO_CHANNELS` rather than an `SDR_RX_*`-named var -- both
+  processes run in the one `sdr-rx` container and compose.yaml's `environment:` block is
+  shared between them, so one variable is simpler for an operator than two that always need
+  to move together. `DevicePipeline.__init__` gained `stt_channels: frozenset[str] | None`;
+  `process()` now publishes `TOPIC_SAME` (and writes the ring buffer, samples health)
+  unconditionally per channel as before, then skips voice-filter/squelch/resample/encode/
+  `TOPIC_STT`-publish entirely for a channel outside the set. `sdr_rx` 126 passed (up from
+  124) -- two new cases cover the STT topic being absent for a gated-out channel while SAME
+  and the ring buffer still see it, and `None` still running STT for every channel unchanged.

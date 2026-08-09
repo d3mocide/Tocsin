@@ -77,6 +77,17 @@ services:
       # against a runtime-tracked no-carrier reference, so unlike gain the
       # default should hold across sites -- see .env.example.
       SDR_RX_SQUELCH_OPEN_DB: ${SDR_RX_SQUELCH_OPEN_DB:-8.0}
+      # Empty by default -- every channel gets both SDR-side processing
+      # (voice filter/squelch/resample/encode) and an Icecast stream. Read
+      # by sdr-rx *and* live_audio below (they share this one container),
+      # not an SDR_RX_*-prefixed name for that reason. Most sites only have
+      # usable signal on one or two of the seven NWR channels; the rest
+      # otherwise did that work and ran a permanent ffmpeg/vorbis encode
+      # for no listener. Narrow it to just what's useful at this site, e.g.
+      # LIVE_AUDIO_CHANNELS=WX5,WX7 -- see .env.example. SAME decode and
+      # the alert ring buffer are unaffected either way; this only gates
+      # live-audio-bound work.
+      LIVE_AUDIO_CHANNELS: ${LIVE_AUDIO_CHANNELS:-}
       SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
       SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
       # Publishes RF health (tocsin:health) and per-site spectrum snapshots
@@ -92,14 +103,6 @@ services:
       # fusion sees them") instead of only logging to stdout.
       SAME_DECODER_REDIS_URL: redis://redis:6379/0
       LIVE_AUDIO_ZMQ_CONNECT: tcp://localhost:5555
-      # Empty by default -- streams every channel sdr-rx publishes. Most
-      # sites only have usable signal on one or two of the seven NWR
-      # channels; the rest otherwise run a permanent ffmpeg/vorbis encode
-      # and Icecast connection for no listener. Narrow it to just what's
-      # actually useful at this site, e.g. LIVE_AUDIO_CHANNELS=WX5,WX7 --
-      # see .env.example. SAME decode and the alert ring buffer are
-      # unaffected either way; this only gates live_audio's own streams.
-      LIVE_AUDIO_CHANNELS: ${LIVE_AUDIO_CHANNELS:-}
       ICECAST_HOST: icecast
       ICECAST_PORT: ${ICECAST_PORT:-8000}
       ICECAST_SOURCE_USER: source

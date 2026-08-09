@@ -93,6 +93,44 @@ def test_squelch_gates_only_the_stt_topic_leaving_same_untouched(tmp_path):
     assert np.all(stt_wx5 == 0)
 
 
+def test_stt_channels_skips_the_stt_topic_for_channels_outside_it(tmp_path):
+    publisher = FakePublisher()
+    ring_buffers = _ring_buffers(tmp_path)
+    pipeline = DevicePipeline("site-a", publisher, ring_buffers, stt_channels=frozenset({"WX5"}))
+
+    n_samples = 200_000
+    t = np.arange(n_samples) / FS
+    tone = np.exp(1j * 2 * np.pi * 12_500.0 * t)  # WX5 (k=0) bin center
+    pipeline.process(tone)
+
+    topics_by_channel = {}
+    for topic, _, channel, _, _ in publisher.calls:
+        topics_by_channel.setdefault(channel, set()).add(topic)
+
+    # Every channel still gets SAME decode + ring buffer + health -- only
+    # the STT-topic (live_audio) work is gated.
+    assert topics_by_channel["WX5"] == {"same", "stt"}
+    assert topics_by_channel["WX1"] == {"same"}
+    wx1 = ring_buffers["WX1"].read_last(10_000)
+    assert wx1.size > 0
+
+
+def test_stt_channels_none_runs_stt_for_every_channel(tmp_path):
+    publisher = FakePublisher()
+    ring_buffers = _ring_buffers(tmp_path)
+    pipeline = DevicePipeline("site-a", publisher, ring_buffers, stt_channels=None)
+
+    n_samples = 200_000
+    t = np.arange(n_samples) / FS
+    tone = np.exp(1j * 2 * np.pi * 12_500.0 * t)  # WX5 (k=0) bin center
+    pipeline.process(tone)
+
+    topics_published = {call[0] for call in publisher.calls}
+    assert topics_published == {"same", "stt"}
+    channels_with_stt = {channel for topic, _, channel, _, _ in publisher.calls if topic == "stt"}
+    assert channels_with_stt == {b.channel for b in nwr_bins()}
+
+
 def test_missing_ring_buffer_for_an_nwr_channel_raises(tmp_path):
     publisher = FakePublisher()
     ring_buffers = _ring_buffers(tmp_path)

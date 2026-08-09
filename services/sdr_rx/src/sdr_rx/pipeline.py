@@ -57,6 +57,7 @@ class DevicePipeline:
         channelizer: PolyphaseChannelizer | None = None,
         dc_blocker: DCBlocker | None = None,
         squelch_open_db: float = SQUELCH_OPEN_DB,
+        stt_channels: frozenset[str] | None = None,
     ):
         self.site = site
         self._publisher = publisher
@@ -64,6 +65,13 @@ class DevicePipeline:
         self._channelizer = channelizer or PolyphaseChannelizer()
         self._health = health or HealthTracker()
         self._spectrum = spectrum or SpectrumTracker(site)
+        # `None` runs voice-filter/squelch/TOPIC_STT for every channel, same
+        # as before this existed. A given value skips that work entirely for
+        # a channel not in it -- safe to do because TOPIC_STT has exactly
+        # one consumer (`live_audio`, see process()'s comment below); SAME
+        # decode and the alert ring buffer read `audio` above this gate,
+        # never `live_audio`, so they're unaffected regardless of this set.
+        self._stt_channels = stt_channels
         self._bins = nwr_bins()
         missing = [b.channel for b in self._bins if b.channel not in ring_buffers]
         if missing:
@@ -87,6 +95,8 @@ class DevicePipeline:
             state.ring_buffer.write(audio)
             self._health.sample(self.site, b.channel, audio)
             self._publisher.publish(TOPIC_SAME, self.site, b.channel, 22050, to_s16le(to_multimon_rate(audio)))
+            if self._stt_channels is not None and b.channel not in self._stt_channels:
+                continue
             # Squelch + voice-band filter apply only to this feed (live_audio's
             # Icecast stream) -- SAME decode above and the ring buffer
             # segment_capture reads alert audio from both stay on raw `audio`,
