@@ -72,6 +72,11 @@ services:
       # transmitter all shift what's correct for a given site; see the
       # root README's "Tweak from there" bring-up step.
       SDR_RX_GAIN_DB: ${SDR_RX_GAIN_DB:-30}
+      # Noise-quieting threshold in dB for the live-audio feed's squelch
+      # only (never SAME decode or the alert ring buffer). Self-calibrating
+      # against a runtime-tracked no-carrier reference, so unlike gain the
+      # default should hold across sites -- see .env.example.
+      SDR_RX_SQUELCH_OPEN_DB: ${SDR_RX_SQUELCH_OPEN_DB:-8.0}
       SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
       SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
       # Publishes RF health (tocsin:health) and per-site spectrum snapshots
