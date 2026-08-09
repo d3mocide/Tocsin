@@ -26,6 +26,26 @@ VOICE_BAND_HIGH_HZ = 3_000.0
 VOICE_BAND_ORDER = 4
 
 
+def _as_float(audio: np.ndarray) -> np.ndarray:
+    """Float view of `audio`, preserving float32 rather than widening it.
+
+    Both filters here sit downstream of the channelizer, whose precision
+    follows the input (see channelizer.py's "Sample precision") -- widening
+    to float64 on the way in would undo that for the rest of the chain.
+    """
+    audio = np.asarray(audio)
+    return audio if audio.dtype.kind == "f" else audio.astype(np.float64)
+
+
+def _narrow(sos: np.ndarray, zi: np.ndarray, dtype: np.dtype) -> tuple[np.ndarray, np.ndarray]:
+    """`sosfilt` takes its working type from the widest of signal, section
+    coefficients, and `zi`, so float64 coefficients alone would promote a
+    float32 signal straight back."""
+    if sos.dtype == dtype:
+        return sos, zi
+    return sos.astype(dtype), zi.astype(dtype)
+
+
 class VoiceBandFilter:
     """Streaming Butterworth bandpass limiting discriminator output to NWR's
     voice bandwidth (~300 Hz-3 kHz). Most of what listeners hear as "static"
@@ -46,10 +66,11 @@ class VoiceBandFilter:
         self._zi = np.zeros((self._sos.shape[0], 2))
 
     def process(self, audio: np.ndarray) -> np.ndarray:
-        audio = np.asarray(audio, dtype=np.float64)
+        audio = _as_float(audio)
         if audio.size == 0:
             return audio
-        filtered, self._zi = sosfilt(self._sos, audio, zi=self._zi)
+        sos, zi = _narrow(self._sos, self._zi, audio.dtype)
+        filtered, self._zi = sosfilt(sos, audio, zi=zi)
         return filtered
 
 
@@ -234,34 +255,72 @@ class Squelch:
             self._state_frames = 0
             self._gate_target = 1.0 if self.is_open() else 0.0
 
+    def _segment(self, noise2: np.ndarray) -> tuple[list[int], list[float]]:
+        """Split `noise2` on the squelch's fixed frame grid, returning each
+        segment's length and its summed noise power.
+
+        The grid is the squelch's own (`frame_len`, carried across calls via
+        `_acc_n`) and has nothing to do with the caller's chunk size, so a
+        chunk generally starts mid-frame, covers some whole frames, and ends
+        mid-frame. Every whole frame in the middle is summed in one
+        vectorized reduction: the state machine below has to step frame by
+        frame in Python, but there is no reason for it to make a separate
+        NumPy call per frame to find out what it is stepping over.
+        """
+        n = noise2.size
+        head = min(n, self.frame_len - self._acc_n)
+        n_whole = (n - head) // self.frame_len
+        body_end = head + n_whole * self.frame_len
+
+        takes = [head]
+        sums = [float(noise2[:head].sum())]
+        if n_whole:
+            takes.extend([self.frame_len] * n_whole)
+            sums.extend(noise2[head:body_end].reshape(n_whole, self.frame_len).sum(axis=1).tolist())
+        if body_end < n:
+            takes.append(n - body_end)
+            sums.append(float(noise2[body_end:].sum()))
+        return takes, sums
+
     def envelope(self, audio: np.ndarray) -> np.ndarray:
-        audio = np.asarray(audio, dtype=np.float64)
+        audio = _as_float(audio)
         n = audio.size
         if n == 0:
             return audio
 
-        noise, self._zi = sosfilt(self._sos, audio, zi=self._zi)
+        sos, zi = _narrow(self._sos, self._zi, audio.dtype)
+        noise, self._zi = sosfilt(sos, audio, zi=zi)
         noise2 = noise * noise
 
-        env = np.empty(n, dtype=np.float64)
-        pos = 0
-        while pos < n:
-            take = min(n - pos, self.frame_len - self._acc_n)
-            seg = slice(pos, pos + take)
+        takes, sums = self._segment(noise2)
 
-            self._acc_sum += float(np.sum(noise2[seg]))
+        # The gate is steady for all but a few hundred samples around each
+        # transition, so the loop only *describes* the envelope -- merging
+        # adjacent constant stretches into one span -- and the spans are
+        # filled in afterward. Written the direct way, every frame paid for
+        # its own slice assignment (and, mid-ramp, an arange and a clip) to
+        # write a value almost always identical to the frame before it.
+        spans: list[list] = []  # [start, stop, level0, step, lo, hi]; step 0.0 == constant
+        pos = 0
+        for take, frame_sum in zip(takes, sums):
+            self._acc_sum += frame_sum
             self._acc_n += take
 
             level0 = self._envelope_level
             target = self._gate_target
             if level0 == target:
-                env[seg] = level0
+                if spans and spans[-1][3] == 0.0 and spans[-1][2] == level0:
+                    spans[-1][1] = pos + take
+                else:
+                    spans.append([pos, pos + take, level0, 0.0, 0.0, 0.0])
             else:
                 step = self.ramp_step if target > level0 else -self.ramp_step
-                ramp = level0 + step * np.arange(1, take + 1, dtype=np.float64)
-                np.clip(ramp, min(level0, target), max(level0, target), out=ramp)
-                env[seg] = ramp
-                self._envelope_level = float(ramp[-1])
+                lo, hi = min(level0, target), max(level0, target)
+                spans.append([pos, pos + take, level0, step, lo, hi])
+                # Closed form for what the last sample of that ramp would
+                # be: the ramp is monotonic, so clipping it elementwise and
+                # clipping only its endpoint agree exactly.
+                self._envelope_level = min(max(level0 + step * take, lo), hi)
 
             if self._acc_n >= self.frame_len:
                 p = self._acc_sum / self._acc_n
@@ -276,4 +335,12 @@ class Squelch:
 
             pos += take
 
+        env = np.empty(n, dtype=audio.dtype)
+        for start, stop, level0, step, lo, hi in spans:
+            if step == 0.0:
+                env[start:stop] = level0
+            else:
+                ramp = level0 + step * np.arange(1, stop - start + 1, dtype=np.float64)
+                np.clip(ramp, lo, hi, out=ramp)
+                env[start:stop] = ramp
         return env

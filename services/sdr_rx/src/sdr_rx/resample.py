@@ -18,7 +18,7 @@ STT_RATE_HZ = 16_000
 
 
 @lru_cache(maxsize=None)
-def _resample_poly_filter(up: int, down: int) -> np.ndarray:
+def _resample_poly_filter(up: int, down: int, dtype: np.dtype = np.dtype(np.float64)) -> np.ndarray:
     """Precomputed anti-aliasing FIR taps for `resample_poly(x, up, down)`.
 
     Left to its defaults, `resample_poly` *redesigns* this filter --
@@ -42,17 +42,24 @@ def _resample_poly_filter(up: int, down: int) -> np.ndarray:
     up, down = up // g, down // g
     max_rate = max(up, down)
     half_len = 10 * max_rate
-    return firwin(2 * half_len + 1, 1.0 / max_rate, window=("kaiser", 5.0))
+    return firwin(2 * half_len + 1, 1.0 / max_rate, window=("kaiser", 5.0)).astype(dtype)
+
+
+def _audio_dtype(audio: np.ndarray) -> np.dtype:
+    """Taps are cached per dtype so float32 audio isn't promoted back to
+    float64 by the filter alone (channelizer.py's "Sample precision")."""
+    audio = np.asarray(audio)
+    return audio.dtype if audio.dtype == np.float32 else np.dtype(np.float64)
 
 
 def to_multimon_rate(audio: np.ndarray) -> np.ndarray:
     """50 kS/s real audio -> 22050 Hz, for multimon-ng (`same_decoder`)."""
-    return resample_poly(audio, 441, 1000, window=_resample_poly_filter(441, 1000))
+    return resample_poly(audio, 441, 1000, window=_resample_poly_filter(441, 1000, _audio_dtype(audio)))
 
 
 def to_stt_rate(audio: np.ndarray) -> np.ndarray:
     """50 kS/s real audio -> 16000 Hz, for `stt_worker` and live audio."""
-    return resample_poly(audio, 8, 25, window=_resample_poly_filter(8, 25))
+    return resample_poly(audio, 8, 25, window=_resample_poly_filter(8, 25, _audio_dtype(audio)))
 
 
 def to_s16le(audio: np.ndarray) -> np.ndarray:

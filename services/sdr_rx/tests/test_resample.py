@@ -39,3 +39,20 @@ def test_multimon_rate_matches_scipys_uncached_default_filter():
 def test_stt_rate_matches_scipys_uncached_default_filter():
     audio = _tone(1000.0, BIN_RATE_HZ)
     np.testing.assert_allclose(to_stt_rate(audio), resample_poly(audio, 8, 25))
+
+
+def test_precision_follows_the_input():
+    """float32 audio must not be widened by the anti-aliasing taps alone
+    (resample.py's `_audio_dtype`) -- the taps are cached per dtype for
+    exactly this reason."""
+    audio = _tone(1000.0, 10_000).astype(np.float32)
+    assert to_multimon_rate(audio).dtype == np.float32
+    assert to_stt_rate(audio).dtype == np.float32
+    assert to_multimon_rate(audio.astype(np.float64)).dtype == np.float64
+    assert to_stt_rate(audio.astype(np.float64)).dtype == np.float64
+
+
+def test_float32_resampling_matches_float64():
+    audio = _tone(1000.0, 10_000)
+    np.testing.assert_allclose(to_multimon_rate(audio.astype(np.float32)), to_multimon_rate(audio), atol=1e-5)
+    np.testing.assert_allclose(to_stt_rate(audio.astype(np.float32)), to_stt_rate(audio), atol=1e-5)
