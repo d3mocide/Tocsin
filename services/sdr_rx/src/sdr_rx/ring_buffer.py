@@ -75,7 +75,16 @@ class ChannelRingBuffer:
                 self._mmap[: incoming - first] = samples[first:]
             self._write_pos = end % self.capacity
         self._total_written += incoming
-        self._mmap.flush()
+        # No `.flush()` here: this only lives on tmpfs (module docstring),
+        # and the reader (segment_capture's RingBufferReader) opens its own
+        # MAP_SHARED mmap of the same file -- both mappings share the same
+        # page-cache pages, so writes are visible to the reader immediately
+        # without an msync. `flush()`/msync exists to persist dirty pages to
+        # a *backing store*, which tmpfs doesn't have; profiled on a live
+        # pipeline, it cost ~0.4ms per call, called once per channel per
+        # chunk (docs/design/tracking.md's 2026-08-09 entry) for no
+        # cross-process-visibility benefit. Still called once in `close()`
+        # for a clean shutdown.
         self._write_meta()
 
     def read_last(self, n: int) -> np.ndarray:

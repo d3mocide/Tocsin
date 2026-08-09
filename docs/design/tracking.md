@@ -177,6 +177,25 @@ part of the stated exit criteria, which are now all met):
   "bindings not installed" -- avoids `thread.join()` blocking forever the way a fake that
   actually started a capture thread would. 83 tests passing in `sdr_rx`, up from 81.
 
+- **2026-08-09:** A live deployment report of `sdr-rx` pegged near 100% CPU on one core (see
+  Phase 3's note this date for the audio-quality report that came with it) led to profiling
+  `DevicePipeline.process()` end to end rather than guessing. Three unrelated inefficiencies,
+  all fixed with no behavior change -- see the Session Log entry this date for the full
+  profiled numbers: `resample.py`'s `resample_poly` calls were redesigning their anti-aliasing
+  FIR filter (`firwin` + Kaiser window, one ratio ~20,000 taps) from scratch on every chunk
+  despite `up`/`down` never changing -- now cached via `lru_cache`, verified numerically
+  identical to the uncached path in `test_resample.py`. `ring_buffer.py`'s `write()` called
+  `mmap.flush()` every chunk; pointless on the tmpfs this buffer is documented to live on
+  (`MAP_SHARED` mappings of the same file don't need msync for cross-process visibility --
+  verified empirically and with a new regression test using a second, independent `mmap`
+  standing in for `segment_capture`'s reader). `channelizer.py`'s `_demodulate()` called
+  `exp()` on every sample of every chunk even though the demodulation ramp only takes
+  `2 * num_bins` (96) distinct values -- now a precomputed lookup table gathered by index.
+  Combined: ~2.4x throughput improvement on the sandbox benchmark (1.41x -> 3.44x real-time
+  margin per dongle). All of `test_channelizer.py`'s strict swept-tone amplitude/phase
+  assertions still pass unmodified -- CLAUDE.md's bar for touching this file. 96 tests
+  passing in `sdr_rx`, up from 93.
+
 ---
 
 ## Phase 2 — SAME decode end to end
@@ -1791,3 +1810,58 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   the fix is confirmed correct by tracing both SDKs' real source down to the exact
   `mimetypes.guess_type` call and its output on this filename pattern, not by reproducing the
   failure against the live host.
+
+- **2026-08-09 (later same day):** Follow-up from a screenshot of `htop` on the live deployment
+  after merging the squelch/filter/buffering PR above: `sdr-rx` pegged at 99.7% CPU on one core,
+  load average pushing 3 on what looks like a 4-core box, and cutouts still happening. Rather
+  than guess whether the new squelch/filter code was the cause, profiled
+  `DevicePipeline.process()` with `cProfile` against a synthetic full-rate chunk (65,536 IQ
+  samples, the real `capture.DEFAULT_CHUNK_SIZE`) and a null publisher/tmpdir ring buffer, to
+  isolate CPU cost from I/O. First checked whether the squelch/voice-filter added this session
+  was the culprit: stubbing both out dropped per-chunk time from 38.73ms to 35.90ms -- real
+  (~8%) but not the dominant cost, and the pipeline was already only at a 1.41x-1.52x real-time
+  margin *before* today's changes even entered the picture. `bench_channelizer.py` (channelizer
+  alone) measured 2.44x on this same sandbox -- so more than half the full pipeline's cost was
+  coming from outside the channelizer itself.
+
+  `cProfile` sorted by cumulative time named the actual dominant cost immediately:
+  `scipy.signal.resample_poly` (2,800 calls, 4.145s of an 8.302s total across 200 iterations),
+  almost entirely inside `firwin`/`get_window`/`kaiser` -- i.e. **filter design**, not the
+  actual resampling math. `resample.py` calls `resample_poly(audio, up, down)` with `up`/`down`
+  fixed per call site (441/1000 for the SAME-decode rate, 8/25 for STT/live-audio), but left at
+  its defaults `resample_poly` *redesigns* its anti-aliasing FIR filter from scratch on every
+  single call -- confirmed by reading its source (`scipy==1.17.1`): if `window` is array-like
+  it's used as literal filter taps and the design step is skipped entirely, matching a
+  documented (if not fully public-API) code path. Replicated its internal design formula
+  (`half_len = 10 * max(up, down)`, `firwin(2*half_len+1, 1/max(up,down), window=('kaiser',
+  5.0))` after reducing `up`/`down` by their gcd) in a new `_resample_poly_filter()`, cached with
+  `functools.lru_cache`, and passed back in via `window=`. Verified numerically identical to
+  the uncached default output for both ratios (`test_resample.py`'s two new tests) rather than
+  trusting the formula-replication by inspection alone -- if a future scipy version changes its
+  default heuristic, those tests fail loudly instead of silently changing the resampled audio.
+  This alone took per-chunk time from 38.73ms to 24.79ms (1.41x -> 2.20x real-time margin).
+
+  Re-profiling after that fix surfaced two more, smaller items. `ring_buffer.py`'s `write()`
+  called `self._mmap.flush()` on every chunk (~0.4ms/call x 7 channels/chunk); the ring buffer's
+  own docstring says it's meant to live on tmpfs, and `flush()`/msync exists to persist dirty
+  pages to a *backing store*, which tmpfs doesn't have -- cross-process visibility for a
+  `MAP_SHARED` mapping of the same file doesn't depend on it. Verified this empirically first
+  (two independent `np.memmap` instances on the same file, writer never flushing, reader seeing
+  writes immediately either way) before removing the call from the hot path (kept in `close()`
+  for a clean shutdown), and added a regression test using a second, independent mmap to stand
+  in for `segment_capture`'s actual reader process. `channelizer.py`'s `_demodulate()` called
+  `np.exp()` on a full chunk's worth of samples (65,536) every call, but the modulation ramp is
+  periodic with period `2 * num_bins` = 96 -- only 96 distinct values ever occur. Replaced with
+  a precomputed 96-entry lookup table gathered by index (`(sample_index + arange(n)) %
+  mod_period`), leaving `test_channelizer.py`'s strict swept-tone amplitude/phase/chunk-boundary
+  assertions completely unmodified per CLAUDE.md's bar for this file -- all 21 still pass. Final:
+  17.73ms -> 15.86ms per chunk (3.08x -> 3.44x).
+
+  Net result: 38.73ms -> 15.86ms per chunk, a ~2.4x throughput improvement, all three fixes
+  behavior-preserving (verified against existing tests plus new targeted regression tests, not
+  just "it still passes"). Verified: `sdr_rx` 96 passed (up from 93). Not verified: the actual
+  Pi this was reported against -- this sandbox's per-core speed relative to a Pi 5 is unknown,
+  so the *ratio* of improvement is the number to trust here, not the absolute real-time factor;
+  whether 3.44x-on-this-sandbox is comfortably above or still uncomfortably close to 1.0x on the
+  real hardware is an open question until measured there directly (`make bench-channelizer`,
+  or better, timing the real `DevicePipeline.process()` loop against a live dongle).

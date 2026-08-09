@@ -57,6 +57,23 @@ def test_metadata_file_reflects_total_written(tmp_path):
     assert meta["channel"] == "WX1"
 
 
+def test_writes_are_visible_to_a_separate_reader_mmap_without_flush(tmp_path):
+    """Regression test for removing the per-write `.flush()` call (a real
+    profiled hot spot -- see ring_buffer.py's comment): a second, independent
+    `np.memmap` onto the same file -- standing in for `segment_capture`'s
+    `RingBufferReader`, a genuinely separate process in production -- must
+    still see writes immediately, since both are MAP_SHARED mappings of the
+    same tmpfs-backed file and don't need msync for cross-mapping visibility."""
+    rb = ChannelRingBuffer(tmp_path, "WX1", sample_rate_hz=10, window_seconds=1)
+    reader_mmap = np.memmap(tmp_path / "WX1.raw", dtype=np.float32, mode="r", shape=(10,))
+
+    rb.write(np.arange(1, 6, dtype=np.float32))
+    np.testing.assert_allclose(np.array(reader_mmap[:5]), np.arange(1, 6, dtype=np.float32))
+
+    rb.write(np.arange(6, 9, dtype=np.float32))
+    np.testing.assert_allclose(np.array(reader_mmap[5:8]), np.arange(6, 9, dtype=np.float32))
+
+
 def test_separate_channels_use_separate_files(tmp_path):
     rb1 = ChannelRingBuffer(tmp_path, "WX1", sample_rate_hz=10, window_seconds=1)
     rb2 = ChannelRingBuffer(tmp_path, "WX2", sample_rate_hz=10, window_seconds=1)
