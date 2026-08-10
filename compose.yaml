@@ -145,8 +145,9 @@ services:
       # nws-poller's env -- entrypoint.sh only starts that process under
       # TOCSIN_MODE=hybrid.
       NWS_POLLER_USER_AGENT: ${NWS_POLLER_USER_AGENT:-}
-      NWS_POLLER_AREAS: ${NWS_POLLER_AREAS:-OR,WA}
+      NWS_POLLER_AREAS: ${NWS_POLLER_AREAS-OR,WA}
       NWS_POLLER_ZONES: ${NWS_POLLER_ZONES:-}
+      NWS_POLLER_STRICT_ZONE_FILTER: ${NWS_POLLER_STRICT_ZONE_FILTER:-false}
       NWS_POLLER_INTERVAL_SECONDS: ${NWS_POLLER_INTERVAL_SECONDS:-60}
       NWS_POLLER_REDIS_URL: redis://redis:6379/0
     volumes:
