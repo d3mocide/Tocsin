@@ -1502,4 +1502,71 @@ footer {
   color: var(--text-dim);
 }
 
+/* ---- NWR Radio Tower Map Marker ------------------------------------- */
+.custom-tower-marker-container {
+  background: transparent !important;
+  border: none !important;
+}
+
+.tower-marker {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tower-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid #ffffff;
+  z-index: 2;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+}
+
+.tower-icon-active .tower-dot {
+  background-color: #22c55e;
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.95);
+}
+
+.tower-icon-normal .tower-dot {
+  background-color: #15803d;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  opacity: 0.85;
+}
+
+.tower-icon-abnormal .tower-dot {
+  background-color: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.9);
+}
+
+.tower-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  margin-left: -7px;
+  border-radius: 50%;
+  z-index: 1;
+  pointer-events: none;
+  border: 1.5px solid rgba(34, 197, 94, 0.85);
+  animation: towerPulse 2.4s infinite ease-out;
+}
+
+@keyframes towerPulse {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+
 

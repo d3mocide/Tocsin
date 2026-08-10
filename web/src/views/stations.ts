@@ -8,7 +8,6 @@ export class StationsView {
   private readonly container: HTMLElement;
   private readonly store: Store;
   private page = 0;
-  private maxRadiusMiles = 100;
 
   constructor(container: HTMLElement, store: Store) {
     this.container = container;
@@ -30,48 +29,17 @@ export class StationsView {
       return a.name.localeCompare(b.name);
     });
 
-    const filtered = sorted.filter(([, station]) => {
-      if (this.maxRadiusMiles === 0) return true; // 0 = All
-      if (station.distance_km === null && (station as any).distance_miles === undefined) return true;
-      const miles = (station as any).distance_miles ?? (station.distance_km !== null ? station.distance_km * 0.621371 : null);
-      return miles !== null ? miles <= this.maxRadiusMiles : true;
-    });
-
     const anyDistance = sorted.some(([, station]) => station.distance_km !== null);
 
-    const radiusSelect = el(
-      "select",
-      { class: "filter-select station-radius-select", attrs: { "aria-label": "Station Monitoring Radius" } },
-      el("option", { attrs: { value: "50" }, text: "Within 50 miles" }),
-      el("option", { attrs: { value: "100" }, text: "Within 100 miles" }),
-      el("option", { attrs: { value: "250" }, text: "Within 250 miles" }),
-      el("option", { attrs: { value: "0" }, text: "All Nationwide Stations" })
-    ) as HTMLSelectElement;
-
-    radiusSelect.value = String(this.maxRadiusMiles);
-    radiusSelect.addEventListener("change", () => {
-      this.maxRadiusMiles = Number(radiusSelect.value);
-      this.page = 0;
-      this.render();
-    });
-
-    const headerBar = el(
-      "div",
-      { class: "station-header-bar" },
-      el("span", { class: "station-header-label", text: `Monitoring Radius:` }),
-      radiusSelect,
-      el("span", { class: "station-header-count", text: `${filtered.length} station(s) in range` })
-    );
-
-    const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
     this.page = Math.min(this.page, pageCount - 1);
     const start = this.page * PAGE_SIZE;
-    const pageItems = filtered.slice(start, start + PAGE_SIZE);
+    const pageItems = sorted.slice(start, start + PAGE_SIZE);
 
     replaceChildren(
       this.container,
       anyDistance
-        ? headerBar
+        ? null
         : el("p", {
             class: "stations-summary",
             text: "Set TOCSIN_LATITUDE/TOCSIN_LONGITUDE (see .env.example) to sort these by distance.",
@@ -82,7 +50,7 @@ export class StationsView {
             { class: "station-grid" },
             ...pageItems.map(([callsign, station]) => stationCard(callsign, station))
           )
-        : el("p", { class: "empty", text: "No stations found within selected distance radius." }),
+        : el("p", { class: "empty", text: "No station data available." }),
       pageCount > 1 ? this.pager(pageCount) : null
     );
   }

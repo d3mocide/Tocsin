@@ -231,6 +231,22 @@ export class MapView {
       statusEl.textContent = `Active Advisories: ${activePolygonCount} | Tiles: ${this.tileStatus}`;
     }
 
+    // Determine active receiver channels from store
+    const activeStreams = this.store.state.streams?.streams ?? [];
+    const activeHealth = Array.from(this.store.state.health.values());
+    const activeSites = new Set<string>();
+
+    for (const s of activeStreams) {
+      if (s.on_air || s.feeder_alive) {
+        if (s.site) activeSites.add(s.site.toUpperCase());
+      }
+    }
+    for (const h of activeHealth) {
+      if (!h.dead && h.site) {
+        activeSites.add(h.site.toUpperCase());
+      }
+    }
+
     // 2. Draw NWR Radio Transmitters
     for (const [callsign, station] of Object.entries(stations)) {
       if (station.lat === null || station.lon === null) continue;
@@ -239,21 +255,37 @@ export class MapView {
       if (distMiles !== null && distMiles > 150) continue;
 
       const isNormal = station.status.toUpperCase() === "NORMAL";
-      const markerColor = isNormal ? "#22c55e" : "#ef4444";
+      // Gate active pulse ring to stations actively monitored by the receiver site
+      const isMonitored = isNormal && (
+        (distMiles !== null && distMiles <= 15) ||
+        activeSites.has(callsign.toUpperCase()) ||
+        activeSites.has(station.name.toUpperCase())
+      );
 
-      const marker = L.circleMarker([station.lat, station.lon], {
-        radius: 7,
-        color: "#ffffff",
-        weight: 1.5,
-        fillColor: markerColor,
-        fillOpacity: 0.9,
+      const statusClass = isNormal
+        ? (isMonitored ? "tower-icon-active" : "tower-icon-normal")
+        : "tower-icon-abnormal";
+      const markerColor = isNormal ? (isMonitored ? "#22c55e" : "#16a34a") : "#ef4444";
+
+      const towerIcon = L.divIcon({
+        className: "custom-tower-marker-container",
+        html: `
+          <div class="tower-marker ${statusClass}">
+            ${isMonitored ? '<div class="tower-pulse"></div>' : ""}
+            <div class="tower-dot"></div>
+          </div>
+        `,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
       });
+
+      const marker = L.marker([station.lat, station.lon], { icon: towerIcon });
 
       const distStr = station.distance_km !== null ? `${station.distance_km.toFixed(1)} km away` : "";
 
       const popupHtml = `
         <div class="map-popup">
-          <div class="map-popup-title">📻 ${station.name} (${callsign})</div>
+          <div class="map-popup-title">📻 ${station.name} (${callsign}) ${isMonitored ? '<span class="badge badge-tier-a" style="font-size:0.65rem;margin-left:0.3rem;">📡 MONITORED</span>' : ""}</div>
           <div class="map-popup-sub">
             <b>${station.frequency_mhz.toFixed(3)} MHz</b> · WFO ${station.wfo}<br/>
             Power: ${station.power_watts ?? 0}W · Status: <span style="color:${markerColor}">${station.status}</span><br/>
@@ -263,7 +295,7 @@ export class MapView {
       `;
 
       marker.bindPopup(popupHtml);
-      marker.bindTooltip(`NWR ${callsign} (${station.name})`, { direction: "top" });
+      marker.bindTooltip(`📻 NWR ${callsign} (${station.name})${isMonitored ? " [Monitored]" : ""}`, { direction: "top" });
       this.stationGroup.addLayer(marker);
     }
   }
