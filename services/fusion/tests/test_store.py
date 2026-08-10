@@ -115,3 +115,16 @@ def test_sink_receives_a_record_on_creation_and_on_confirmation():
     store.ingest_cap(cap_alert())
     assert len(sink.alerts) == 2
     assert sink.alerts[-1].state == AlertState.CONFIRMED
+
+
+def test_repeated_cap_alert_updates_existing_alert_instead_of_duplicating():
+    store = _store()
+    cap1 = cap_alert(id="urn:oid:test.cap.1", sent=BASE_TIME)
+    cap2 = cap_alert(id="urn:oid:test.cap.1", sent=BASE_TIME + timedelta(minutes=5))
+
+    alert1 = store.ingest_cap(cap1)
+    alert2 = store.ingest_cap(cap2)
+
+    assert alert1.id == alert2.id
+    assert len(store.all_alerts) == 1
+    assert store.all_alerts[0].last_updated == BASE_TIME + timedelta(minutes=5)

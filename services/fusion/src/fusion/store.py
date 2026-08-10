@@ -72,6 +72,18 @@ class AlertStore:
         return tuple(self._all)
 
     def ingest_same(self, event: SameEventIn) -> Alert:
+        for alert in self._open_rf_only:
+            existing_rf = _rf_source_of(alert).event
+            if existing_rf.raw_header == event.raw_header or (
+                existing_rf.callsign == event.callsign
+                and existing_rf.event_code == event.event_code
+                and existing_rf.fips_codes == event.fips_codes
+            ):
+                alert.last_updated = event.received_at
+                alert.sources = (RFSource(event),)
+                self._sink.record(alert)
+                return alert
+
         for alert in self._open_api_only:
             cap = _cap_source_of(alert).alert
             if matches(event, cap, self._mapping, self._tolerance):
@@ -95,6 +107,14 @@ class AlertStore:
         return alert
 
     def ingest_cap(self, cap: CapAlertIn) -> Alert:
+        for alert in self._open_api_only:
+            existing_cap = _cap_source_of(alert).alert
+            if existing_cap.id == cap.id:
+                alert.last_updated = cap.sent
+                alert.sources = (ApiSource(cap),)
+                self._sink.record(alert)
+                return alert
+
         for alert in self._open_rf_only:
             same = _rf_source_of(alert).event
             if matches(same, cap, self._mapping, self._tolerance):
