@@ -190,6 +190,7 @@ export interface NwrStation {
   lat: number | null;
   lon: number | null;
   distance_km: number | null;
+  distance_miles?: number | null;
 }
 
 export interface Reference {

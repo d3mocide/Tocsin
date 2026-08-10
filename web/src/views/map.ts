@@ -235,6 +235,9 @@ export class MapView {
     for (const [callsign, station] of Object.entries(stations)) {
       if (station.lat === null || station.lon === null) continue;
 
+      const distMiles = station.distance_miles ?? (station.distance_km !== null ? station.distance_km * 0.621371 : null);
+      if (distMiles !== null && distMiles > 150) continue;
+
       const isNormal = station.status.toUpperCase() === "NORMAL";
       const markerColor = isNormal ? "#22c55e" : "#ef4444";
 

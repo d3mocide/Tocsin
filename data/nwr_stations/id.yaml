@@ -1,0 +1,41 @@
+# NOAA Weather Radio Transmitters - Idaho (ID)
+WXM32:
+  name: Boise / Shafer Butte
+  frequency_mhz: 162.550
+  status: NORMAL
+  wfo: Boise ID
+  power_watts: 1000
+  lat: 43.7915
+  lon: -116.0954
+WXL33:
+  name: Pocatello
+  frequency_mhz: 162.550
+  status: NORMAL
+  wfo: Pocatello ID
+  power_watts: 1000
+  lat: 42.8713
+  lon: -112.4455
+WXN70:
+  name: Lewiston
+  frequency_mhz: 162.550
+  status: NORMAL
+  wfo: Spokane WA
+  power_watts: 300
+  lat: 46.4165
+  lon: -117.0177
+KIG59:
+  name: Twin Falls
+  frequency_mhz: 162.400
+  status: NORMAL
+  wfo: Pocatello ID
+  power_watts: 300
+  lat: 42.5629
+  lon: -114.4609
+WXL34:
+  name: Idaho Falls
+  frequency_mhz: 162.400
+  status: NORMAL
+  wfo: Pocatello ID
+  power_watts: 300
+  lat: 43.4927
+  lon: -112.0408

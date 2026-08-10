@@ -73,7 +73,9 @@ def test_haversine_km_matches_a_known_distance():
 def _write_stations(tmp_path, **stations):
     import yaml
 
-    (tmp_path / "nwr_stations_or.yaml").write_text(yaml.safe_dump(stations))
+    stations_dir = tmp_path / "nwr_stations"
+    stations_dir.mkdir(exist_ok=True)
+    (stations_dir / "or.yaml").write_text(yaml.safe_dump(stations))
 
 
 def test_load_stations_computes_distance_from_operator_location(tmp_path):

@@ -70,6 +70,14 @@ def main() -> None:
     strict_zone_filter_raw = os.environ.get("NWS_POLLER_STRICT_ZONE_FILTER", "").lower()
     strict_zone_filter = strict_zone_filter_raw in ("true", "1", "yes")
 
+    max_radius_raw = os.environ.get("NWS_POLLER_MAX_RADIUS_MILES")
+    max_radius_miles = float(max_radius_raw) if max_radius_raw else None
+
+    op_lat_raw = os.environ.get("TOCSIN_LATITUDE")
+    op_lon_raw = os.environ.get("TOCSIN_LONGITUDE")
+    operator_lat = float(op_lat_raw) if op_lat_raw else None
+    operator_lon = float(op_lon_raw) if op_lon_raw else None
+
     interval = float(os.environ.get("NWS_POLLER_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS))
 
     redis_client = _build_redis_client()
@@ -80,6 +88,9 @@ def main() -> None:
         sink=_build_sink(redis_client),
         zones=zones,
         strict_zone_filter=strict_zone_filter,
+        max_radius_miles=max_radius_miles,
+        operator_lat=operator_lat,
+        operator_lon=operator_lon,
     )
     heartbeat = heartbeat_module.build(redis_client)
     # A silently unreachable api.weather.gov and a genuinely quiet night

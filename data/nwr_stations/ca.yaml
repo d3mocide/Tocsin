@@ -1,0 +1,65 @@
+# NOAA Weather Radio Transmitters - California (CA)
+KIG77:
+  name: San Francisco / Mt Tamalpais
+  frequency_mhz: 162.550
+  status: NORMAL
+  wfo: San Francisco CA
+  power_watts: 1000
+  lat: 37.9235
+  lon: -122.5965
+WXJ84:
+  name: Los Angeles / Mt Wilson
+  frequency_mhz: 162.550
+  status: NORMAL
+  wfo: Los Angeles CA
+  power_watts: 1000
+  lat: 34.2256
+  lon: -118.0673
+WXL86:
+  name: Sacramento
+  frequency_mhz: 162.550
+  status: NORMAL
+  wfo: Sacramento CA
+  power_watts: 1000
+  lat: 38.5816
+  lon: -121.4944
+WWF62:
+  name: Redding / Shasta
+  frequency_mhz: 162.550
+  status: NORMAL
+  wfo: Sacramento CA
+  power_watts: 300
+  lat: 40.5865
+  lon: -122.3917
+KIH30:
+  name: Eureka / Humboldt
+  frequency_mhz: 162.400
+  status: NORMAL
+  wfo: Eureka CA
+  power_watts: 1000
+  lat: 40.8021
+  lon: -124.1637
+KEC49:
+  name: Monterey / Salinas
+  frequency_mhz: 162.550
+  status: NORMAL
+  wfo: San Francisco CA
+  power_watts: 1000
+  lat: 36.6002
+  lon: -121.8947
+KEC57:
+  name: San Diego
+  frequency_mhz: 162.400
+  status: NORMAL
+  wfo: San Diego CA
+  power_watts: 1000
+  lat: 32.7157
+  lon: -117.1611
+KEC82:
+  name: Fresno
+  frequency_mhz: 162.400
+  status: NORMAL
+  wfo: Hanford CA
+  power_watts: 1000
+  lat: 36.7468
+  lon: -119.7726

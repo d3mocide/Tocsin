@@ -1,4 +1,30 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { Plugin } from "vite";
+
+function parseStationsYaml(content: string): Record<string, any> {
+  const stations: Record<string, any> = {};
+  let currentCallsign: string | null = null;
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (line.match(/^[A-Z0-9_-]+:\s*$/)) {
+      currentCallsign = line.split(":")[0].trim();
+      stations[currentCallsign] = {};
+    } else if (currentCallsign && line.startsWith("  ")) {
+      const parts = trimmed.split(":");
+      if (parts.length >= 2) {
+        const key = parts[0].trim();
+        const valStr = parts.slice(1).join(":").trim();
+        let val: any = valStr;
+        if (valStr === "null") val = null;
+        else if (!isNaN(Number(valStr))) val = Number(valStr);
+        stations[currentCallsign][key] = val;
+      }
+    }
+  }
+  return stations;
+}
 
 /**
  * Vite plugin that serves mock data for UI development when no backend API is running.
@@ -10,26 +36,26 @@ export function mockApiPlugin(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-        const path = url.pathname;
+        const reqPath = url.pathname;
 
         // Skip non-API routes or requests handled by static files
-        if (!path.startsWith("/alerts") &&
-            !path.startsWith("/health") &&
-            !path.startsWith("/spectrum") &&
-            !path.startsWith("/stats") &&
-            !path.startsWith("/services") &&
-            !path.startsWith("/system") &&
-            !path.startsWith("/streams") &&
-            !path.startsWith("/reference") &&
-            !path.startsWith("/transcripts") &&
-            !path.startsWith("/dispatches") &&
-            !path.startsWith("/events") &&
-            !path.startsWith("/captures")) {
+        if (!reqPath.startsWith("/alerts") &&
+            !reqPath.startsWith("/health") &&
+            !reqPath.startsWith("/spectrum") &&
+            !reqPath.startsWith("/stats") &&
+            !reqPath.startsWith("/services") &&
+            !reqPath.startsWith("/system") &&
+            !reqPath.startsWith("/streams") &&
+            !reqPath.startsWith("/reference") &&
+            !reqPath.startsWith("/transcripts") &&
+            !reqPath.startsWith("/dispatches") &&
+            !reqPath.startsWith("/events") &&
+            !reqPath.startsWith("/captures")) {
           return next();
         }
 
         // SSE live event stream
-        if (path === "/events") {
+        if (reqPath === "/events") {
           res.writeHead(200, {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
@@ -55,7 +81,7 @@ export function mockApiPlugin(): Plugin {
 
         res.setHeader("Content-Type", "application/json");
 
-        if (path === "/system") {
+        if (reqPath === "/system") {
           return res.end(JSON.stringify({
             mode: "hybrid",
             icecast_public_url: null,
@@ -64,7 +90,51 @@ export function mockApiPlugin(): Plugin {
           }));
         }
 
-        if (path === "/reference") {
+        if (reqPath === "/reference") {
+          const cwd = process.cwd();
+          const stationsDir = path.resolve(cwd, "../data/nwr_stations");
+          const fallbackYaml = path.resolve(cwd, "../data/nwr_stations.yaml");
+          const legacyYaml = path.resolve(cwd, "../data/nwr_stations_or.yaml");
+          let stations: Record<string, any> = {};
+
+          try {
+            if (fs.existsSync(stationsDir) && fs.statSync(stationsDir).isDirectory()) {
+              const files = fs.readdirSync(stationsDir).filter((f) => f.endsWith(".yaml"));
+              for (const f of files) {
+                const text = fs.readFileSync(path.join(stationsDir, f), "utf-8");
+                Object.assign(stations, parseStationsYaml(text));
+              }
+            }
+            if (Object.keys(stations).length === 0) {
+              const fileToRead = fs.existsSync(fallbackYaml) ? fallbackYaml : fs.existsSync(legacyYaml) ? legacyYaml : null;
+              if (fileToRead) {
+                const text = fs.readFileSync(fileToRead, "utf-8");
+                stations = parseStationsYaml(text);
+              }
+            }
+          } catch (e) {
+            console.error("mock-plugin: failed to load stations", e);
+          }
+
+          const opLat = 45.385313;
+          const opLon = -122.756285;
+          for (const s of Object.values(stations)) {
+            if (s.lat != null && s.lon != null) {
+              const R = 6371;
+              const dLat = (s.lat - opLat) * Math.PI / 180;
+              const dLon = (s.lon - opLon) * Math.PI / 180;
+              const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                        Math.cos(opLat * Math.PI / 180) * Math.cos(s.lat * Math.PI / 180) *
+                        Math.sin(dLon/2) * Math.sin(dLon/2);
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+              s.distance_km = Math.round(R * c * 10) / 10;
+              s.distance_miles = Math.round(s.distance_km * 0.621371 * 10) / 10;
+            } else {
+              s.distance_km = null;
+              s.distance_miles = null;
+            }
+          }
+
           return res.end(JSON.stringify({
             event_codes: {
               TOR: { name: "Tornado Warning", tier: "A" },
@@ -79,15 +149,11 @@ export function mockApiPlugin(): Plugin {
               "041067": { county: "Washington", state: "OR" },
               "053011": { county: "Clark", state: "WA" },
             },
-            stations: {
-              "PDX - WX5": { name: "Portland (WX5)", frequency_mhz: 162.55, status: "operational", wfo: "PQR", power_watts: 1000, lat: 45.515, lon: -122.678, distance_km: 12.4 },
-              "PDX - WX6": { name: "Portland (WX6)", frequency_mhz: 162.525, status: "operational", wfo: "PQR", power_watts: 1000, lat: 45.520, lon: -122.680, distance_km: 14.1 },
-              "PDX - WX7": { name: "Portland (WX7)", frequency_mhz: 162.40, status: "operational", wfo: "PQR", power_watts: 1000, lat: 45.510, lon: -122.670, distance_km: 15.8 },
-            },
+            stations,
           }));
         }
 
-        if (path === "/stats") {
+        if (reqPath === "/stats") {
           return res.end(JSON.stringify({
             counts: { CONFIRMED: 1, RF_ONLY: 1, API_ONLY: 2 },
             total: 4,
@@ -96,7 +162,7 @@ export function mockApiPlugin(): Plugin {
           }));
         }
 
-        if (path === "/services") {
+        if (reqPath === "/services") {
           const now = new Date().toISOString();
           return res.end(JSON.stringify([
             { service: "sdr-rx", status: "up", expected: true, updated_at: now, age_seconds: 2, detail: { devices: 1 } },
@@ -111,7 +177,7 @@ export function mockApiPlugin(): Plugin {
           ]));
         }
 
-        if (path === "/streams") {
+        if (reqPath === "/streams") {
           return res.end(JSON.stringify({
             icecast_reachable: true,
             streams: [
@@ -122,7 +188,7 @@ export function mockApiPlugin(): Plugin {
           }));
         }
 
-        if (path === "/health") {
+        if (reqPath === "/health") {
           return res.end(JSON.stringify([
             { site: "PDX", channel: "WX5", sampled_at: new Date().toISOString(), rms: 0.15, power: -42.0, dead: false },
             { site: "PDX", channel: "WX6", sampled_at: new Date().toISOString(), rms: 0.12, power: -46.0, dead: false },
@@ -130,7 +196,7 @@ export function mockApiPlugin(): Plugin {
           ]));
         }
 
-        if (path === "/health/history") {
+        if (reqPath === "/health/history") {
           const points = [];
           const now = Date.now();
           for (let i = 20; i >= 0; i--) {
@@ -144,8 +210,8 @@ export function mockApiPlugin(): Plugin {
           return res.end(JSON.stringify(points));
         }
 
-        if (path.startsWith("/spectrum")) {
-          if (path === "/spectrum") {
+        if (reqPath.startsWith("/spectrum")) {
+          if (reqPath === "/spectrum") {
             return res.end(JSON.stringify(["PDX"]));
           }
           // Synthetic 48-bin spectrum
@@ -162,7 +228,7 @@ export function mockApiPlugin(): Plugin {
           }));
         }
 
-        if (path.startsWith("/alerts")) {
+        if (reqPath.startsWith("/alerts")) {
           const mockAlerts = [
             {
               id: "urn:oid:2.49.0.1.840.0.mock.tor.001",
@@ -279,7 +345,7 @@ export function mockApiPlugin(): Plugin {
           return res.end(JSON.stringify(mockAlerts));
         }
 
-        if (path.startsWith("/transcripts")) {
+        if (reqPath.startsWith("/transcripts")) {
           return res.end(JSON.stringify([
             {
               raw_header: "ZCZC-WXR-TOR-041051-041005+0045-2212130-KIG98/NWR-",
@@ -297,7 +363,7 @@ export function mockApiPlugin(): Plugin {
           ]));
         }
 
-        if (path.startsWith("/dispatches")) {
+        if (reqPath.startsWith("/dispatches")) {
           return res.end(JSON.stringify([
             {
               dispatched_at: new Date(Date.now() - 4 * 60 * 1000).toISOString(),

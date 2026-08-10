@@ -100,6 +100,7 @@ def load_stations(path: Path, operator_lat: float | None, operator_lon: float | 
             if have_operator_location and lat is not None and lon is not None
             else None
         )
+        distance_miles = round(distance_km * 0.621371, 1) if distance_km is not None else None
         stations[callsign] = {
             "name": entry.get("name"),
             "frequency_mhz": entry.get("frequency_mhz"),
@@ -109,6 +110,7 @@ def load_stations(path: Path, operator_lat: float | None, operator_lon: float | 
             "lat": lat,
             "lon": lon,
             "distance_km": distance_km,
+            "distance_miles": distance_miles,
         }
     return stations
 
@@ -129,10 +131,20 @@ def load(
         return EMPTY
     event_codes_path = data_dir / "same_event_codes.yaml"
     fips_path = data_dir / "fips.csv"
-    stations_path = data_dir / "nwr_stations_or.yaml"
     event_codes = load_event_codes(event_codes_path) if event_codes_path.is_file() else {}
     counties = load_counties(fips_path) if fips_path.is_file() else {}
-    stations = (
-        load_stations(stations_path, operator_lat, operator_lon) if stations_path.is_file() else {}
-    )
+
+    stations = {}
+    stations_dir = data_dir / "nwr_stations"
+    if stations_dir.is_dir():
+        for yaml_file in sorted(stations_dir.glob("*.yaml")):
+            stations.update(load_stations(yaml_file, operator_lat, operator_lon))
+
+    if not stations:
+        stations_path = data_dir / "nwr_stations.yaml"
+        if not stations_path.is_file():
+            stations_path = data_dir / "nwr_stations_or.yaml"
+        if stations_path.is_file():
+            stations = load_stations(stations_path, operator_lat, operator_lon)
+
     return ReferenceData(event_codes=event_codes, counties=counties, stations=stations)
