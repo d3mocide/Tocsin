@@ -59,7 +59,9 @@ call) or a real Redis instance.
 | `NWS_POLLER_AREAS` | *(required)* | Comma-separated state/marine-area codes to poll, e.g. `OR,WA`. One HTTP request per area per cycle. |
 | `NWS_POLLER_ZONES` | *(unset)* | Comma-separated public-forecast zone codes, e.g. `ORZ006,ORZ005`. Optional and additive to `NWS_POLLER_AREAS`, not a replacement -- one combined request per cycle covering every zone listed. |
 | `NWS_POLLER_INTERVAL_SECONDS` | `60` | Poll interval. |
-| `NWS_POLLER_REDIS_URL` | *(unset -- logs to stdout)* | Redis connection URL. When unset, alerts are logged as JSON instead of published, for local/dev runs without a Redis instance. |
+| `NWS_POLLER_STRICT_ZONE_FILTER` | `false` | When `true` and `NWS_POLLER_ZONES` is set, drops any polled alert whose UGC/SAME codes don't include one of the configured zones -- otherwise `NWS_POLLER_AREAS`' broader state/marine-area results pass through untouched alongside the zone results. |
+| `NWS_POLLER_MAX_RADIUS_MILES` | *(unset)* | Drops alerts farther than this many miles from `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` (haversine against the alert's own polygon vertices, falling back to a small built-in table of known UGC-zone centroids when it carries no geometry). No-op unless both operator coordinates are also set. |
+| `NWS_POLLER_REDIS_URL` | *(unset -- logs to stdout)* | Redis connection URL. When unset, alerts are logged as JSON instead of published, for local/dev runs without a Redis instance. Also backs `SeenAlertTracker`'s dedup state (`tracker.py`) when set, so a container restart doesn't re-emit every currently-active alert to `fusion` -- purely in-memory, and every alert re-emitted once, when unset. |
 
 ## Development
 

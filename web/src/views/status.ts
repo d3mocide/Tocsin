@@ -16,7 +16,7 @@ export function renderModeChip(container: HTMLElement, store: Store): void {
       text: mode,
       title:
         mode === "hybrid"
-          ? "Hybrid: NWS API polling, remote STT, and MQTT fallback are active."
+          ? "Hybrid: NWS API polling, remote STT, and LLM enrichment are active."
           : "Offgrid: no network components. RF path only, by design.",
     }),
   );

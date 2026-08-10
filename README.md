@@ -42,9 +42,8 @@ is no device to map. See that README's "Reaching the node over the network".
 This is the sequence to go from a cloned repo to a real RTL-SDR dongle feeding decoded SAME
 events and a listenable audio stream. Everything up through step 4 works with no dongle
 plugged in yet -- only step 5 onward needs hardware. Steps 1-4 have been run for real
-against a Docker daemon (see `docs/design/tracking.md`, 2026-08-08) with `/dev/bus/usb`
-passthrough stubbed out (this repo's own dev sandbox has no USB subsystem to test that
-part against); step 4's `make up-offgrid` came up clean.
+against a live Docker daemon and come up clean; see `docs/design/tracking.md` for the
+verification details.
 
 1. **Blacklist the DVB driver on the host** (not the container) -- the kernel's
    `dvb_usb_rtl28xxu` claims the dongle before SoapySDR can open it otherwise:
@@ -97,9 +96,9 @@ part against); step 4's `make up-offgrid` came up clean.
    doc -- see `services/sdr_rx/README.md`'s Configuration table) is the one thing most
    likely to need adjusting against your actual RF environment.
 
-None of steps 5-8 have been verified against real hardware yet in this repo's history --
-that's the actual gap this section exists to close. See `docs/design/tracking.md` for
-exactly what's confirmed vs. still open.
+Steps 5-8 (plugging in a dongle onward) haven't been verified against real hardware yet in
+this repo's history -- see `docs/design/tracking.md` for exactly what's confirmed vs. still
+open.
 
 ## Ports
 
@@ -121,6 +120,22 @@ of trying to split the two halves apart.
 The api container's internal bind port (`API_PORT`, default `8000`) is separately
 configurable but rarely worth changing: compose maps `TOCSIN_WEB_PORT` onto it, so it never
 appears in a URL you type.
+
+## Web UI
+
+`api` serves a Vite/TypeScript single-page app at `/` (`web/`, see its own README) --
+two tabs, no client-side routing:
+
+- **Dashboard** -- live Icecast audio players, nearby NWR stations (sorted by distance once
+  `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` are set), a Leaflet map of active NWS alert zones and
+  nearby transmitters (optional NEXRAD radar overlay), the alert feed (both provenance
+  sources shown side by side, never merged), the spectrum waterfall, per-channel RF health,
+  system health (the `RF_ONLY`/`API_ONLY` divergence rate), and dispatch outcomes.
+- **Activity** -- the merged transcript/dispatch log and per-service status.
+
+Installable to a phone's home screen (web manifest + iOS touch icon). No CDN, webfont, or
+other external asset, same offgrid rule as the rest of the system -- it degrades to a plain
+page with no radio to show data for, never to a blank one.
 
 ## Exposing Tocsin behind an external reverse proxy
 
@@ -256,7 +271,8 @@ tocsin/
 ├── data/
 │   ├── same_event_codes.yaml    # code → name, tier
 │   ├── same_to_cap.yaml         # SAME event code ↔ CAP event name
-│   └── fips.csv                 # FIPS → county name, for templating
+│   ├── fips.csv                 # FIPS → county name, for templating
+│   └── nwr_stations/            # per-state NWR transmitter reference data
 ├── deploy/
 │   ├── icecast/                  # icecast.xml, Dockerfile
 │   └── udev/                     # host-side RTL-SDR udev rule
@@ -267,53 +283,22 @@ tocsin/
         └── tracking.md          # living status against the roadmap
 ```
 
-## Build order
+## Status
 
-Each phase is independently verifiable, and normally you wouldn't start implementing phase
-N+1 until phase N is proven on real hardware -- see `docs/design/roadmap.md` and CLAUDE.md.
-Phases 1-3 below are an intentional, explicit exception: everything in each that doesn't
-require a physical RTL-SDR has been built and unit tested ahead of live-hardware
-verification, specifically so that plugging in a dongle is the *last* step instead of the
-next thing to build. Phase 1's live-hardware proof is still the real gate before trusting
-any of it operationally -- see `docs/design/tracking.md` for exactly what's confirmed vs.
-still open, and don't read "implemented" below as "verified."
+All eight design-doc milestones (`docs/design/roadmap.md`) have working, unit-tested code
+across `services/`. Phases 1 and 3 (`services/sdr_rx`, `services/live_audio`) are
+additionally verified against a real RTL-SDR dongle on a Raspberry Pi 5: all seven WX
+channels locked, live audio audible in a browser. The one gap every later phase inherits:
+no real SAME/EAS header has aired during testing yet, so decode (`services/same_decoder`)
+and everything downstream of it -- capture, transcription, NWS correlation, dispatch, the
+web UI's alert feed -- is proven against fixtures and synthetic signals, not a live warning.
+Nothing here has run against a real Meshtastic node, LiteLLM endpoint, or Postgres/Redis
+instance either, though every wire contract with an external system was checked against its
+published spec rather than guessed.
 
-0. Bootstrap (repo scaffolding, compose profiles, checked-in reference data). **Done.**
-1. Channelizer (`services/sdr_rx`). **Done**, including live-hardware verification: a real
-   RTL-SDR dongle on a Raspberry Pi 5 locked all seven WX channels.
-2. SAME decode end to end (`services/same_decoder`: multimon-ng → parsed, tiered event).
-   Implemented, unit tested, build/runtime-verified. **Not yet verified:** an actual decoded
-   SAME/EAS header from real RF (real NWR *voice* audio is confirmed flowing, per Phase 1/3;
-   no header has aired during testing yet) -- this is the one gap every phase since has
-   inherited.
-3. Live audio (`services/live_audio` + Icecast). **Done**, including live-hardware
-   verification: real RF-sourced audio audible in a browser.
-4. Segment capture + local STT (`services/segment_capture` + `services/stt_worker`).
-   Implemented and unit tested, including Phase 7's `remote_http` provider and `STT_CHAIN`
-   race. Blocked on the same real-SAME-header gap as Phase 2 for live verification.
-5. NWS poller + fusion (`services/nws_poller` + `services/fusion`). Implemented and fully
-   verified against its own exit criteria (fixture-covered correlation logic needs no
-   hardware) -- see `docs/design/tracking.md`.
-6. Dispatcher stage 1 (`services/dispatcher`: template message, serial Meshtastic,
-   idempotency, rate limiting). Implemented and unit tested.
-7. Dispatcher stage 2 + remote STT (LiteLLM enrichment, circuit breaker). Implemented and
-   unit tested, including both of this phase's literal roadmap exit criteria exercised
-   directly in tests.
-8. API + web UI (`services/api` + `web/`). Implemented and unit tested: FastAPI REST + SSE
-   over a real TimescaleDB-backed alert store (the first thing in this repo to actually
-   write to Postgres), RF health + spectrum display, `RF_ONLY`/`API_ONLY` divergence rate.
-   `web/`'s TypeScript type-checks and builds cleanly; not run against a real browser/backend
-   in this sandbox. `web/` builds into `api`'s own container image and is served from there
-   (`GET /` and below) rather than running as a separate container -- see
-   `services/api/README.md`.
-
-Phases 5-8 were built ahead of Phase 2's real-audio proof, at the user's explicit direction,
-to reach a whole-stack MVP faster -- see `docs/design/tracking.md`'s per-phase notes for the
-full done/open breakdown and every build-order exception's reasoning. None of them are
-verified against real hardware, a real Meshtastic node, a real LiteLLM endpoint, or a real
-Postgres/Redis instance; every wire contract with external systems (Meshtastic serial,
-LiteLLM, the OpenAI STT shape, the NWS CAP API) was checked against real published specs
-rather than guessed, which is a meaningfully different claim from "verified live."
+`docs/design/tracking.md` is the living, per-phase record of exactly what's confirmed vs.
+still open -- read that instead of this section for anything more specific than "does it
+build and pass its tests."
 
 ## Non-goals
 

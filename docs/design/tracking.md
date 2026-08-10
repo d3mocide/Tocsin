@@ -29,7 +29,7 @@ completion of the phase's actual exit criteria.
 | 2 | SAME decode end to end | In Progress | 2026-08-07 |
 | 3 | Live audio | Done | 2026-08-08 |
 | 4 | Segment capture + local STT | In Progress | 2026-08-08 |
-| 5 | NWS poller + fusion | In Progress | 2026-08-08 |
+| 5 | NWS poller + fusion | In Progress | 2026-08-10 |
 | 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
 | 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-10 |
 | 8 | API + web UI | In Progress | 2026-08-10 |
@@ -667,6 +667,29 @@ real-audio gap for the RF side.
   across every area and the zone request instead of one per request target. `nws_poller`
   suite: 28 passed, up from 21.
 
+- **2026-08-10:** Two further additions, both from the user, neither with an accompanying
+  test: `nws_poller` gained `NWS_POLLER_STRICT_ZONE_FILTER` (drop a polled alert whose UGC/
+  SAME codes don't hit a configured `NWS_POLLER_ZONES` entry) and `NWS_POLLER_MAX_RADIUS_MILES`
+  (drop an alert whose nearest point -- from its own polygon geometry, or a small built-in
+  UGC-centroid table when it has none -- is farther than that from `TOCSIN_LATITUDE`/
+  `TOCSIN_LONGITUDE`; no-op unless both operator coordinates are set), applied in
+  `service.py`'s `_emit_fresh` after the existing zone/area fetch and before dedup. Separately,
+  `SeenAlertTracker` (`tracker.py`) now accepts a Redis client and persists its `id -> sent`
+  seen-map to a Redis hash (`tocsin:nws_poller:seen`), reusing the same client `main()` already
+  builds for the CAP sink -- without it, every container restart re-emitted every currently
+  active alert to `fusion` as "new," since `/alerts/active` returns the full snapshot each
+  poll with nothing else to distinguish "still active" from "just seen for the first time."
+  In the same area, `fusion.store.AlertStore.ingest_same`/`ingest_cap` (not `nws_poller`) now
+  check still-open alerts for a repeat before minting a new one -- same CAP `id`, or a SAME
+  event sharing `raw_header` or `callsign`+`event_code`+`fips_codes` -- and update the existing
+  `RF_ONLY`/`API_ONLY` alert in place instead of opening a duplicate (`fusion` 33 passed, up
+  from 32 per the diff's added test). `API_ONLY` alert `id`s also changed from a random UUID to
+  a deterministic `sha256(cap.id)[:32]`, so the same CAP alert lands on the same alert id across
+  polls and process restarts, not just within one `AlertStore`'s lifetime. None of this closes
+  the two deliberately-out-of-scope gaps below (a *second* SAME/CAP arrival for an
+  already-`CONFIRMED` alert still opens a new Alert) -- it only dedups repeats of a still-open
+  one.
+
 **Not started / open:**
 - Neither new Dockerfile is build-verified -- no Docker daemon in this authoring sandbox
   this session (unlike the 2026-08-08 session earlier in this log that had one). Both
@@ -1214,6 +1237,44 @@ FastAPI service, and the first TypeScript in this repo.
   proxy or a real Icecast container in this sandbox (no Docker daemon here) -- the `/stream`
   route is tested against a fake upstream, and `entrypoint.sh`'s `envsubst` substitution
   follows the exact pattern already proven for `ICECAST_PORT`.
+
+- **2026-08-10 (dashboard tabs + weather map):** Web UI split into two tabs (`index.html`,
+  `main.ts`) -- **Dashboard** (live audio, nearby NWR stations, a new NWS zone & weather map,
+  and the alert feed on the left; spectrum, RF channels, system health, and dispatch on the
+  right) and **Activity** (the merged transcript/dispatch log, plus per-service status moved
+  off the Dashboard entirely, since a 5-panel sidebar next to a lone feed was the original
+  layout's own known imbalance -- see the 2026-08-09 entry above). New `views/map.ts`: a
+  Leaflet map on a dark CartoDB basemap (falls back to a "Vector Mode" status pill on tile
+  error rather than a blank canvas) drawing only the NWS zones (`views/zone_data.ts`'s small
+  hand-maintained UGC -> polygon table) currently holding an active alert, filled/outlined by
+  that zone's highest active tier, plus every nearby NWR station as a tower marker colored by
+  `status` with a pulsing ring on whichever station is nearest the operator, matches `KIG98`,
+  or is otherwise inferred to be feeding a live channel/health sample; an optional NEXRAD
+  radar overlay (Iowa State's public IEM WMS tile service) toggles on top. `data/
+  nwr_stations_or.yaml` became `data/nwr_stations/`, one file per state (`or`/`wa`/`ca`/`id`
+  so far); `api.reference.py` now merges every file in that directory (falling back to a
+  single `nwr_stations.yaml`/`nwr_stations_or.yaml` if present, for compatibility) and reports
+  `distance_miles` alongside `distance_km`. `nws_poller` gained matching geographic filtering
+  (`NWS_POLLER_MAX_RADIUS_MILES`/`NWS_POLLER_STRICT_ZONE_FILTER` -- Phase 5's entry this date
+  has the detail). `views/stations.ts` dropped its own distance-radius filter in favor of
+  showing the full sorted list, since the map now gives a visual sense of radius instead. None
+  of this shipped with new or updated `web`/`api` tests -- worth a real-browser check against
+  a stub API before trusting the map/station rendering, same posture as the rest of this
+  phase.
+
+- **2026-08-10 (mobile + PWA + icon):** `app-header` now wraps instead of overflowing
+  horizontally under ~900px (brand drops to its own row; nav tabs and the connection badge
+  wrap together as a pair rather than the badge landing alone on a third line), and the map's
+  internal Leaflet stacking context (z-index up to 1000) is isolated so it can no longer climb
+  above the sticky header on scroll at that width. Added `manifest.webmanifest`, an
+  `apple-touch-icon.png`, and related `<head>` tags so "Add to Home Screen" on iOS picks up
+  Tocsin's own icon instead of a generated letter tile (iOS ignores SVG favicons for this).
+  The Activity tab's nav-bar label was shortened from "Activity & Voice Transcripts" to
+  "Activity" (the panel heading itself is unchanged) -- it was the longest label on the
+  narrowest element. The favicon/app icon was also redrawn twice this date, settling on four
+  layered spectrum bars with a red EKG-style pulse sweeping across them (`web/public/
+  favicon.svg`, regenerated into every PNG size) -- echoes the Spectrum panel's own visual
+  language instead of a literal bell, and reads cleanly down to 16px.
 
 **Not started / open:**
 - Argon2id local backend auth (design doc §9) is still not built -- the reverse-proxy half
@@ -2333,3 +2394,37 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   that kind of change belongs, which is what this entry and the roadmap.md edit are. Full
   suite green: 132/29/37/48/52/30/43/110/118 passed across all eight services plus `web`
   build.
+
+- **2026-08-10 (documentation catch-up):** Several of the same-day changes above (dashboard
+  tabs, the weather map, NWR station data moving to `data/nwr_stations/`, radius/zone
+  filtering, alert dedup and stable `API_ONLY` ids, persisted `SeenAlertTracker` state, the
+  mobile/PWA fixes, the logo) had landed without their READMEs catching up, at the user's
+  request to bring the docs into line. Root `README.md`: added a "Web UI" section (the
+  Dashboard/Activity tabs, the map, the PWA install path -- none of it was mentioned at all
+  before), fixed the repository-layout tree to show `data/nwr_stations/` instead of a single
+  flat file, and replaced the "Build order" section's phase-by-phase narrative -- which had
+  drifted into duplicating this document at increasing length every session -- with a short
+  "Status" section that states the headline facts (all eight milestones unit-tested; Phases 1
+  and 3 live-hardware-verified; no real SAME header decoded yet) and points here for anything
+  more specific, trimming ~35 lines of content this file already carries better. Also trimmed
+  two self-referential asides in "Hardware bring-up" about this repo's own authoring sandbox
+  having no USB subsystem, which read as noise to an operator following the runbook.
+  `web/README.md`'s "Layout" section still described the pre-tab single-page two-column
+  design; rewrote it for the Dashboard/Activity split and added a "What's on the page" entry
+  for `views/map.ts`. `services/api/README.md` and `data/README.md` still named the old flat
+  `nwr_stations_or.yaml` in two places each (`data/README.md` was already correct); fixed the
+  stragglers in `api/README.md`'s configuration table. `services/nws_poller/README.md`'s
+  configuration table was missing `NWS_POLLER_STRICT_ZONE_FILTER` and
+  `NWS_POLLER_MAX_RADIUS_MILES` entirely (present in code and `.env.example` since this
+  morning's Phase 5 entry, absent from the README); added both, plus a note that
+  `NWS_POLLER_REDIS_URL` now also backs the persisted seen-tracker, not just the CAP sink.
+  `services/fusion/README.md`'s Status section didn't mention the in-place dedup or
+  deterministic `API_ONLY` ids; added a paragraph. Separately, found and fixed one real (if
+  cosmetic) leftover bug while grepping for stale MQTT references after the 2026-08-10 MQTT
+  removal earlier this file: `web/src/views/status.ts`'s hybrid-mode chip tooltip still read
+  "NWS API polling, remote STT, and MQTT fallback are active" -- that removal's own commit
+  never touched this string, since nothing in its diff was named `meshtastic`/`mqtt` and nobody
+  grepped the UI copy itself. Now reads "...and LLM enrichment are active," matching what
+  hybrid mode actually turns on today (design doc §8: NWS polling, remote STT, stage-2 LLM
+  enrichment -- no MQTT leg exists anymore). No code behavior changed by this pass beyond that
+  one string; everything else was documentation-only.
