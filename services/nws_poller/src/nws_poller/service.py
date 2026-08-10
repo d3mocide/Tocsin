@@ -131,6 +131,7 @@ class Poller:
         max_radius_miles: float | None = None,
         operator_lat: float | None = None,
         operator_lon: float | None = None,
+        redis_client=None,
     ):
         self._client = client
         self._areas = areas or []
@@ -141,7 +142,7 @@ class Poller:
         self._operator_lon = operator_lon
         self._sink = sink or LoggingCapAlertSink()
         self._etags: dict[str, str] = {}
-        self._tracker = SeenAlertTracker()
+        self._tracker = SeenAlertTracker(redis_client=redis_client)
 
     def poll_once(self) -> int:
         """Polls every configured area once (if any), plus one combined

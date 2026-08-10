@@ -91,6 +91,7 @@ def main() -> None:
         max_radius_miles=max_radius_miles,
         operator_lat=operator_lat,
         operator_lon=operator_lon,
+        redis_client=redis_client,
     )
     heartbeat = heartbeat_module.build(redis_client)
     # A silently unreachable api.weather.gov and a genuinely quiet night

@@ -19,6 +19,7 @@ often it matters.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -123,7 +124,7 @@ class AlertStore:
                 return alert
 
         alert = Alert(
-            id=uuid.uuid4().hex,
+            id=hashlib.sha256(cap.id.encode()).hexdigest()[:32],
             state=AlertState.API_ONLY,
             confidence=compute_confidence(AlertState.API_ONLY, self._mode),
             event_name=cap.event,
