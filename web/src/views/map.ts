@@ -247,6 +247,18 @@ export class MapView {
       }
     }
 
+    // Find the #1 nearest station to the operator's configured location
+    let nearestCallsign: string | null = null;
+    let minStationDist = Number.POSITIVE_INFINITY;
+    for (const [callsign, station] of Object.entries(stations)) {
+      if (station.lat === null || station.lon === null) continue;
+      const d = station.distance_miles ?? (station.distance_km !== null ? station.distance_km * 0.621371 : null);
+      if (d !== null && d < minStationDist) {
+        minStationDist = d;
+        nearestCallsign = callsign;
+      }
+    }
+
     // 2. Draw NWR Radio Transmitters
     for (const [callsign, station] of Object.entries(stations)) {
       if (station.lat === null || station.lon === null) continue;
@@ -255,11 +267,14 @@ export class MapView {
       if (distMiles !== null && distMiles > 150) continue;
 
       const isNormal = station.status.toUpperCase() === "NORMAL";
-      // Gate active pulse ring to stations actively monitored by the receiver site
+      // Gate active pulse ring to the primary nearest station, KIG98, or active SDR sites
       const isMonitored = isNormal && (
-        (distMiles !== null && distMiles <= 15) ||
+        callsign === nearestCallsign ||
+        callsign === "KIG98" ||
+        (distMiles !== null && distMiles <= 35) ||
         activeSites.has(callsign.toUpperCase()) ||
-        activeSites.has(station.name.toUpperCase())
+        activeSites.has(station.name.toUpperCase()) ||
+        Array.from(activeSites).some((site) => callsign.toUpperCase().includes(site) || site.includes(callsign.toUpperCase()))
       );
 
       const statusClass = isNormal
