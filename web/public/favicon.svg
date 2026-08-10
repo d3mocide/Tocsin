@@ -1,39 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <defs>
-    <!-- Background Gradient -->
-    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1e293b"/>
-      <stop offset="100%" stop-color="#0f172a"/>
-    </linearGradient>
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0f172a" stroke="#334155" stroke-width="1.2"/>
 
-    <!-- Signal Arc Gradient (Cyan to Amber) -->
-    <linearGradient id="signal-grad" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="50%" stop-color="#10b981"/>
-      <stop offset="100%" stop-color="#f59e0b"/>
-    </linearGradient>
-
-    <!-- Bell / Alarm Core Gradient -->
-    <linearGradient id="bell-grad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#fbbf24"/>
-      <stop offset="100%" stop-color="#f59e0b"/>
-    </linearGradient>
-  </defs>
-
-  <!-- Dark Rounded Container -->
-  <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#bg-grad)" stroke="#334155" stroke-width="1.2"/>
-
-  <!-- Radio / Weather Broadcast Signal Waves -->
-  <path d="M 6.5 12 A 11 11 0 0 1 25.5 12" fill="none" stroke="url(#signal-grad)" stroke-width="2" stroke-linecap="round" opacity="0.4"/>
-  <path d="M 9.5 15 A 7.5 7.5 0 0 1 22.5 15" fill="none" stroke="url(#signal-grad)" stroke-width="2.2" stroke-linecap="round" opacity="0.75"/>
-  <path d="M 12.5 18 A 4 4 0 0 1 19.5 18" fill="none" stroke="url(#signal-grad)" stroke-width="2.2" stroke-linecap="round"/>
-
-  <!-- Tocsin Alarm Bell Icon -->
-  <path d="M 16 13.5 C 13.5 13.5 12.5 16 12.5 19 L 11.5 21.5 C 11.2 22.1 11.6 22.8 12.3 22.8 L 19.7 22.8 C 20.4 22.8 20.8 22.1 20.5 21.5 L 19.5 19 C 19.5 16 18.5 13.5 16 13.5 Z" fill="url(#bell-grad)"/>
-
-  <!-- Bell Clapper / Pulse Dot -->
-  <circle cx="16" cy="24.8" r="1.5" fill="#f59e0b"/>
-
-  <!-- Center RF Tower Pulse Point -->
-  <circle cx="16" cy="11" r="1.2" fill="#38bdf8"/>
+  <!-- Spectrum trace with the alert channel flagged, matching the Spectrum panel's own visual language -->
+  <rect x="7.2" y="11.5" width="2.4" height="9" rx="1.2" fill="#4a9eff"/>
+  <rect x="11" y="9" width="2.4" height="14" rx="1.2" fill="#4a9eff"/>
+  <rect x="14.8" y="6" width="2.4" height="20" rx="1.2" fill="#ff4d3d"/>
+  <rect x="18.6" y="8.5" width="2.4" height="15" rx="1.2" fill="#4a9eff"/>
+  <rect x="22.4" y="11" width="2.4" height="10" rx="1.2" fill="#4a9eff"/>
 </svg>
