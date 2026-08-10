@@ -21,7 +21,7 @@ import type { NwrStation } from "../types";
  * across repaints -- a plain function starting over at page 0 every time
  * `reference` reloads would fight anyone mid-page-through.
  */
-const PAGE_SIZE = 6; // 3 columns x 2 rows -- see style.css's .station-grid
+const PAGE_SIZE = 3; // 3 columns x 1 row -- see style.css's .station-grid
 
 export class StationsView {
   private readonly container: HTMLElement;

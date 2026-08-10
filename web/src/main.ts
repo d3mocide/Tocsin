@@ -20,6 +20,7 @@ import { renderActivity } from "./views/activity";
 import { AlertFeedView } from "./views/alerts";
 import { mountFilters } from "./views/filters";
 import { renderHealth } from "./views/health";
+import { MapView } from "./views/map";
 import { WaterfallView } from "./views/spectrum";
 import { StationsView } from "./views/stations";
 import { renderStats } from "./views/stats";
@@ -49,6 +50,28 @@ function poll(fn: () => void, intervalMs: number): void {
   setInterval(fn, intervalMs);
 }
 
+function initNavigationTabs(mapView: MapView): void {
+  const dashBtn = byId("tab-btn-dashboard");
+  const logsBtn = byId("tab-btn-logs");
+  const dashView = byId("tab-view-dashboard");
+  const logsView = byId("tab-view-logs");
+
+  dashBtn.addEventListener("click", () => {
+    dashBtn.classList.add("active");
+    logsBtn.classList.remove("active");
+    dashView.classList.add("active");
+    logsView.classList.remove("active");
+    mapView.invalidateSize();
+  });
+
+  logsBtn.addEventListener("click", () => {
+    logsBtn.classList.add("active");
+    dashBtn.classList.remove("active");
+    logsView.classList.add("active");
+    dashView.classList.remove("active");
+  });
+}
+
 async function main(): Promise<void> {
   initPanelCollapsing();
 
@@ -56,8 +79,10 @@ async function main(): Promise<void> {
   const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
   const streamsView = new StreamsView(byId("streams"), store);
   const stationsView = new StationsView(byId("nwr-stations"), store);
+  const mapView = new MapView(byId("map-view-container"), store);
   const refreshFilterSites = mountFilters(byId("filters"), store);
 
+  initNavigationTabs(mapView);
 
   // Each panel repaints only when something it actually reads changed.
   // `clock` is in the list for every panel showing a relative time, and
@@ -66,6 +91,7 @@ async function main(): Promise<void> {
     const touched = (...topics: Topic[]) => topics.some((topic) => changed.has(topic));
     if (touched("system")) renderModeChip(byId("mode-chip"), store);
     if (touched("system")) stationsView.render();
+    if (touched("system", "alerts")) mapView.render();
     if (touched("connection")) renderConnection(byId("connection-status"), store);
     if (touched("stats")) renderStats(byId("stats"), store);
     if (touched("services", "clock")) renderServices(byId("services"), store);
@@ -220,7 +246,7 @@ function initPanelCollapsing(): void {
     }
   } else {
     // Default collapsed panels on first launch to keep dashboard focused on alerts
-    collapsedSet = new Set(["activity", "dispatch"]);
+    collapsedSet = new Set(["activity"]);
   }
 
   document.querySelectorAll<HTMLElement>("section.panel").forEach((panel) => {

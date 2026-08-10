@@ -17,90 +17,111 @@
         <span class="brand-subtitle">NOAA Weather Radio & CAP Alert Relay</span>
         <div id="mode-chip"></div>
       </div>
+
+      <nav class="nav-tabs" aria-label="Main Navigation">
+        <button id="tab-btn-dashboard" class="nav-tab active" type="button">Dashboard</button>
+        <button id="tab-btn-logs" class="nav-tab" type="button">Logs & Activity</button>
+      </nav>
+
       <div id="connection-status"></div>
     </header>
 
+    <div id="tab-view-dashboard" class="tab-view active">
+      <main class="layout">
+        <div class="main-column">
+          <section class="panel panel-streams" aria-labelledby="streams-heading">
+            <div class="panel-head">
+              <h2 id="streams-heading">Live audio</h2>
+              <div id="streams-header-summary" class="panel-head-summary"></div>
+            </div>
+            <div id="streams"></div>
+          </section>
 
+          <section class="panel" aria-labelledby="nwr-stations-heading">
+            <div class="panel-head"><h2 id="nwr-stations-heading">Nearby NWR stations</h2></div>
+            <div id="nwr-stations"></div>
+          </section>
 
-    <main class="layout">
-      <div class="main-column">
-        <section class="panel panel-streams" aria-labelledby="streams-heading">
-          <div class="panel-head">
-            <h2 id="streams-heading">Live audio</h2>
-            <div id="streams-header-summary" class="panel-head-summary"></div>
-          </div>
-          <div id="streams"></div>
-        </section>
+          <section class="panel" aria-labelledby="map-heading">
+            <div class="panel-head">
+              <h2 id="map-heading">NWS Zone & Weather Map</h2>
+              <div id="map-header-summary" class="panel-head-summary"></div>
+            </div>
+            <div id="map-view-container"></div>
+          </section>
 
-        <section class="panel" aria-labelledby="nwr-stations-heading">
-          <div class="panel-head"><h2 id="nwr-stations-heading">Nearby NWR stations</h2></div>
-          <div id="nwr-stations"></div>
-        </section>
+          <section class="panel panel-feed" aria-labelledby="alerts-heading">
+            <div class="panel-head">
+              <h2 id="alerts-heading">Alert feed</h2>
+            </div>
+            <div id="filters" class="filters"></div>
+            <!-- Announced politely: a new alert arriving should reach a screen
+                 reader without stealing focus from whatever is being read. -->
+            <div id="alerts" class="alert-feed" aria-live="polite" aria-busy="false">
+              <p class="empty">Loading…</p>
+            </div>
+          </section>
+        </div>
 
-        <section class="panel panel-feed" aria-labelledby="alerts-heading">
-          <div class="panel-head">
-            <h2 id="alerts-heading">Alert feed</h2>
-          </div>
-          <div id="filters" class="filters"></div>
-          <!-- Announced politely: a new alert arriving should reach a screen
-               reader without stealing focus from whatever is being read. -->
-          <div id="alerts" class="alert-feed" aria-live="polite" aria-busy="false">
-            <p class="empty">Loading…</p>
-          </div>
-        </section>
+        <div class="sidebar">
+          <section class="panel" aria-labelledby="spectrum-heading">
+            <div class="panel-head">
+              <h2 id="spectrum-heading">Spectrum</h2>
+              <select id="spectrum-site-select" class="filter-select" aria-label="Spectrum site"></select>
+            </div>
+            <canvas id="spectrum-canvas" width="640" height="260"></canvas>
+          </section>
 
-        <section class="panel" aria-labelledby="activity-heading">
-          <div class="panel-head">
-            <h2 id="activity-heading">Activity</h2>
-            <div id="activity-header-summary" class="panel-head-summary"></div>
-          </div>
-          <div id="activity"></div>
-        </section>
-      </div>
+          <section class="panel" aria-labelledby="rf-health-heading">
+            <div class="panel-head">
+              <h2 id="rf-health-heading">RF channels</h2>
+              <div id="rf-health-header-summary" class="panel-head-summary"></div>
+            </div>
+            <div id="rf-health"></div>
+          </section>
 
-      <div class="sidebar">
-        <section class="panel" aria-labelledby="spectrum-heading">
-          <div class="panel-head">
-            <h2 id="spectrum-heading">Spectrum</h2>
-            <select id="spectrum-site-select" class="filter-select" aria-label="Spectrum site"></select>
-          </div>
-          <canvas id="spectrum-canvas" width="640" height="260"></canvas>
-        </section>
+          <section class="panel" aria-labelledby="stats-heading">
+            <div class="panel-head">
+              <h2 id="stats-heading">System health</h2>
+              <div id="stats-header-summary" class="panel-head-summary"></div>
+            </div>
+            <div id="stats" class="stats-grid"></div>
+          </section>
 
-        <section class="panel" aria-labelledby="rf-health-heading">
-          <div class="panel-head">
-            <h2 id="rf-health-heading">RF channels</h2>
-            <div id="rf-health-header-summary" class="panel-head-summary"></div>
-          </div>
-          <div id="rf-health"></div>
-        </section>
+          <section class="panel" aria-labelledby="dispatch-heading">
+            <div class="panel-head">
+              <h2 id="dispatch-heading">Dispatch</h2>
+              <div id="dispatch-header-summary" class="panel-head-summary"></div>
+            </div>
+            <div id="dispatch"></div>
+          </section>
+        </div>
+      </main>
+    </div>
 
-        <section class="panel" aria-labelledby="stats-heading">
-          <div class="panel-head">
-            <h2 id="stats-heading">System health</h2>
-            <div id="stats-header-summary" class="panel-head-summary"></div>
-          </div>
-          <div id="stats" class="stats-grid"></div>
-        </section>
+    <div id="tab-view-logs" class="tab-view">
+      <main class="layout">
+        <div class="main-column">
+          <section class="panel" aria-labelledby="activity-heading">
+            <div class="panel-head">
+              <h2 id="activity-heading">Activity & Voice Transcripts</h2>
+              <div id="activity-header-summary" class="panel-head-summary"></div>
+            </div>
+            <div id="activity"></div>
+          </section>
+        </div>
 
-        <section class="panel" aria-labelledby="services-heading">
-          <div class="panel-head">
-            <h2 id="services-heading">Services</h2>
-            <div id="services-header-summary" class="panel-head-summary"></div>
-          </div>
-          <div id="services"></div>
-        </section>
-
-        <section class="panel" aria-labelledby="dispatch-heading">
-          <div class="panel-head">
-            <h2 id="dispatch-heading">Dispatch</h2>
-            <div id="dispatch-header-summary" class="panel-head-summary"></div>
-          </div>
-          <div id="dispatch"></div>
-        </section>
-      </div>
-    </main>
-
+        <div class="sidebar">
+          <section class="panel" aria-labelledby="services-heading">
+            <div class="panel-head">
+              <h2 id="services-heading">Services Status</h2>
+              <div id="services-header-summary" class="panel-head-summary"></div>
+            </div>
+            <div id="services"></div>
+          </section>
+        </div>
+      </main>
+    </div>
 
     <footer>
       <p>
