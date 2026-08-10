@@ -32,6 +32,7 @@ class CapAlert:
     same_codes: tuple[str, ...]
     ugc_codes: tuple[str, ...]
     vtec: str | None
+    geometry: dict | None = None
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -63,4 +64,5 @@ def parse_feature(feature: dict) -> CapAlert:
         same_codes=tuple(geocode.get("SAME") or ()),
         ugc_codes=tuple(geocode.get("UGC") or ()),
         vtec=vtec_values[0] if vtec_values else None,
+        geometry=feature.get("geometry"),
     )

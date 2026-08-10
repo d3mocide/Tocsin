@@ -217,3 +217,27 @@ def test_strict_zone_filter_discards_unmatched_alerts():
     assert sink.alerts[0].id == "urn:oid:matching"
 
 
+def test_max_radius_miles_filters_distant_alerts():
+    portland_feature = _feature(id="urn:oid:pdx", geocode={"SAME": ["041051"]})
+    klamath_feature = _feature(id="urn:oid:klamath", geocode={"SAME": ["041035"]})
+
+    client = FakeClient(
+        {"OR": [FetchResult(not_modified=False, etag="e1", features=(portland_feature, klamath_feature))]}
+    )
+    sink = FakeSink()
+    poller = Poller(
+        client,
+        areas=["OR"],
+        sink=sink,
+        max_radius_miles=100.0,
+        operator_lat=45.52,
+        operator_lon=-122.67,
+    )
+
+    emitted = poller.poll_once()
+
+    assert emitted == 1
+    assert len(sink.alerts) == 1
+    assert sink.alerts[0].id == "urn:oid:pdx"
+
+
