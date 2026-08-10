@@ -54,7 +54,7 @@ already-not-low-latency stream.
 | `ICECAST_HOST` | `icecast` | Icecast server hostname. |
 | `ICECAST_PORT` | `8000` | Icecast server port. Compose sets this from the top-level `ICECAST_PORT` in `.env`, which also drives Icecast's own listen socket and the published host port -- see the root README's "Ports". |
 | `ICECAST_SOURCE_USER` | `source` | Icecast source-client username (Icecast's convention: always `source`). |
-| `ICECAST_SOURCE_PASSWORD` | `hackme` | Must match `<source-password>` in `deploy/icecast/icecast.xml`. |
+| `ICECAST_SOURCE_PASSWORD` | `hackme` | Icecast source-client password. Compose passes the same `.env` value to the `icecast` service too, which renders it into `<source-password>` at container start (`deploy/icecast/entrypoint.sh`) -- the two can't drift out of sync, so there's nothing to hand-edit in `icecast.xml`. |
 | `ICECAST_STREAM_NAME_TEMPLATE` | `Tocsin {site} {channel}` | Stream name shown on Icecast's status page and in players. `{site}`/`{channel}` are substituted with the mount's site/channel -- or their display-name overrides, see `LIVE_AUDIO_METADATA_CONFIG` below. |
 | `ICECAST_STREAM_DESCRIPTION` | `Tocsin NOAA Weather Radio relay` | Stream description, same for every mount. |
 | `ICECAST_STREAM_GENRE` | `weather` | Stream genre, same for every mount. |

@@ -44,6 +44,7 @@ directory that's actually there).
 | `GET /services` | Per-service liveness from the heartbeat keys, compared against the set expected *in this mode* -- a crashed service is reported `down`, not omitted. |
 | `GET /system` | `TOCSIN_MODE` and the browser-facing Icecast URL. |
 | `GET /streams` | Icecast mountpoints, merged from Icecast's `status-json.xsl` and `live_audio`'s heartbeat. |
+| `GET /stream/{mount_path}` | Relays one Icecast mount through this process's own port, for a deployment behind a reverse proxy that forwards only this service's port. Opt-in: the UI only builds URLs through here when `ICECAST_PUBLIC_URL` is a relative path (e.g. `/stream`) -- see `app.py`'s docstring on this route. 404 if Icecast isn't configured, 502 if it's unreachable or errors. |
 | `GET /reference` | `data/`'s SAME event codes (name + tier), FIPS -> county table, and NWR station list, served once for the UI to resolve client-side. Each station carries `distance_km` from `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` when both are set, else `null`. |
 | `GET /captures/{name}` | One finished capture WAV. Basename only, re-checked to be inside `API_CAPTURES_DIR` after resolution -- `wav_path` reaches this from a Redis payload, so trusting it as a filesystem path would make this an arbitrary-file read. |
 
@@ -88,7 +89,8 @@ sandbox).
 | `TOCSIN_LATITUDE` / `TOCSIN_LONGITUDE` | *(unset)* | Operator's approximate location, decimal degrees. Both set adds `distance_km` to every station in `GET /reference`'s `stations` table (haversine, `reference.py`) so the UI can list nearby NWR transmitters; unset leaves `distance_km` `null` for all of them rather than a wrong or fabricated number. Two stations in `data/nwr_stations_or.yaml` (WZ2522, WZ2559) have no coordinates of their own yet and stay `null` regardless. |
 | `API_CAPTURES_DIR` | *(unset)* | `segment_capture`'s output directory. Unset makes `GET /captures/{name}` a 404. |
 | `ICECAST_HOST` / `ICECAST_PORT` | `icecast` / `8000` | Where *this process* reaches Icecast to read its status page. `ICECAST_PORT` is also what `GET /system` reports for the browser to build playback URLs from, so it must match the port Icecast is published on -- compose keeps the two sides equal on purpose. |
-| `ICECAST_PUBLIC_URL` | *(unset)* | Where the *browser* should reach Icecast. Unset means the page falls back to its own hostname on `ICECAST_PORT`, which is right for a LAN deployment; set it behind a reverse proxy. |
+| `ICECAST_PUBLIC_URL` | *(unset)* | Where the *browser* should reach Icecast. Unset means the page falls back to its own hostname on `ICECAST_PORT`, which is right for a LAN deployment. Set to an absolute URL (e.g. `https://stream.example.com`) if Icecast is reachable at its own address behind a reverse proxy. Set to a *relative* path (e.g. `/stream`) if the reverse proxy forwards only this service's port -- the UI then builds same-origin URLs and `GET /stream/{mount_path}` (above) proxies the audio bytes itself. |
+| `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated browser origins allowed to read this API cross-origin. `*` is fine for localhost/LAN (this repo's posture so far, design doc §11); narrow it once reachable from the internet. Same-origin requests -- the normal case, since `api` serves the built SPA -- never need this at all. |
 
 ## Startup and Postgres
 

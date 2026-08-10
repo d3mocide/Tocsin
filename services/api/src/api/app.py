@@ -36,6 +36,51 @@ async def _default_http_get(url: str) -> str | None:
         return response.text
 
 
+class _UpstreamAudioStream:
+    """What `/stream/{mount_path}` needs from an upstream response,
+    independent of whether it's a real httpx stream or a test fake --
+    status code, content type, an async byte iterator, and a way to
+    release both the response and the client that made it."""
+
+    def __init__(self, status_code: int, content_type: str | None, chunks, closer) -> None:
+        self.status_code = status_code
+        self.content_type = content_type
+        self._chunks = chunks
+        self._closer = closer
+
+    def __aiter__(self):
+        return self._chunks.__aiter__()
+
+    async def aclose(self) -> None:
+        await self._closer()
+
+
+async def _default_open_audio_stream(url: str) -> _UpstreamAudioStream | None:
+    """Injectable so `/stream/{mount_path}` is testable without a running
+    Icecast. Unlike `_default_http_get`, this streams rather than buffers
+    the response -- a live audio feed has no end, so reading the whole
+    body first isn't an option. Returns `None` if Icecast can't be
+    reached at all (connection refused, DNS, timeout); a reachable-but-
+    erroring response (404, 500) is instead returned with its real
+    `status_code` so the route can tell the two apart, same split as
+    `streams.fetch_icecast_status`."""
+    import httpx
+
+    client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None))
+    request = client.build_request("GET", url)
+    try:
+        response = await client.send(request, stream=True)
+    except httpx.RequestError:
+        await client.aclose()
+        return None
+
+    async def close() -> None:
+        await response.aclose()
+        await client.aclose()
+
+    return _UpstreamAudioStream(response.status_code, response.headers.get("content-type"), response.aiter_bytes(), close)
+
+
 def create_app(
     pool: db.PoolLike,
     redis_client,
@@ -43,6 +88,7 @@ def create_app(
     static_dir: Path | None = None,
     config: ApiConfig | None = None,
     http_get=_default_http_get,
+    open_audio_stream=_default_open_audio_stream,
 ) -> FastAPI:
     app = FastAPI(title="Tocsin API")
     app.state.pool = pool
@@ -50,6 +96,7 @@ def create_app(
     app.state.broadcaster = broadcaster or Broadcaster()
     app.state.config = config
     app.state.http_get = http_get
+    app.state.open_audio_stream = open_audio_stream
     app.state.reference = reference_module.load(
         config.data_dir if config else None,
         config.latitude if config else None,
@@ -62,12 +109,16 @@ def create_app(
         streams_module.public_base_url(config.icecast_host, config.icecast_port) if config else None
     )
 
-    # Personal/emergency use (design doc §11, non-goals), same posture as
-    # deploy/mosquitto's and deploy/icecast's default-open configs -- not
-    # meant to be exposed past localhost/LAN as shipped.
+    # Defaults to `*` (config.py's DEFAULT_CORS_ALLOWED_ORIGINS) -- fine for
+    # the localhost/LAN use this repo has shipped for so far (design doc
+    # §11, non-goals), same posture as deploy/mosquitto's and
+    # deploy/icecast's default-open configs. Set CORS_ALLOWED_ORIGINS once
+    # this is reachable from the internet; see .env.example. `config` is
+    # only ever `None` in tests that don't care about this, so falling
+    # back to the same `*` default there keeps their behavior unchanged.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=list(config.cors_allowed_origins) if config else ["*"],
         allow_methods=["GET"],
         allow_headers=["*"],
     )
@@ -161,6 +212,48 @@ def create_app(
             "icecast_reachable": icecast is not None,
             "streams": streams_module.merge(known, icecast, public_base),
         }
+
+    @app.get("/stream/{mount_path:path}")
+    async def proxy_stream(mount_path: str):
+        """Relays one Icecast mount through this process's own port,
+        instead of the browser dialing Icecast directly (`streams.py`'s
+        normal, cheaper path). Exists for deployments behind an external
+        reverse proxy that only forwards this service's port -- set
+        `ICECAST_PUBLIC_URL=/stream` (a relative path, not a host) to
+        point the UI's playback URLs here; see .env.example. Off by
+        default: this pins one open connection per listener for as long
+        as they listen, the exact cost `streams.py`'s module docstring
+        already calls out, so a LAN/direct deployment should leave
+        `ICECAST_PUBLIC_URL` unset or absolute and never hit this route.
+
+        `mount_path` is appended to the fixed internal `icecast_base`
+        (`http://icecast:8000`) by plain string concatenation rather than
+        `urljoin` -- a value starting `//` or containing `://` still lands
+        as a *path* on that fixed host this way, not a redirect to some
+        other one, so there's no open-proxy/SSRF surface here beyond what
+        talking to this stack's own Icecast already allows.
+        """
+        if icecast_base is None:
+            raise HTTPException(status_code=404, detail="icecast not configured")
+        upstream = await app.state.open_audio_stream(f"{icecast_base}/{mount_path}")
+        if upstream is None:
+            raise HTTPException(status_code=502, detail="icecast unreachable")
+        if upstream.status_code != 200:
+            await upstream.aclose()
+            raise HTTPException(status_code=502, detail="icecast returned an error")
+
+        async def body():
+            try:
+                async for chunk in upstream:
+                    yield chunk
+            finally:
+                await upstream.aclose()
+
+        return StreamingResponse(
+            body(),
+            media_type=upstream.content_type or "application/ogg",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @app.get("/captures/{name}")
     async def get_capture(name: str):

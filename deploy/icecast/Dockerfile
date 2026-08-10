@@ -6,8 +6,9 @@ FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 # gettext-base is only for envsubst, which entrypoint.sh uses to render
-# icecast.xml's ${ICECAST_PORT} -- Icecast reads its listen port from the
-# XML and nowhere else.
+# icecast.xml's ${ICECAST_PORT}/${ICECAST_SOURCE_PASSWORD}/
+# ${ICECAST_ADMIN_PASSWORD} -- Icecast reads all three from the XML and
+# nowhere else.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         icecast2 \
         gettext-base \

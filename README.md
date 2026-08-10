@@ -122,6 +122,46 @@ The api container's internal bind port (`API_PORT`, default `8000`) is separatel
 configurable but rarely worth changing: compose maps `TOCSIN_WEB_PORT` onto it, so it never
 appears in a URL you type.
 
+## Exposing Tocsin behind an external reverse proxy
+
+Design doc §9 has always called for "Docker Compose behind Caddy or NPM"; this is what
+that means in practice. Everything below is orthogonal to `TOCSIN_MODE` -- it's about
+what's reachable from outside your network, not about internet dependency for the alert
+path itself (CLAUDE.md's one rule still holds: SAME decode, local STT, and stage-1
+dispatch never need any of this).
+
+1. **Pick one or two ports to forward.** The reverse proxy needs `TOCSIN_WEB_PORT` (the web
+   UI and API, default `8080`). If it can also forward a second port to this host, forward
+   `ICECAST_PORT` too (default `8000`) and set `ICECAST_PUBLIC_URL` to wherever that's
+   reachable, e.g. `https://stream.example.com` or `https://example.com:8443` -- this is
+   the cheaper path (`services/api/src/api/streams.py`'s docstring on why: direct-to-Icecast
+   playback costs the api process nothing per listener).
+
+   If the proxy can only forward a single port/origin to this host -- common with tunnel-style
+   proxies that map one hostname to one backend -- set `ICECAST_PUBLIC_URL=/stream` (a
+   relative path, not a host) instead. The web UI then builds same-origin playback URLs and
+   `api` proxies the audio bytes itself via `GET /stream/<mount>`. This pins one open
+   connection per listener for as long as they listen, so prefer the two-port path above
+   when the proxy supports it.
+
+2. **Narrow CORS.** `CORS_ALLOWED_ORIGINS` defaults to `*`, fine for localhost/LAN but not
+   once the API is reachable from the internet. Set it to your real origin(s), e.g.
+   `CORS_ALLOWED_ORIGINS=https://tocsin.example.com`. Same-origin requests (the normal case,
+   since `api` serves the built web UI itself) never need this at all -- it only matters for
+   a separate app or dev server reading this API cross-origin.
+
+3. **Change the default passwords.** `POSTGRES_PASSWORD`, `ICECAST_SOURCE_PASSWORD`, and
+   `ICECAST_ADMIN_PASSWORD` all default to placeholder values (`changeme`/`hackme`) meant
+   for a closed LAN. Set real values in `.env` before exposing anything past localhost --
+   `ICECAST_SOURCE_PASSWORD`/`ICECAST_ADMIN_PASSWORD` are rendered into Icecast's own config
+   at container start, so there's no separate file to hand-edit.
+
+4. **There is no application-level auth yet** (design doc §9 names "reverse proxy + Argon2id
+   local backend auth" as the plan; only the reverse-proxy half is scoped here). Every route
+   this API serves is unauthenticated read access to alert/health/transcript data. If that
+   matters for your deployment, put auth in the reverse proxy itself (Caddy's `basicauth`,
+   an OAuth2 forward-auth proxy, etc.) until backend auth exists.
+
 ## Troubleshooting
 
 ### The web UI won't load at `http://<host>:8080/`

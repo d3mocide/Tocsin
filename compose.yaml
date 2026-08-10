@@ -168,6 +168,16 @@ services:
       # from icecast.xml's ${ICECAST_PORT} by deploy/icecast/entrypoint.sh),
       # not just what other services dial.
       ICECAST_PORT: ${ICECAST_PORT:-8000}
+      # Rendered into icecast.xml's <source-password>/<relay-password> by
+      # entrypoint.sh -- must match sdr-rx's ICECAST_SOURCE_PASSWORD
+      # above, which is what live-audio actually authenticates with.
+      # Change both together in .env before exposing this past localhost;
+      # they can no longer drift the way editing icecast.xml by hand did.
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:-hackme}
+      # Icecast's own admin UI/status-page auth (icecast.xml's
+      # <admin-user> is fixed at "admin"). Same "change before exposing
+      # past localhost" reasoning as the source password.
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:-hackme}
     ports:
       # Host port and container port deliberately move together, unlike
       # api's below: the browser reaches a mount by the *host* port while

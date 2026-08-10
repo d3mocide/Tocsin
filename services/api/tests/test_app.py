@@ -130,6 +130,18 @@ def test_cors_allows_any_origin_for_browser_reads():
     assert response.headers["access-control-allow-origin"] == "*"
 
 
+def test_cors_can_be_restricted_to_configured_origins():
+    """Set once this instance is reachable from the internet -- the
+    wildcard default above is fine for localhost/LAN, not for that."""
+    client = _configured_client(cors_allowed_origins=("https://tocsin.example.com",))
+
+    allowed = client.get("/alerts", headers={"Origin": "https://tocsin.example.com"})
+    assert allowed.headers["access-control-allow-origin"] == "https://tocsin.example.com"
+
+    other = client.get("/alerts", headers={"Origin": "https://evil.example.com"})
+    assert "access-control-allow-origin" not in other.headers
+
+
 def test_with_no_static_dir_root_is_a_plain_404():
     # Formerly nginx's job (web/nginx.conf); with no built web/dist
     # mounted (e.g. plain `uv run api` dev use), "/" simply isn't a route.
@@ -171,6 +183,7 @@ def _config(**overrides):
         icecast_host="icecast",
         icecast_port=8000,
         icecast_public_url=None,
+        cors_allowed_origins=("*",),
         latitude=None,
         longitude=None,
     )
@@ -178,12 +191,13 @@ def _config(**overrides):
     return ApiConfig(**defaults)
 
 
-def _configured_client(pool=None, redis=None, http_get=None, **config_overrides):
+def _configured_client(pool=None, redis=None, http_get=None, open_audio_stream=None, **config_overrides):
     app = create_app(
         pool or FakePool(),
         redis or FakeRedis(),
         config=_config(**config_overrides),
         http_get=http_get or (lambda url: None),
+        open_audio_stream=open_audio_stream or (lambda url: None),
     )
     return TestClient(app)
 
@@ -242,6 +256,74 @@ def test_get_streams_lists_mounts_from_live_audios_heartbeat():
     assert body["streams"][0]["url"] == "http://icecast:8000/home-WX1.ogg"
     assert body["streams"][0]["listeners"] == 4
     assert body["streams"][0]["on_air"] is True
+
+
+class _FakeAudioStream:
+    """Test double for `app.py`'s `_UpstreamAudioStream` -- same shape
+    (`status_code`, `content_type`, async-iterable, `aclose`) without a
+    real httpx client."""
+
+    def __init__(self, status_code=200, content_type="application/ogg", chunks=(b"abc", b"def")):
+        self.status_code = status_code
+        self.content_type = content_type
+        self._chunks = chunks
+        self.closed = False
+
+    def __aiter__(self):
+        async def gen():
+            for chunk in self._chunks:
+                yield chunk
+
+        return gen()
+
+    async def aclose(self):
+        self.closed = True
+
+
+def test_proxy_stream_relays_bytes_from_icecast():
+    """Deployments behind a reverse proxy that only forwards one port set
+    `ICECAST_PUBLIC_URL=/stream` and rely on this route instead of dialing
+    Icecast directly -- see app.py's docstring on it."""
+    upstream = _FakeAudioStream(chunks=(b"OggS", b"more audio bytes"))
+
+    async def open_stream(url):
+        assert url == "http://icecast:8000/home-WX1.ogg"
+        return upstream
+
+    client = _configured_client(open_audio_stream=open_stream)
+    response = client.get("/stream/home-WX1.ogg")
+
+    assert response.status_code == 200
+    assert response.content == b"OggSmore audio bytes"
+    assert response.headers["content-type"] == "application/ogg"
+    assert upstream.closed is True
+
+
+def test_proxy_stream_is_502_when_icecast_is_unreachable():
+    async def open_stream(url):
+        return None
+
+    response = _configured_client(open_audio_stream=open_stream).get("/stream/home-WX1.ogg")
+    assert response.status_code == 502
+
+
+def test_proxy_stream_is_502_when_icecast_returns_an_error():
+    upstream = _FakeAudioStream(status_code=404)
+
+    async def open_stream(url):
+        return upstream
+
+    response = _configured_client(open_audio_stream=open_stream).get("/stream/home-WX1.ogg")
+    assert response.status_code == 502
+    assert upstream.closed is True
+
+
+def test_proxy_stream_is_404_when_icecast_is_not_configured():
+    # Plain _client(), not _configured_client(): config=None means
+    # icecast_base is never built, same "not configured" case /streams
+    # itself degrades on.
+    response = _client().get("/stream/home-WX1.ogg")
+    assert response.status_code == 404
 
 
 def test_get_transcripts_filters_by_raw_header():

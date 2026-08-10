@@ -32,7 +32,7 @@ completion of the phase's actual exit criteria.
 | 5 | NWS poller + fusion | In Progress | 2026-08-08 |
 | 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
 | 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-08 |
-| 8 | API + web UI | In Progress | 2026-08-09 |
+| 8 | API + web UI | In Progress | 2026-08-10 |
 
 ---
 
@@ -1146,9 +1146,66 @@ FastAPI service, and the first TypeScript in this repo.
   data pointed at, not a number reproduced in this sandbox (no Postgres/Redis load-test
   harness here).
 
+- **2026-08-10** — External-reverse-proxy readiness pass, at the user's request ahead of
+  actually exposing a deployment past their LAN. Three gaps, all in the "deploy-behind-Caddy"
+  half of design doc §9 that Phase 8 had deliberately left open until now:
+  1. **Icecast needed its own exposed port.** The browser has always built playback URLs
+     against `ICECAST_PUBLIC_URL` directly, which is fine when the reverse proxy can forward
+     a second port/origin to Icecast but not when it can only forward one to `api`. Added
+     `GET /stream/{mount_path}` (`app.py`): relays one mount's bytes through `api` itself via
+     a streaming httpx client (`_default_open_audio_stream`, injectable for tests the same
+     way `_default_http_get` already was). Deliberately opt-in, not the new default -- it
+     pins one open connection per listener, the exact cost `streams.py`'s docstring already
+     called out -- so it only activates when an operator sets `ICECAST_PUBLIC_URL` to a
+     *relative* path (e.g. `/stream`) instead of a host; `playbackUrl` in
+     `web/src/views/streams.ts` needed no change at all, since a relative `publicBase` already
+     resolves correctly against the page's own origin. 4 new tests.
+  2. **CORS was hardcoded to `*`.** Fine for the localhost/LAN posture this repo has shipped
+     for so far, not for a deployment reachable from the internet. Added
+     `CORS_ALLOWED_ORIGINS` (`config.py`, comma-separated, default `*` so nothing breaks for
+     existing deployments) and wired it into `app.py`'s `CORSMiddleware`. Checked
+     `SameSite` too: there's nothing to set yet, since this phase still has no auth and
+     therefore no cookies -- that's a note for whenever design doc §9's "Argon2id local
+     backend auth" actually gets built, not a code change now. 3 new tests.
+  3. **Icecast's source/admin passwords were hardcoded `hackme` in the checked-in XML**,
+     independent of the `ICECAST_SOURCE_PASSWORD` env var `live_audio` already reads --
+     changing the env var alone silently broke the source auth, and there was no way to set
+     the admin password via `.env` at all. Templated both into `icecast.xml` via
+     `entrypoint.sh`'s existing `envsubst` mechanism (previously `ICECAST_PORT`-only), added
+     `ICECAST_ADMIN_PASSWORD`, and wired both into `compose.yaml`'s `icecast` service
+     environment block (it previously only received `ICECAST_PORT`).
+
+  Also added `make db-clear-alerts` (unrelated to the proxy work, same session, user's
+  request): a misconfigured `NWS_POLLER_AREAS`/`NWS_POLLER_ZONES` had populated `alerts` with
+  CAP alerts for far-away areas, and there was no way to clear them short of dropping the
+  whole `timescale-data` volume (which also loses `health_samples`/`transcripts`/
+  `dispatches`, and re-triggers the password-lock gotcha this doc's Phase 8 notes already
+  cover). `TRUNCATE`s `alerts` via `docker compose exec timescaledb psql` and restarts
+  `fusion` -- both `fusion`'s `AlertStore` and `nws_poller`'s `SeenAlertTracker`
+  (`tracker.py`, dedups on `(id, sent)`) are pure in-process memory with no Postgres
+  read-back, confirmed by reading both, so the restart is what makes currently-valid in-area
+  alerts reappear on the next poll instead of staying missing until NWS happens to reissue
+  them.
+
+  Confirmed no migration framework is needed for any of this: `db.ensure_schema` already
+  applies `schema.sql` idempotently on every `api` start (CLAUDE.md/`db.py`'s own docstring:
+  no Alembic/SQLAlchemy until there's a real schema-evolution story), so a future column
+  would just need `ADD COLUMN IF NOT EXISTS` added to `schema.sql`, no separate migration
+  step.
+
+  Verified: `api` 118 passed (up from 115), `docker compose --profile offgrid config` and
+  `make -n db-clear-alerts` both confirmed clean. Not verified: an actual external reverse
+  proxy or a real Icecast container in this sandbox (no Docker daemon here) -- the `/stream`
+  route is tested against a fake upstream, and `entrypoint.sh`'s `envsubst` substitution
+  follows the exact pattern already proven for `ICECAST_PORT`.
+
 **Not started / open:**
-- No auth (design doc §9: "reverse proxy + Argon2id local backend auth") -- out of scope for
-  this phase, which is about the data path, not the deploy-behind-Caddy story.
+- Argon2id local backend auth (design doc §9) is still not built -- the reverse-proxy half
+  of that line is now addressed (single-port exposure via `/stream`, configurable CORS,
+  non-default Icecast passwords; see the 2026-08-10 entry above and the root README's new
+  "Exposing Tocsin behind an external reverse proxy" section), so an operator who wants real
+  auth in front of this today has to put it in the reverse proxy itself (Caddy `basicauth`,
+  forward-auth, etc.).
 - Not verified against a real Postgres, Redis, browser, or live upstream producer anywhere in
   this phase -- verified against fakes, fixtures, and (for `web`) a real `npm`/`tsc` run
   against the live registry, but no real page has ever been rendered against a real backend.
@@ -2234,3 +2291,13 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   `make -n` confirms each target's resolved compose file list against a legacy `.env`. Not
   verified: the real dongles -- no USB subsystem in this sandbox, the same gap the 2026-08-08
   entry records, so the operator's `make sdr-devices` is the actual test of the fix.
+
+- **2026-08-10** — External-reverse-proxy readiness pass (Phase 8 notes above have the full
+  writeup): `GET /stream/{mount_path}` for single-port Icecast exposure through `api`,
+  `CORS_ALLOWED_ORIGINS` (default `*`, unchanged for existing deployments), Icecast
+  source/admin passwords now templated from `.env` instead of hardcoded in `icecast.xml`, and
+  `make db-clear-alerts` to drop `alerts` rows from a misconfigured `NWS_POLLER_AREAS`/
+  `NWS_POLLER_ZONES` and force a clean resync. `api` 118 passed (up from 115); `docker compose
+  config` and `make -n` both confirmed clean. No migration framework added -- `ensure_schema`
+  already applies `schema.sql` idempotently on every start, which already covers "automatic
+  DB updates" for whatever schema changes come next.

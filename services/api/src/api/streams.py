@@ -23,7 +23,11 @@ be able to show.
 Playback URLs are handed to the browser as direct Icecast URLs rather than
 proxied through this process: an `<audio>` element streams cross-origin
 without CORS, and proxying continuous audio would pin a uvicorn connection
-open per listener for no benefit.
+open per listener for no benefit -- on a LAN, or with Icecast reachable at
+its own address behind the reverse proxy. `app.py`'s `GET /stream/{mount}`
+is the deliberately-opt-in exception, for a deployment whose external
+reverse proxy forwards only this service's port: see that route's
+docstring and `ICECAST_PUBLIC_URL` in .env.example.
 """
 
 from __future__ import annotations
