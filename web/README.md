@@ -11,9 +11,9 @@ anymore; see `services/api/README.md` for how the merged container
 works and why.
 
 Vanilla TypeScript, no framework. The design doc names "Vite + TypeScript
-UI" without specifying one, and at this scope -- eight panels, all
-server-driven, no routing and no client-side form state -- a framework
-would be more build surface than it removes. What the rebuild *did* add is
+UI" without specifying one, and at this scope -- ten panels across two
+tabs, all server-driven, no URL routing and no client-side form state --
+a framework would be more build surface than it removes. What the rebuild *did* add is
 `store.ts`, a single observable state object with one flat listener list,
 because the previous design had each view owning its own polling timer and
 rebuilding itself via `innerHTML`, which is what made per-panel error
@@ -26,20 +26,29 @@ this system exists for.
 
 ## Layout
 
-Two columns on desktop. The left carries **Live audio**, **Nearby NWR stations**, the
-**alert feed**, and the **activity log**; the right carries the spectrum, RF channels,
-system health, services, and dispatch. Nearby NWR stations sits in the wider left column
-rather than with the other radio-hardware panels on the right because its 3-column card
-grid needs the width; RF channels stays on the right in a narrower auto-fit grid. Audio and
-activity started on the right and moved because five stacked panels there against a lone
-feed on the left left the page visibly lopsided.
+Two tabs, switched client-side with no routing (`main.ts`) -- **Dashboard** (default) and
+**Activity**. Splitting them keeps the live-monitoring panels (what's on the air, what's
+been said, what's active right now) together and out from under the log-style panels
+(what happened, is the stack itself healthy), which used to compete for the same page.
+
+**Dashboard** is two columns on desktop. The left carries **Live audio**, **Nearby NWR
+stations**, the **NWS zone & weather map**, and the **alert feed**; the right carries the
+spectrum, RF channels, system health, and dispatch. Nearby NWR stations sits in the wider
+left column rather than with the other radio-hardware panels on the right because its
+3-column card grid needs the width; RF channels stays on the right in a narrower auto-fit
+grid.
+
+**Activity** is one wide column for the merged transcript/dispatch log plus a sidebar for
+per-service status -- both moved off the Dashboard so a five-panel right column wasn't
+competing with a lone alert feed on the left.
 
 The audio players lay out as a responsive grid rather than a stack, so the wide left column
 is used horizontally and three mounts don't push the alert feed down the page.
 
-Below 900px everything collapses to one column and the alert feed is reordered to the top:
-audio above the feed balances two columns, but on one narrow column it would push the thing
-you opened the page for below the fold.
+Below 900px each tab's two columns collapse to one and the app header itself wraps (brand
+drops to its own row, then nav tabs and the connection badge wrap together as a pair) rather
+than overflowing horizontally -- the map's internal Leaflet stacking context (z-index up to
+1000) is isolated so it can't climb above the sticky header on scroll at that width either.
 
 ## What's on the page
 
@@ -82,17 +91,28 @@ you opened the page for below the fold.
   a channel drifting toward dead is visible before it crosses the
   threshold.
 - **Nearby NWR stations** (`views/stations.ts`) -- `GET /reference`'s
-  station table (`data/nwr_stations_or.yaml`), sorted by `distance_km` when
-  the operator has set `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE`
+  station table (every file under `data/nwr_stations/`, one per state), sorted by
+  `distance_km` when the operator has set `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE`
   (`services/api/README.md`), alphabetical otherwise. A UI hint for antenna/
   gain bring-up and reading the waterfall's channel labels, not station
   identification -- several stations share a channel, so this narrows down
   what a bin probably carries without replacing an actual listen-and-confirm.
   A fixed 3-column, 2-row page (6 stations) with Prev/Next paging through
-  the rest, rather than a long scrolling list or a "show more" that grows
+  the full sorted list (no distance-radius filter -- every configured station shows,
+  nearest first), rather than a long scrolling list or a "show more" that grows
   the panel -- `StationsView` keeps the current page across repaints
   (`reference` reloading, e.g.) so paging through doesn't get reset out
   from under you.
+- **NWS zone & weather map** (`views/map.ts`) -- a Leaflet map (dark CartoDB
+  basemap, falls back to a "Vector Mode" status pill rather than a blank canvas
+  if tiles fail to load) showing only the NWS forecast zones with an active
+  alert, filled and outlined by that zone's highest active tier, plus every
+  nearby NWR transmitter as a tower marker (color by `status`, a pulsing ring on
+  whichever station is nearest the operator, matches `KIG98`, or is otherwise
+  inferred to be the one actually feeding a live channel/health sample). An
+  optional NEXRAD radar overlay (Iowa State's public IEM WMS tiles) toggles on
+  top of both. Zone polygon coordinates are a small hand-maintained table
+  (`views/zone_data.ts`) keyed by UGC code, not fetched from NWS at runtime.
 - **Live audio** (`views/streams.ts`) -- an `<audio>` player per Icecast
   mount. These streams always worked; nothing in the UI ever mentioned
   them. Each mount's player is created once and kept for the panel's

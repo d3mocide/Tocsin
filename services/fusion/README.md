@@ -31,6 +31,15 @@ event/wrong county, wrong event/right county, outside the time-window
 tolerance), and both unmatched states -- the roadmap's stated Phase 5 exit
 criteria.
 
+`store.py`'s `ingest_same`/`ingest_cap` update the matching still-open
+alert in place -- rather than opening a duplicate -- on a repeated CAP `id`
+or a SAME event sharing `raw_header`, or `callsign`+`event_code`+
+`fips_codes`, with an already-open `RF_ONLY`/`API_ONLY` alert; this is
+still bounded to the pre-`CONFIRMED` case (see "Known gaps" below).
+`API_ONLY` alert `id`s are a deterministic SHA-256 hash of `cap.id` rather
+than a random UUID, so the same CAP alert re-ingested across polls (or
+resolved by a fresh `AlertStore`) always lands on the same alert id.
+
 **Known gaps, not yet handled** (see `store.py`'s and `redis_bus.py`'s own
 docstrings for the full reasoning):
 - A second SAME event or CAP update arriving for an already-`CONFIRMED`
