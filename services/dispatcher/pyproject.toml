@@ -1,13 +1,12 @@
 [project]
 name = "dispatcher"
 version = "0.1.0"
-description = "Stage-1/stage-2 alert dispatch over Meshtastic + MQTT, with rate limiting and idempotency"
+description = "Stage-1/stage-2 alert dispatch over Meshtastic, with rate limiting and idempotency"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "redis>=5.0",
     "meshtastic>=2.5",
-    "paho-mqtt>=2.0",
     "requests>=2.31",
 ]
 

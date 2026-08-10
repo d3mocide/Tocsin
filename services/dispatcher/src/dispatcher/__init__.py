@@ -1,16 +1,15 @@
 """dispatcher entrypoint: consume canonical Alerts from `tocsin:alerts`
 (stage 1, design doc §7 / roadmap.md Phase 6) and, when LiteLLM is
 configured, guarded transcripts from `tocsin:transcripts` (stage 2,
-Phase 7), dispatching over Meshtastic (serial primary, MQTT fallback in
-hybrid mode).
+Phase 7), dispatching over Meshtastic (serial or TCP).
 
 Runs in both `offgrid` and `hybrid` (design doc §2's architecture table
 lists `dispatcher` as "both") -- stage 1 itself is network-independent by
-design; only the MQTT fallback leg (`egress/dispatch.py`) and stage 2's
-LiteLLM call are mode/config-gated. Per design doc §8 ("In offgrid mode,
-stage 2 is template-only or omitted entirely"), this takes the "omitted
-entirely" option: without `DISPATCHER_LITELLM_BASE_URL` set, stage 2 is
-skipped and `tocsin:transcripts` is never even consumed -- not a partial
+design; only stage 2's LiteLLM call is mode/config-gated. Per design doc
+§8 ("In offgrid mode, stage 2 is template-only or omitted entirely"),
+this takes the "omitted entirely" option: without
+`DISPATCHER_LITELLM_BASE_URL` set, stage 2 is skipped and
+`tocsin:transcripts` is never even consumed -- not a partial
 template-only stage 2, which the design doc allows but doesn't require.
 """
 
@@ -23,8 +22,7 @@ from pathlib import Path
 
 from .circuit_breaker import CircuitBreaker, DEFAULT_COOLDOWN_SECONDS, DEFAULT_FAILURE_THRESHOLD
 from .dedup import AlertDeduplicator
-from .egress.dispatch import DualPathSender
-from .egress.meshtastic_mqtt import DEFAULT_REGION, MeshtasticMqttClient
+from .egress.dispatch import MeshSender
 from .egress.meshtastic_node import (
     DEFAULT_TCP_PORT,
     MeshtasticNodeClient,
@@ -43,8 +41,6 @@ from .service import Stage1Dispatcher, Stage2Dispatcher
 
 DEFAULT_REDIS_URL = "redis://redis:6379/0"
 DEFAULT_MODE = "offgrid"
-DEFAULT_MQTT_HOST = "mosquitto"
-DEFAULT_MQTT_PORT = 1883
 
 # Fixed, not hostname-derived -- see fusion/__init__.py's identical
 # reasoning: Redis's per-consumer-group pending-entries list is keyed by
@@ -60,24 +56,6 @@ def _channel_index() -> int | None:
     this only forwards an override when one is actually configured."""
     value = os.environ.get("MESHTASTIC_CHANNEL_INDEX", "").strip()
     return int(value) if value else None
-
-
-def _build_mqtt_client() -> MeshtasticMqttClient | None:
-    """`None` when no gateway node is configured -- there's nothing to
-    publish to. Safe to build even in `offgrid` mode: unlike
-    `MeshtasticNodeClient`, this doesn't open any connection at
-    construction time (see its own docstring), and `DualPathSender`'s
-    `mode` check is what actually decides whether it's ever used."""
-    gateway_node_id = os.environ.get("MESHTASTIC_GATEWAY_NODE_ID")
-    if not gateway_node_id:
-        return None
-    return MeshtasticMqttClient(
-        host=os.environ.get("MQTT_HOST", DEFAULT_MQTT_HOST),
-        port=int(os.environ.get("MQTT_PORT", DEFAULT_MQTT_PORT)),
-        gateway_node_id=int(gateway_node_id),
-        region=os.environ.get("MESHTASTIC_MQTT_REGION", DEFAULT_REGION),
-        channel=_channel_index(),
-    )
 
 
 def _mesh_enabled() -> bool:
@@ -142,7 +120,7 @@ def _build_node_client(transport: str) -> MeshtasticNodeClient | None:
     return client
 
 
-def _build_stage2_dispatcher(redis_client, egress: DualPathSender, log) -> Stage2Dispatcher | None:
+def _build_stage2_dispatcher(redis_client, egress: MeshSender, log) -> Stage2Dispatcher | None:
     base_url = os.environ.get("DISPATCHER_LITELLM_BASE_URL")
     if not base_url:
         return None
@@ -183,12 +161,7 @@ def main() -> None:
 
     transport = _node_transport()
     node_client = _build_node_client(transport)
-    egress = DualPathSender(
-        node_client=node_client,
-        mqtt_client=_build_mqtt_client(),
-        mode=mode,
-        node_transport=transport,
-    )
+    egress = MeshSender(node_client=node_client, node_transport=transport)
 
     import redis as redis_lib
 

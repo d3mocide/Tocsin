@@ -87,7 +87,7 @@ def test_the_negative_outcomes_are_recorded_too():
 
 def test_a_stage_2_record_carries_site_and_channel_instead_of_an_alert_id():
     redis = FakeRedis()
-    RedisStreamDispatchLog(redis).record(_transcript(), DispatchOutcome(sent=True, reason="mqtt_fallback"))
+    RedisStreamDispatchLog(redis).record(_transcript(), DispatchOutcome(sent=True, reason="serial"))
 
     payload = _payload(redis)
     assert payload["stage"] == "2"

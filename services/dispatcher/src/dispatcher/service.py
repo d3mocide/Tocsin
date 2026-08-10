@@ -1,8 +1,8 @@
 """Wires stage 1 (tier gating, dedup, rate limiting, idempotency, template
-message, dual-path Meshtastic egress -- design doc §7, roadmap.md Phase 6)
-and stage 2 (LiteLLM enrichment with a circuit breaker, output validation,
-the same dual-path egress -- Phase 7) into two dispatch pipelines sharing
-the same idempotency/egress machinery.
+message, Meshtastic egress -- design doc §7, roadmap.md Phase 6) and
+stage 2 (LiteLLM enrichment with a circuit breaker, output validation,
+the same egress -- Phase 7) into two dispatch pipelines sharing the same
+idempotency/egress machinery.
 
 Gate order matters in both, not just for readability: side-effecting
 checks (`dedup`, `idempotency.claim()`) are ordered so that the *last*
@@ -15,13 +15,8 @@ the paid LiteLLM call, purely to avoid spending money re-enriching
 something already fully dispatched -- the real, authoritative gate is
 still the `claim()` call right before the send.
 
-Tier gating (design doc §4): only Tier A reaches the mesh at all (Tier A:
-"mesh + MQTT"; Tier B: "MQTT only"; Tier C: "log only"). Tier B's own MQTT
-leg is a general broadcast path that isn't clearly scoped to any named
-phase in roadmap.md as of this writing (Phase 7 only names the Meshtastic
-MQTT *ack-fallback* leg specifically -- see `egress/dispatch.py`). Tier
-B/C alerts are simply logged as skipped here, not queued for a later
-stage.
+Tier gating (design doc §4): only Tier A reaches the mesh at all. Tier B/C
+alerts are simply logged as skipped here, not queued for a later stage.
 """
 
 from __future__ import annotations
@@ -31,7 +26,7 @@ from typing import Protocol, Union
 
 from .circuit_breaker import CircuitBreaker
 from .dedup import AlertDeduplicator
-from .egress.dispatch import DualPathSender
+from .egress.dispatch import MeshSender
 from .fips import FipsTable
 from .idempotency import IdempotencyStore
 from .litellm_client import LiteLLMClient
@@ -73,7 +68,7 @@ class Stage1Dispatcher:
         idempotency: IdempotencyStore,
         dedup: AlertDeduplicator,
         rate_limiter: TokenBucket,
-        egress: DualPathSender,
+        egress: MeshSender,
         log: DispatchLog | None = None,
     ):
         self._fips_table = fips_table
@@ -107,10 +102,7 @@ class Stage1Dispatcher:
             # The idempotency key is already claimed at this point (see
             # this module's docstring) -- a transient failure here means
             # this exact alert won't be retried until its 24h claim
-            # expires. An accepted, explicitly-scoped gap (README.md), not
-            # a silent one -- this is distinct from the *serial* no-ack ->
-            # MQTT fallback path, which `DualPathSender` already handles
-            # without raising.
+            # expires. An accepted, explicitly-scoped gap (README.md).
             return DispatchOutcome(sent=True, reason="send_error")
         return DispatchOutcome(sent=result.delivered, reason=result.path)
 
@@ -128,7 +120,7 @@ class Stage2Dispatcher:
         idempotency: IdempotencyStore,
         circuit_breaker: CircuitBreaker,
         litellm_client: LiteLLMClient,
-        egress: DualPathSender,
+        egress: MeshSender,
         log: DispatchLog | None = None,
     ):
         self._idempotency = idempotency

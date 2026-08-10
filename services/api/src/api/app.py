@@ -110,12 +110,9 @@ def create_app(
     )
 
     # Defaults to `*` (config.py's DEFAULT_CORS_ALLOWED_ORIGINS) -- fine for
-    # the localhost/LAN use this repo has shipped for so far (design doc
-    # §11, non-goals), same posture as deploy/mosquitto's and
-    # deploy/icecast's default-open configs. Set CORS_ALLOWED_ORIGINS once
-    # this is reachable from the internet; see .env.example. `config` is
-    # only ever `None` in tests that don't care about this, so falling
-    # back to the same `*` default there keeps their behavior unchanged.
+    # localhost/LAN. Set CORS_ALLOWED_ORIGINS once reachable from the
+    # internet; see .env.example. `config` is only `None` in tests that
+    # don't care about this, so falling back to `*` keeps them unchanged.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(config.cors_allowed_origins) if config else ["*"],

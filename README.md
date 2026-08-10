@@ -4,7 +4,7 @@ A dual-path NOAA Weather Radio All Hazards (NWR) alert monitor with mesh egress.
 
 Tocsin receives NWR broadcasts over SDR, decodes EAS/SAME alert headers, transcribes the
 voice message, independently polls the NWS CAP API, fuses both sources into a single
-provenance-preserving alert feed, and dispatches alerts over Meshtastic and MQTT.
+provenance-preserving alert feed, and dispatches alerts over Meshtastic.
 
 **The system must remain fully functional with no internet connection.** Network-dependent
 components add quality, never capability. See `docs/design/master-prompt.md` for the full design
@@ -17,7 +17,7 @@ not covered here. For the phase-by-phase build plan and current status, see
 | Mode | Hardware | Network |
 |---|---|---|
 | `offgrid` | Raspberry Pi 5 (or low-power x86), RTL-SDR, Meshtastic node on serial or LAN | None |
-| `hybrid` | Same, plus internet | NWS API, remote STT, LiteLLM, MQTT bridge available |
+| `hybrid` | Same, plus internet | NWS API, remote STT, LiteLLM available |
 
 Both modes run from one `compose.yaml` using Docker Compose profiles, selected by a single
 `TOCSIN_MODE=offgrid|hybrid` environment variable.
@@ -250,7 +250,7 @@ tocsin/
 │   ├── stt_worker/              # whisper.cpp transcription + hallucination guards
 │   ├── nws_poller/
 │   ├── fusion/
-│   ├── dispatcher/              # egress/{meshtastic_node,meshtastic_mqtt,mqtt}.py
+│   ├── dispatcher/              # egress/meshtastic_node.py
 │   └── api/
 ├── web/
 ├── data/
@@ -258,7 +258,6 @@ tocsin/
 │   ├── same_to_cap.yaml         # SAME event code ↔ CAP event name
 │   └── fips.csv                 # FIPS → county name, for templating
 ├── deploy/
-│   ├── mosquitto/                # mosquitto.conf
 │   ├── icecast/                  # icecast.xml, Dockerfile
 │   └── udev/                     # host-side RTL-SDR udev rule
 └── docs/
@@ -297,9 +296,9 @@ still open, and don't read "implemented" below as "verified."
    hardware) -- see `docs/design/tracking.md`.
 6. Dispatcher stage 1 (`services/dispatcher`: template message, serial Meshtastic,
    idempotency, rate limiting). Implemented and unit tested.
-7. Dispatcher stage 2 + remote STT (LiteLLM enrichment, circuit breaker, Meshtastic MQTT
-   fallback). Implemented and unit tested, including both of this phase's literal roadmap
-   exit criteria exercised directly in tests.
+7. Dispatcher stage 2 + remote STT (LiteLLM enrichment, circuit breaker). Implemented and
+   unit tested, including both of this phase's literal roadmap exit criteria exercised
+   directly in tests.
 8. API + web UI (`services/api` + `web/`). Implemented and unit tested: FastAPI REST + SSE
    over a real TimescaleDB-backed alert store (the first thing in this repo to actually
    write to Postgres), RF health + spectrum display, `RF_ONLY`/`API_ONLY` divergence rate.
@@ -312,7 +311,7 @@ Phases 5-8 were built ahead of Phase 2's real-audio proof, at the user's explici
 to reach a whole-stack MVP faster -- see `docs/design/tracking.md`'s per-phase notes for the
 full done/open breakdown and every build-order exception's reasoning. None of them are
 verified against real hardware, a real Meshtastic node, a real LiteLLM endpoint, or a real
-Postgres/Redis instance; every wire contract with external systems (Meshtastic serial/MQTT,
+Postgres/Redis instance; every wire contract with external systems (Meshtastic serial,
 LiteLLM, the OpenAI STT shape, the NWS CAP API) was checked against real published specs
 rather than guessed, which is a meaningfully different claim from "verified live."
 

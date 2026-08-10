@@ -28,7 +28,7 @@ status doc — update it whenever you finish or materially advance a phase.
 ## Service boundaries
 
 Each `services/<name>/` directory is an independent Python project (uv-managed). Services
-talk to each other over ZMQ, Redis, MQTT, and HTTP as described in `docs/design/master-prompt.md`
+talk to each other over ZMQ, Redis, and HTTP as described in `docs/design/master-prompt.md`
 §2 — never by importing one service's package from another. Shared reference data
 (event-code tiers, FIPS mapping, SAME↔CAP mapping) lives in `data/*.yaml` / `data/*.csv`,
 checked in, not hardcoded per-service.
@@ -44,4 +44,7 @@ weakening its amplitude/phase assertions.
 ## Style
 
 No comments unless they explain a non-obvious *why*. No speculative abstractions for
-services or providers that don't exist yet.
+services or providers that don't exist yet. Keep comments to one line, rarely two or
+three — no history, no alternatives considered. Especially in `.env.example` and
+`compose.yaml`: an operator reads those first, and a wall of prose per line buries the
+one thing they need.

@@ -31,7 +31,7 @@ completion of the phase's actual exit criteria.
 | 4 | Segment capture + local STT | In Progress | 2026-08-08 |
 | 5 | NWS poller + fusion | In Progress | 2026-08-08 |
 | 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
-| 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-08 |
+| 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-10 |
 | 8 | API + web UI | In Progress | 2026-08-10 |
 
 ---
@@ -903,16 +903,32 @@ test_stage2_dispatcher.py`, not just plausible by design.
   Phase 5's `NWS_POLLER_USER_AGENT` bug: every new var here uses the same
   empty-default-plus-app-level-check pattern, none use compose's hard-required `:?`).
 - 350 tests passing across all eight implemented services (`make test`), up from 292.
+- **2026-08-10** — Removed the Meshtastic MQTT fallback entirely, at the user's request: they
+  connect only via serial/TCP node and judged the ack-fallback leg (and the node-side MQTT
+  downlink config it required) not worth keeping. Deleted `egress/meshtastic_mqtt.py` and
+  both its test files; `egress/dispatch.py`'s `DualPathSender` is now `MeshSender` (serial/TCP
+  only, no `mode`/`mqtt_client` params); dropped the `paho-mqtt` dependency; removed
+  `compose.yaml`'s `mosquitto` service, its volume, and dispatcher's `MQTT_HOST`/`MQTT_PORT`/
+  `MESHTASTIC_MQTT_REGION`/`MESHTASTIC_GATEWAY_NODE_ID` env vars and `mosquitto` dependency;
+  deleted `deploy/mosquitto/`; removed `MESHTASTIC_GATEWAY_NODE_ID` from `.env.example`.
+  Updated `CLAUDE.md`/`AGENTS.md`'s "communicate over ZMQ, Redis, MQTT, and HTTP" line (now
+  without MQTT) and every service's `heartbeat.py` docstring that quoted it. `dispatcher` 110
+  passed (down from 122 -- 12 MQTT-specific tests removed, none converted, since there's
+  nothing left to test). Left `data/same_event_codes.yaml`'s "Tier A: mesh + MQTT" / "Tier B:
+  MQTT only" tier-naming comments alone -- that's the design doc's broader intended
+  MQTT-broadcast concept for Tier B, never actually built beyond the ack-fallback leg this
+  entry removes (see `service.py`'s docstring, pre-existing), so it's a separate open item,
+  not something this removal touches.
 
 **Not started / open:**
 - Everything named in the three services' own READMEs as unverified: no real Meshtastic
-  node, no real MQTT gateway configuration, no real LiteLLM/OpenAI-compatible endpoint, no
-  real remote STT endpoint, no real Redis instance, and no Docker daemon in this sandbox this
-  session -- every wire contract in this phase was verified against real published specs
-  (Meshtastic's MQTT docs, LiteLLM's docs, the OpenAI API shape) rather than guessed, but
-  "spec-verified" isn't "live-verified."
-- Tier B's general MQTT broadcast path (distinct from the ack-fallback leg this phase does
-  build) is still unscoped in roadmap.md, called out again in `dispatcher/README.md`.
+  node, no real LiteLLM/OpenAI-compatible endpoint, no real remote STT endpoint, no real
+  Redis instance, and no Docker daemon in this sandbox this session -- every wire contract in
+  this phase was verified against real published specs (LiteLLM's docs, the OpenAI API shape)
+  rather than guessed, but "spec-verified" isn't "live-verified."
+- Tier B's general MQTT broadcast path (a design doc concept distinct from the ack-fallback
+  leg removed 2026-08-10, and never built to begin with) is still unscoped in roadmap.md,
+  called out again in `dispatcher/README.md`.
 - A SAME header spanning more than one state still only shows the first state in stage-1's
   message (carried over from Phase 6, unchanged).
 
@@ -2301,3 +2317,19 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   config` and `make -n` both confirmed clean. No migration framework added -- `ensure_schema`
   already applies `schema.sql` idempotently on every start, which already covers "automatic
   DB updates" for whatever schema changes come next.
+
+- **2026-08-10 (later same day)** — Two follow-ups from the user. (1) Removed the Meshtastic
+  MQTT fallback entirely (Phase 7 notes above have the full writeup) -- they connect only via
+  serial/TCP and judged the ack-fallback leg not worth the node-side MQTT config it required.
+  `dispatcher` 110 passed (down from 122, MQTT-only tests removed, nothing converted). (2) Cut
+  the long-winded rationale comments in `.env.example` and `compose.yaml` down to one line
+  each (rarely two) -- per the user, these are what an operator reads first and shouldn't
+  bury the value/gotcha under paragraphs of history. Verified `compose.yaml`'s trim was
+  comment-only by diffing `docker compose config`'s resolved output before and after (byte
+  identical). Added a "Comments and abstractions" note to `CLAUDE.md`/`AGENTS.md` codifying
+  this for future work, especially in those two files. Left `docs/design/master-prompt.md`
+  untouched for the MQTT removal, per that file's own explicit "don't edit this file to
+  reflect implementation decisions" instruction -- the roadmap/tracking updates are where
+  that kind of change belongs, which is what this entry and the roadmap.md edit are. Full
+  suite green: 132/29/37/48/52/30/43/110/118 passed across all eight services plus `web`
+  build.

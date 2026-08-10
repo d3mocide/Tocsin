@@ -106,14 +106,6 @@ def test_no_ack_result_is_passed_through_from_egress():
     assert outcome.reason == "serial_no_ack"
 
 
-def test_mqtt_fallback_result_is_passed_through_from_egress():
-    egress = FakeEgress(result=EgressResult(delivered=True, path="mqtt_fallback"))
-    outcome = _dispatcher(egress=egress).handle(_rf_alert())
-
-    assert outcome.sent is True
-    assert outcome.reason == "mqtt_fallback"
-
-
 def test_send_exception_does_not_propagate_and_idempotency_is_still_claimed():
     redis = FakeRedis()
     egress = FakeEgress(raises=RuntimeError("serial port gone"))
