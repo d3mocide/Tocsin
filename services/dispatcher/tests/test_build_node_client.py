@@ -111,6 +111,30 @@ def test_tcp_port_override(monkeypatch):
     assert built == {"host": "node.lan", "port": 14403}
 
 
+@pytest.mark.parametrize(
+    "raw_host,expected",
+    [
+        ("http://192.168.50.125", "192.168.50.125"),
+        ("https://192.168.50.125/", "192.168.50.125"),
+        ("192.168.50.125/", "192.168.50.125"),
+    ],
+)
+def test_tcp_strips_url_scheme_and_slashes(monkeypatch, raw_host, expected):
+    monkeypatch.setenv("MESHTASTIC_TCP_HOST", raw_host)
+    _capture_client(monkeypatch)
+    built = {}
+    monkeypatch.setattr(
+        dispatcher,
+        "tcp_interface_factory",
+        lambda host, port: built.update(host=host, port=port),
+    )
+
+    dispatcher._build_node_client("tcp")
+
+    assert built["host"] == expected
+
+
+
 def test_tcp_without_host_is_fatal(monkeypatch):
     """A TCP node with nowhere to dial is a misconfiguration, not a reason
     to silently fall back to serial."""

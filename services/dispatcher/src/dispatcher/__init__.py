@@ -99,6 +99,12 @@ def _build_node_client(transport: str) -> MeshtasticNodeClient | None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        if "://" in host:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(host)
+            host = parsed.hostname or host
+        host = host.strip("/")
         port = int(os.environ.get("MESHTASTIC_TCP_PORT", DEFAULT_TCP_PORT))
         factory = tcp_interface_factory(host, port)
         target = f"tcp://{host}:{port}"
