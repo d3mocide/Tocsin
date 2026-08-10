@@ -25,6 +25,11 @@ DEFAULT_STATIC_DIR = "/app/static"
 DEFAULT_MODE = "offgrid"
 DEFAULT_ICECAST_HOST = "icecast"
 DEFAULT_ICECAST_PORT = 8000
+# `*` matches this repo's prior hardcoded behavior -- fine for
+# localhost/LAN use (design doc §11, non-goals), not for a deployment
+# reachable from the open internet. Set CORS_ALLOWED_ORIGINS to the
+# reverse proxy's actual origin(s) once exposed; see .env.example.
+DEFAULT_CORS_ALLOWED_ORIGINS = "*"
 
 
 def _postgres_dsn_from_env() -> str | None:
@@ -72,6 +77,14 @@ class ApiConfig:
     # normal "browse to the Pi on the LAN" case, and overridable for
     # deployments behind a reverse proxy where it isn't.
     icecast_public_url: str | None
+    # Browser origins allowed to read this API cross-origin, e.g.
+    # `https://tocsin.example.com`. Defaults to `*` -- every prior
+    # deployment target here was localhost/LAN, where any origin reading
+    # unauthenticated GET-only data is a non-issue. Narrow this once the
+    # instance is reachable from the internet (comma-separated for more
+    # than one origin); same-origin requests -- the normal case, since
+    # `api` serves the built SPA itself -- never need this at all.
+    cors_allowed_origins: tuple[str, ...]
     # Operator's approximate location, decimal degrees. Both unset (the
     # default) means reference.py's stations table carries no distance_km --
     # there's nothing wrong with that, it's the same "cosmetic lookup table,
@@ -87,6 +100,7 @@ class ApiConfig:
         captures_dir = os.environ.get("API_CAPTURES_DIR")
         latitude = os.environ.get("TOCSIN_LATITUDE")
         longitude = os.environ.get("TOCSIN_LONGITUDE")
+        cors_origins_raw = os.environ.get("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS)
         return cls(
             postgres_dsn=_postgres_dsn_from_env(),
             redis_url=os.environ.get("API_REDIS_URL", DEFAULT_REDIS_URL),
@@ -100,6 +114,7 @@ class ApiConfig:
             icecast_host=os.environ.get("ICECAST_HOST", DEFAULT_ICECAST_HOST),
             icecast_port=int(os.environ.get("ICECAST_PORT", DEFAULT_ICECAST_PORT)),
             icecast_public_url=os.environ.get("ICECAST_PUBLIC_URL") or None,
+            cors_allowed_origins=tuple(origin.strip() for origin in cors_origins_raw.split(",") if origin.strip()),
             latitude=float(latitude) if latitude else None,
             longitude=float(longitude) if longitude else None,
         )

@@ -1,4 +1,4 @@
-.PHONY: help up-offgrid up-hybrid dev dev-ui dev-stack down bench-channelizer sdr-devices fetch-models test test-stt-remote
+.PHONY: help up-offgrid up-hybrid dev dev-ui dev-stack down bench-channelizer sdr-devices fetch-models test test-stt-remote db-clear-alerts
 
 .DEFAULT_GOAL := help
 
@@ -18,6 +18,7 @@ help:
 	@printf "  %-17s %s\n" "sdr-devices" "List rtlsdr device serials, for setting SDR_RX_DEVICES"
 	@printf "  %-17s %s\n" "bench-channelizer" "Run the channelizer CPU throughput benchmark"
 	@printf "  %-17s %s\n" "fetch-models" "Pre-stage STT model weights into ./models/ (offgrid-required)"
+	@printf "  %-17s %s\n" "db-clear-alerts" "Wipe the alerts table and resync it under the current NWS_POLLER_AREAS/ZONES"
 	@echo ""
 	@echo "See README.md and docs/design/master-prompt.md for details."
 
@@ -110,6 +111,25 @@ fetch-models:
 		https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$(STT_MODEL).bin
 	@echo "fetch-models: models/ggml-$(STT_MODEL).bin ready."
 	@echo "If STT_MODEL isn't base.en, also set STT_WORKER_MODEL_FILE=ggml-$(STT_MODEL).bin (see services/stt_worker/README.md)."
+
+# Wipes the alerts table and restarts fusion (which also runs nws-poller,
+# see compose.yaml) so both of its in-memory stores -- fusion's AlertStore
+# and nws-poller's SeenAlertTracker -- start clean too. Without the
+# restart, /alerts/active's own dedup (nws_poller/tracker.py, keyed on
+# (id, sent)) means an unchanged CAP alert never gets re-emitted, so a
+# currently-valid in-area alert would stay missing from the table until
+# NWS actually reissues it. health_samples/transcripts/dispatches are
+# untouched -- this targets exactly what a wrong NWS_POLLER_AREAS/
+# NWS_POLLER_ZONES pollutes ("picked up a lot of alerts for areas that are
+# super far away"). Fix the env var in .env first, then run this: fusion
+# emits RF_ONLY alerts on its own regardless (SAME decode needs no
+# network), and nws-poller repopulates CAP-sourced ones under the
+# corrected area/zone list on its next poll.
+db-clear-alerts:
+	COMPOSE_FILE=$(SDR_COMPOSE_FILE) docker compose exec -T timescaledb \
+		psql -U tocsin -d tocsin -c "TRUNCATE alerts;"
+	COMPOSE_FILE=$(SDR_COMPOSE_FILE) docker compose restart fusion
+	@echo "db-clear-alerts: alerts table cleared, fusion restarted -- it will resync under the current NWS_POLLER_AREAS/NWS_POLLER_ZONES on its next poll."
 
 # Run the test suite for every service that has one.
 test:

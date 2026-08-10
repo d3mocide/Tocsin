@@ -4,7 +4,7 @@ A dual-path NOAA Weather Radio All Hazards (NWR) alert monitor with mesh egress.
 
 Tocsin receives NWR broadcasts over SDR, decodes EAS/SAME alert headers, transcribes the
 voice message, independently polls the NWS CAP API, fuses both sources into a single
-provenance-preserving alert feed, and dispatches alerts over Meshtastic and MQTT.
+provenance-preserving alert feed, and dispatches alerts over Meshtastic.
 
 **The system must remain fully functional with no internet connection.** Network-dependent
 components add quality, never capability. See `docs/design/master-prompt.md` for the full design
@@ -17,7 +17,7 @@ not covered here. For the phase-by-phase build plan and current status, see
 | Mode | Hardware | Network |
 |---|---|---|
 | `offgrid` | Raspberry Pi 5 (or low-power x86), RTL-SDR, Meshtastic node on serial or LAN | None |
-| `hybrid` | Same, plus internet | NWS API, remote STT, LiteLLM, MQTT bridge available |
+| `hybrid` | Same, plus internet | NWS API, remote STT, LiteLLM available |
 
 Both modes run from one `compose.yaml` using Docker Compose profiles, selected by a single
 `TOCSIN_MODE=offgrid|hybrid` environment variable.
@@ -122,6 +122,46 @@ The api container's internal bind port (`API_PORT`, default `8000`) is separatel
 configurable but rarely worth changing: compose maps `TOCSIN_WEB_PORT` onto it, so it never
 appears in a URL you type.
 
+## Exposing Tocsin behind an external reverse proxy
+
+Design doc §9 has always called for "Docker Compose behind Caddy or NPM"; this is what
+that means in practice. Everything below is orthogonal to `TOCSIN_MODE` -- it's about
+what's reachable from outside your network, not about internet dependency for the alert
+path itself (CLAUDE.md's one rule still holds: SAME decode, local STT, and stage-1
+dispatch never need any of this).
+
+1. **Pick one or two ports to forward.** The reverse proxy needs `TOCSIN_WEB_PORT` (the web
+   UI and API, default `8080`). If it can also forward a second port to this host, forward
+   `ICECAST_PORT` too (default `8000`) and set `ICECAST_PUBLIC_URL` to wherever that's
+   reachable, e.g. `https://stream.example.com` or `https://example.com:8443` -- this is
+   the cheaper path (`services/api/src/api/streams.py`'s docstring on why: direct-to-Icecast
+   playback costs the api process nothing per listener).
+
+   If the proxy can only forward a single port/origin to this host -- common with tunnel-style
+   proxies that map one hostname to one backend -- set `ICECAST_PUBLIC_URL=/stream` (a
+   relative path, not a host) instead. The web UI then builds same-origin playback URLs and
+   `api` proxies the audio bytes itself via `GET /stream/<mount>`. This pins one open
+   connection per listener for as long as they listen, so prefer the two-port path above
+   when the proxy supports it.
+
+2. **Narrow CORS.** `CORS_ALLOWED_ORIGINS` defaults to `*`, fine for localhost/LAN but not
+   once the API is reachable from the internet. Set it to your real origin(s), e.g.
+   `CORS_ALLOWED_ORIGINS=https://tocsin.example.com`. Same-origin requests (the normal case,
+   since `api` serves the built web UI itself) never need this at all -- it only matters for
+   a separate app or dev server reading this API cross-origin.
+
+3. **Change the default passwords.** `POSTGRES_PASSWORD`, `ICECAST_SOURCE_PASSWORD`, and
+   `ICECAST_ADMIN_PASSWORD` all default to placeholder values (`changeme`/`hackme`) meant
+   for a closed LAN. Set real values in `.env` before exposing anything past localhost --
+   `ICECAST_SOURCE_PASSWORD`/`ICECAST_ADMIN_PASSWORD` are rendered into Icecast's own config
+   at container start, so there's no separate file to hand-edit.
+
+4. **There is no application-level auth yet** (design doc §9 names "reverse proxy + Argon2id
+   local backend auth" as the plan; only the reverse-proxy half is scoped here). Every route
+   this API serves is unauthenticated read access to alert/health/transcript data. If that
+   matters for your deployment, put auth in the reverse proxy itself (Caddy's `basicauth`,
+   an OAuth2 forward-auth proxy, etc.) until backend auth exists.
+
 ## Troubleshooting
 
 ### The web UI won't load at `http://<host>:8080/`
@@ -210,7 +250,7 @@ tocsin/
 │   ├── stt_worker/              # whisper.cpp transcription + hallucination guards
 │   ├── nws_poller/
 │   ├── fusion/
-│   ├── dispatcher/              # egress/{meshtastic_node,meshtastic_mqtt,mqtt}.py
+│   ├── dispatcher/              # egress/meshtastic_node.py
 │   └── api/
 ├── web/
 ├── data/
@@ -218,7 +258,6 @@ tocsin/
 │   ├── same_to_cap.yaml         # SAME event code ↔ CAP event name
 │   └── fips.csv                 # FIPS → county name, for templating
 ├── deploy/
-│   ├── mosquitto/                # mosquitto.conf
 │   ├── icecast/                  # icecast.xml, Dockerfile
 │   └── udev/                     # host-side RTL-SDR udev rule
 └── docs/
@@ -257,9 +296,9 @@ still open, and don't read "implemented" below as "verified."
    hardware) -- see `docs/design/tracking.md`.
 6. Dispatcher stage 1 (`services/dispatcher`: template message, serial Meshtastic,
    idempotency, rate limiting). Implemented and unit tested.
-7. Dispatcher stage 2 + remote STT (LiteLLM enrichment, circuit breaker, Meshtastic MQTT
-   fallback). Implemented and unit tested, including both of this phase's literal roadmap
-   exit criteria exercised directly in tests.
+7. Dispatcher stage 2 + remote STT (LiteLLM enrichment, circuit breaker). Implemented and
+   unit tested, including both of this phase's literal roadmap exit criteria exercised
+   directly in tests.
 8. API + web UI (`services/api` + `web/`). Implemented and unit tested: FastAPI REST + SSE
    over a real TimescaleDB-backed alert store (the first thing in this repo to actually
    write to Postgres), RF health + spectrum display, `RF_ONLY`/`API_ONLY` divergence rate.
@@ -272,7 +311,7 @@ Phases 5-8 were built ahead of Phase 2's real-audio proof, at the user's explici
 to reach a whole-stack MVP faster -- see `docs/design/tracking.md`'s per-phase notes for the
 full done/open breakdown and every build-order exception's reasoning. None of them are
 verified against real hardware, a real Meshtastic node, a real LiteLLM endpoint, or a real
-Postgres/Redis instance; every wire contract with external systems (Meshtastic serial/MQTT,
+Postgres/Redis instance; every wire contract with external systems (Meshtastic serial,
 LiteLLM, the OpenAI STT shape, the NWS CAP API) was checked against real published specs
 rather than guessed, which is a meaningfully different claim from "verified live."
 

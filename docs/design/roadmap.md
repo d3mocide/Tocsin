@@ -165,7 +165,6 @@ stage 1.
 - LiteLLM enrichment within the remaining byte budget (≤200 bytes), 3s timeout, circuit
   breaker in Redis, output validation (length/ASCII/no-newlines), silent skip on any
   failure.
-- Meshtastic MQTT fallback path, keyed on ack rather than connection state.
 - `remote_http` STT provider wired into the `STT_CHAIN` race for hybrid mode.
 
 **Exit criteria:** killing the LiteLLM endpoint mid-run degrades stage 2 silently with

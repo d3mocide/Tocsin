@@ -1,14 +1,6 @@
-# Tocsin -- one compose file, two profiles (docs/design/master-prompt.md §1, §9).
-#
+# Tocsin -- one compose file, two profiles.
 #   TOCSIN_MODE=offgrid docker compose --profile offgrid up
 #   TOCSIN_MODE=hybrid  docker compose --profile hybrid up
-#
-# Only services with a working implementation are defined below. Everything
-# past milestone 1 (docs/design/master-prompt.md §10) is commented out with a pointer
-# to its milestone -- uncomment as each is built and proven, per the build
-# order. Docker was not available to build/run this file in the sandbox this
-# was authored in; verify `docker compose config` and a real `up` on a
-# machine with the daemon before relying on it.
 
 x-mode: &mode ${TOCSIN_MODE:-offgrid}
 
@@ -20,14 +12,6 @@ services:
       - redis-data:/data
     profiles: [offgrid, hybrid]
 
-  mosquitto:
-    image: eclipse-mosquitto:2
-    restart: unless-stopped
-    volumes:
-      - ./deploy/mosquitto:/mosquitto/config:ro
-      - mosquitto-data:/mosquitto/data
-    profiles: [offgrid, hybrid]
-
   timescaledb:
     image: timescale/timescaledb:latest-pg16
     restart: unless-stopped
@@ -37,9 +21,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - timescale-data:/var/lib/postgresql/data
-    # api waits on this (`condition: service_healthy`) rather than racing a
-    # database that accepts TCP connections a few seconds before it has
-    # finished first-boot initialization.
+    # api waits for "healthy", not just "started" -- Postgres isn't ready
+    # for real queries right after boot.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -49,16 +32,8 @@ services:
     profiles: [offgrid, hybrid]
 
   sdr-rx:
-    # Build context is the repo root, not services/sdr_rx/ -- this image
-    # also installs same_decoder, live_audio, and segment_capture
-    # (formerly their own containers; see entrypoint.sh for why they now
-    # share this one). restart: unless-stopped at the compose level is a
-    # last-resort safety net for the entrypoint script itself crashing --
-    # each of the four processes' own on-failure-vs-unless-stopped
-    # semantics (the "no devices configured" exit-0 case in particular,
-    # see entrypoint.sh) are now handled inside that script instead of by
-    # Docker's restart policy, since sdr-rx no longer has its own
-    # container to apply one to.
+    # Also builds same_decoder, live_audio, and segment_capture into this
+    # image -- see entrypoint.sh.
     build:
       context: .
       dockerfile: services/sdr_rx/Dockerfile
@@ -66,41 +41,19 @@ services:
     environment:
       TOCSIN_MODE: *mode
       SDR_RX_DEVICES: ${SDR_RX_DEVICES:-}
-      # Manual gain in dB (design doc §3: "Auto gain oscillates on a
-      # constant carrier"). 30 dB is a starting point for a typical setup,
-      # not a universal value -- antenna, cable loss, and distance to the
-      # transmitter all shift what's correct for a given site; see the
-      # root README's "Tweak from there" bring-up step.
+      # Raise if SAME fails to decode, lower if the spectrum saturates.
       SDR_RX_GAIN_DB: ${SDR_RX_GAIN_DB:-30}
-      # Noise-quieting threshold in dB for the live-audio feed's squelch
-      # only (never SAME decode or the alert ring buffer). Self-calibrating
-      # against a runtime-tracked no-carrier reference, so unlike gain the
-      # default should hold across sites -- see .env.example.
+      # Live-audio squelch only; never affects SAME decode.
       SDR_RX_SQUELCH_OPEN_DB: ${SDR_RX_SQUELCH_OPEN_DB:-8.0}
-      # Empty by default -- every channel gets both SDR-side processing
-      # (voice filter/squelch/resample/encode) and an Icecast stream. Read
-      # by sdr-rx *and* live_audio below (they share this one container),
-      # not an SDR_RX_*-prefixed name for that reason. Most sites only have
-      # usable signal on one or two of the seven NWR channels; the rest
-      # otherwise did that work and ran a permanent ffmpeg/vorbis encode
-      # for no listener. Narrow it to just what's useful at this site, e.g.
-      # LIVE_AUDIO_CHANNELS=WX5,WX7 -- see .env.example. SAME decode and
-      # the alert ring buffer are unaffected either way; this only gates
-      # live-audio-bound work.
+      # Channels to stream to Icecast, e.g. WX5,WX7. Blank = all 7. Doesn't
+      # affect SAME decode.
       LIVE_AUDIO_CHANNELS: ${LIVE_AUDIO_CHANNELS:-}
       SDR_RX_ZMQ_BIND: tcp://0.0.0.0:5555
       SDR_RX_RING_BUFFER_DIR: /run/sdr_rx_ring
-      # Publishes RF health (tocsin:health) and per-site spectrum snapshots
-      # (tocsin:spectrum:<site>) for api (Phase 8).
       SDR_RX_REDIS_URL: redis://redis:6379/0
-      # same-decoder, live-audio, segment-capture: localhost, not
-      # tcp://sdr-rx:5555 -- they're the same container as sdr-rx now, not
-      # a separate one reaching it by service name.
+      # localhost, not tcp://sdr-rx:5555 -- same container now.
       SAME_DECODER_ZMQ_CONNECT: tcp://localhost:5555
       TOCSIN_DATA_DIR: /app/data
-      # Publishes to Redis Streams (tocsin:same_events) for fusion (design
-      # doc §5: "Both paths write raw events to Redis Streams before
-      # fusion sees them") instead of only logging to stdout.
       SAME_DECODER_REDIS_URL: redis://redis:6379/0
       LIVE_AUDIO_ZMQ_CONNECT: tcp://localhost:5555
       ICECAST_HOST: icecast
@@ -110,100 +63,63 @@ services:
       ICECAST_STREAM_NAME_TEMPLATE: ${ICECAST_STREAM_NAME_TEMPLATE:-Tocsin {site} {channel}}
       ICECAST_STREAM_DESCRIPTION: ${ICECAST_STREAM_DESCRIPTION:-Tocsin NOAA Weather Radio relay}
       ICECAST_STREAM_GENRE: ${ICECAST_STREAM_GENRE:-weather}
-      # Empty by default -- only set LIVE_AUDIO_METADATA_CONFIG (and uncomment
-      # the matching volume below) once you actually have a metadata.yaml
-      # with site_names/channel_names display-name overrides to mount; see
+      # Optional metadata.yaml for display-name overrides; see
       # services/live_audio/README.md.
       LIVE_AUDIO_METADATA_CONFIG: ${LIVE_AUDIO_METADATA_CONFIG:-}
-      # Liveness heartbeat only (tocsin:status:live_audio) -- live-audio's
-      # real output is the Icecast stream, not Redis. The heartbeat also
-      # carries its mount list, which is what lets api's /streams show a
-      # channel whose ffmpeg died; Icecast simply stops listing those.
       LIVE_AUDIO_REDIS_URL: redis://redis:6379/0
       SEGMENT_CAPTURE_ZMQ_CONNECT: tcp://localhost:5555
-      # Liveness heartbeat only; captures still go out over ZMQ.
       SEGMENT_CAPTURE_REDIS_URL: redis://redis:6379/0
-      # stt-worker (a separate container) connects to this one, so it
-      # stays reachable by this service's name -- see stt-worker's
-      # STT_WORKER_ZMQ_CONNECT below.
+      # stt-worker (a separate container) connects to this port by this
+      # service's name.
       SEGMENT_CAPTURE_ZMQ_BIND: tcp://0.0.0.0:5556
       SEGMENT_CAPTURE_RING_BUFFER_DIR: /run/sdr_rx_ring
       SEGMENT_CAPTURE_OUTPUT_DIR: /var/lib/segment_capture/captures
     depends_on:
       - redis
       - icecast
-    # A private tmpfs, not the shared named volume this used to be
-    # (`sdr-rx-ring`, removed) -- that only existed so segment-capture, a
-    # *separate* container, could read sdr-rx's ring buffer over shared
-    # backing memory (design doc §3, "pre-roll"). Now that both are the
-    # same container/filesystem, a plain per-container tmpfs is enough
-    # again, same as before segment-capture existed.
+    # Private per-container buffer -- not shared, since same-decoder and
+    # segment-capture run in this container now too.
     tmpfs:
       - /run/sdr_rx_ring
     volumes:
       - ./data:/app/data:ro
       - segment-captures:/var/lib/segment_capture/captures
-    # No `devices:` here on purpose -- it lives in compose.sdr.yaml, which
-    # `make up-offgrid`/`make up-hybrid` always include and `make dev-stack`
-    # always omits. Docker refuses to *start* a container whose `devices:` host
-    # path is absent (Windows/Mac and any dev box with no USB subsystem), and a
-    # list entry in an override can't be unset from the base once declared, so
-    # splitting it is what makes "no dongle attached" a runnable configuration
-    # -- same reasoning as compose.mesh.yaml. It is NOT an opt-in for real
-    # deployments: without it libusb can count dongles but open none of them,
-    # and sdr-rx fails at startup saying so (prerequisites.py). The mapping is
-    # the whole USB bus rather than one device node because RTL-SDR dongles
-    # enumerate under a bus-relative path that isn't stable across replugs --
-    # selection happens in the app layer by serial (SDR_RX_DEVICES). The host
-    # also needs the udev rule in deploy/udev/ so the dongle is group-readable
-    # without a privileged container; see this service's README for the full
-    # bring-up sequence (blacklist, udev rule, `make sdr-devices`).
+    # devices: lives in compose.sdr.yaml (make up-offgrid/up-hybrid add it,
+    # dev-stack omits it) -- Docker refuses to start a container whose
+    # devices: path is missing. Needs the udev rule in deploy/udev/ too;
+    # see this service's README for the full bring-up sequence.
     profiles: [offgrid, hybrid]
 
   icecast:
     build: ./deploy/icecast
     restart: unless-stopped
     environment:
-      # Drives the <listen-socket> port inside the container (rendered
-      # from icecast.xml's ${ICECAST_PORT} by deploy/icecast/entrypoint.sh),
-      # not just what other services dial.
+      # Rendered into icecast.xml's listen port by entrypoint.sh.
       ICECAST_PORT: ${ICECAST_PORT:-8000}
+      # Rendered into icecast.xml; must match sdr-rx's
+      # ICECAST_SOURCE_PASSWORD above. Change both before exposing past
+      # localhost.
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:-hackme}
+      # Icecast's own admin UI/status-page password.
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:-hackme}
     ports:
-      # Host port and container port deliberately move together, unlike
-      # api's below: the browser reaches a mount by the *host* port while
-      # live-audio and api reach it by the *container* port, and both are
-      # ICECAST_PORT. Mapping them to different numbers would silently
-      # break the web UI's playback URLs for any deployment that hasn't
-      # also set ICECAST_PUBLIC_URL.
+      # Host and container port must match -- the browser reaches a mount
+      # by host port, live-audio/api by container port, both ICECAST_PORT.
       - "${ICECAST_PORT:-8000}:${ICECAST_PORT:-8000}"
     profiles: [offgrid, hybrid]
 
   stt-worker:
     build: ./services/stt_worker
-    # on-failure covers real crashes (ZMQ, whisper-cli). A missing model
-    # file at STT_WORKER_MODEL_PATH is no longer one of them: main() waits
-    # for the file instead of exiting 1, so dropping a model into ./models/
-    # is still picked up with no manual intervention, without the restart
-    # loop that used to reprint the same line every few seconds into the
-    # shared `docker compose logs` stream (see stt_worker's await_model).
-    # STT_CHAIN=remote skips that wait entirely -- MODEL_PATH below is set
-    # unconditionally but only read when the chain contains `local`.
+    # A missing model file waits instead of failing -- see await_model.
     restart: on-failure
     environment:
-      # sdr-rx, not segment-capture -- segment-capture no longer has its
-      # own container/hostname (it's now one of sdr-rx's four processes,
-      # still publishing its capture-ready ZMQ PUB socket on the same
-      # port, just from that container's name instead of its own).
+      # sdr-rx, not segment-capture -- shares that container now.
       STT_WORKER_ZMQ_CONNECT: tcp://sdr-rx:5556
       STT_WORKER_MODEL_PATH: /models/${STT_WORKER_MODEL_FILE:-ggml-base.en.bin}
       STT_WORKER_INITIAL_PROMPT: ${STT_WORKER_INITIAL_PROMPT:-}
-      # Publishes to Redis Streams (tocsin:transcripts) for dispatcher's
-      # stage 2 (design doc §5's durability principle, extended to
-      # stt_worker -- Phase 7).
       STT_WORKER_REDIS_URL: redis://redis:6379/0
-      # local-only by default (offgrid); hybrid deployments that want the
-      # remote race set STT_CHAIN=local,remote plus the REMOTE_* vars
-      # below in .env -- see services/stt_worker/README.md.
+      # local-only by default; set STT_CHAIN=local,remote plus the
+      # REMOTE_* vars below for hybrid.
       STT_CHAIN: ${STT_CHAIN:-local}
       STT_WORKER_REMOTE_BASE_URL: ${STT_WORKER_REMOTE_BASE_URL:-}
       STT_WORKER_REMOTE_API_KEY: ${STT_WORKER_REMOTE_API_KEY:-}
@@ -217,10 +133,7 @@ services:
     profiles: [offgrid, hybrid]
 
   fusion:
-    # Build context is the repo root, not services/fusion/ -- this image
-    # also installs nws_poller (formerly its own container; see
-    # entrypoint.sh) as a second, independent uv project/venv alongside
-    # fusion's.
+    # Also builds nws_poller as a second, independent venv -- see entrypoint.sh.
     build:
       context: .
       dockerfile: services/fusion/Dockerfile
@@ -229,19 +142,10 @@ services:
       TOCSIN_MODE: *mode
       TOCSIN_DATA_DIR: /app/data
       FUSION_REDIS_URL: redis://redis:6379/0
-      # nws-poller's own env (was its own compose service, gated by
-      # `profiles: [hybrid]`; entrypoint.sh now gates it on TOCSIN_MODE at
-      # container start instead -- see that file). Empty by default, not
-      # `:?`-required, same reasoning as before the merge: a hard-required
-      # var here would block `offgrid` startup too, even though this
-      # entire block is skipped there -- exactly the regression
-      # CLAUDE.md's connectivity rule warns about. nws_poller's own
-      # __init__.py still fails loudly and exits 1 (retried by
-      # entrypoint.sh) if this is unset, which only matters under
-      # TOCSIN_MODE=hybrid where entrypoint.sh actually starts it.
+      # nws-poller's env -- entrypoint.sh only starts that process under
+      # TOCSIN_MODE=hybrid.
       NWS_POLLER_USER_AGENT: ${NWS_POLLER_USER_AGENT:-}
       NWS_POLLER_AREAS: ${NWS_POLLER_AREAS:-OR,WA}
-      # Optional, additive to NWS_POLLER_AREAS -- see .env.example.
       NWS_POLLER_ZONES: ${NWS_POLLER_ZONES:-}
       NWS_POLLER_INTERVAL_SECONDS: ${NWS_POLLER_INTERVAL_SECONDS:-60}
       NWS_POLLER_REDIS_URL: redis://redis:6379/0
@@ -249,99 +153,57 @@ services:
       - ./data:/app/data:ro
     depends_on:
       - redis
-    # both, unlike nws-poller's old hybrid-only profile: fusion itself
-    # always runs (offgrid alerts simply stay RF_ONLY -- see fusion's
-    # README), and the nws-poller half of this container now self-gates
-    # on TOCSIN_MODE inside entrypoint.sh rather than never starting the
-    # whole container under offgrid.
+    # fusion always runs (offgrid alerts stay RF_ONLY); the nws-poller half
+    # self-gates on TOCSIN_MODE instead.
     profiles: [offgrid, hybrid]
 
   dispatcher:
     build: ./services/dispatcher
-    # on-failure, not unless-stopped: a missing/unattached Meshtastic node
-    # is a real, retriable failure (main() fails loudly and exits 1 rather
-    # than crash with a raw traceback -- same posture as segment-capture's
-    # ring-buffer-mount check) -- worth retrying once the node is plugged
-    # in, unlike sdr-rx's deliberate "no devices configured" clean exit.
+    # on-failure: a missing/unattached Meshtastic node is retriable.
     restart: on-failure
     environment:
       TOCSIN_MODE: *mode
       TOCSIN_DATA_DIR: /app/data
       DISPATCHER_REDIS_URL: redis://redis:6379/0
-      # Empty (unset) by default -> meshtastic-python autodetects the
-      # device; only needed if more than one serial device is attached.
+      # Unset -> meshtastic-python autodetects the device; only needed if
+      # more than one serial device is attached.
       MESHTASTIC_SERIAL_DEV_PATH: ${MESHTASTIC_SERIAL_DEV_PATH:-}
-      # Defaults to false *here* and true in compose.mesh.yaml, so adding
-      # that file to COMPOSE_FILE is the single switch that turns the mesh
-      # on: it maps the device and enables the transmit path together.
-      # Those two must agree -- enabling transmit without the device
-      # mapping is a loud exit-1 at startup, not a degraded run.
+      # false here, true in compose.mesh.yaml -- that overlay is the
+      # single switch for mesh transmit.
       MESHTASTIC_ENABLED: ${MESHTASTIC_ENABLED:-false}
-      # serial | tcp (design doc §7: "sendText(wantAck=True) over
-      # serial/TCP"). A tcp node needs no device mapping, so it runs on
-      # this file alone -- set MESHTASTIC_ENABLED=true explicitly rather
-      # than adding compose.mesh.yaml, which exists only for the USB case.
+      # serial | tcp. tcp needs no device mapping -- just set
+      # MESHTASTIC_ENABLED=true rather than adding compose.mesh.yaml.
       MESHTASTIC_TRANSPORT: ${MESHTASTIC_TRANSPORT:-serial}
       MESHTASTIC_TCP_HOST: ${MESHTASTIC_TCP_HOST:-}
       MESHTASTIC_TCP_PORT: ${MESHTASTIC_TCP_PORT:-4403}
-      # Unset -> node's Primary channel (index 0), both here and on the
-      # MQTT fallback leg below.
+      # Unset -> node's Primary channel (index 0).
       MESHTASTIC_CHANNEL_INDEX: ${MESHTASTIC_CHANNEL_INDEX:-}
-      # MQTT fallback (design doc §7): only ever attempted under
-      # TOCSIN_MODE=hybrid (see DualPathSender), and only if a gateway
-      # node ID is actually configured -- both empty by default.
-      MESHTASTIC_GATEWAY_NODE_ID: ${MESHTASTIC_GATEWAY_NODE_ID:-}
-      MQTT_HOST: mosquitto
-      MQTT_PORT: "1883"
-      MESHTASTIC_MQTT_REGION: ${MESHTASTIC_MQTT_REGION:-US}
-      # Stage 2 (design doc §7): unset by default -> stage 2 is skipped
-      # entirely, never even consuming tocsin:transcripts (see
-      # __init__.py's docstring on why "omitted," not "template-only,"
-      # was chosen from the design doc's stated §8 options).
+      # Unset -> stage 2 disabled entirely.
       DISPATCHER_LITELLM_BASE_URL: ${DISPATCHER_LITELLM_BASE_URL:-}
       DISPATCHER_LITELLM_API_KEY: ${DISPATCHER_LITELLM_API_KEY:-}
       DISPATCHER_LITELLM_MODEL: ${DISPATCHER_LITELLM_MODEL:-gpt-4o-mini}
     volumes:
       - ./data:/app/data:ro
-    # No `devices:` here on purpose -- it lives in compose.mesh.yaml.
-    # Docker refuses to *start* a container whose device path is absent
-    # from the host, so a mapping in this file would make a node the hard
-    # prerequisite for running Tocsin at all, including the receive-only
-    # half (SAME decode, transcripts, web UI) that needs no radio.
+    # devices: lives in compose.mesh.yaml so a receive-only station needs
+    # no node mapped.
     depends_on:
       - redis
       - fusion
-      - mosquitto
-    # both: stage 1 is deterministic and zero-dependency by design (§7) --
-    # it works identically off-grid. Stage 2's LiteLLM call and the MQTT
-    # fallback leg are the only mode/config-gated parts.
+    # both: stage 1 works identically off-grid. Stage 2's LiteLLM call is
+    # the only mode/config-gated part.
     profiles: [offgrid, hybrid]
 
   api:
-    # Build context is the repo root, not services/api/ -- the Dockerfile's
-    # first stage builds web/ (formerly its own nginx container; see
-    # web/README.md and services/api/app.py's static mount) before the
-    # Python runtime stage.
+    # Dockerfile also builds web/ into static/ (first stage).
     build:
       context: .
       dockerfile: services/api/Dockerfile
-    # on-failure: an unconfigured connection (neither API_POSTGRES_PASSWORD
-    # nor API_POSTGRES_DSN) is main()'s own loud-fail-and-exit-1 check --
-    # see services/api/README.md. A *slow* database is no longer part of
-    # this policy's job: api waits for timescaledb to be healthy below and
-    # then retries the connection itself, and it exits with one legible
-    # block (not a repeating traceback) on the failures retrying can't fix,
-    # e.g. a password that doesn't match the volume's.
+    # on-failure: exits loudly on bad config/password rather than looping
+    # a traceback.
     restart: on-failure
     environment:
-      # Passed as parts, not as a single interpolated
-      # `postgresql://tocsin:${POSTGRES_PASSWORD}@timescaledb:5432/tocsin`
-      # URL: a password containing `@`, `:`, `/`, `?`, or `#` makes that
-      # string parse as some *other* DSN and fail with "password
-      # authentication failed" while .env is in fact correct. api
-      # percent-encodes these itself (see config.py). API_POSTGRES_DSN is
-      # still honored if set, for deployments pointing at their own
-      # database.
+      # Passed as parts, not one DSN string -- a password containing
+      # @:/?# would otherwise parse wrong. API_POSTGRES_DSN overrides if set.
       API_POSTGRES_HOST: timescaledb
       API_POSTGRES_PORT: "5432"
       API_POSTGRES_USER: tocsin
@@ -350,67 +212,44 @@ services:
       API_REDIS_URL: redis://redis:6379/0
       API_HOST: 0.0.0.0
       API_PORT: ${API_PORT:-8000}
-      # Surfaced to the browser via GET /system. The UI cannot describe an
-      # empty CAP column honestly without it: no API source means "offgrid
-      # doesn't poll NWS at all" here and "the poller is broken" under
-      # hybrid, and those look identical on screen otherwise.
+      # Surfaced via GET /system so the UI can render offgrid vs. hybrid
+      # correctly.
       TOCSIN_MODE: *mode
-      # Read-only, for GET /reference: SAME event codes (name + tier) and
-      # the FIPS -> county table the UI needs to render "Multnomah, OR"
-      # instead of "041051" and to tell a Tier A warning from a Tier C test.
+      # SAME event codes + FIPS table for GET /reference.
       TOCSIN_DATA_DIR: /app/data
-      # Optional: adds distance_km to each nwr_stations_or.yaml entry in
-      # GET /reference, purely a UI hint. Both unset (the default) means
-      # every station's distance_km is null.
+      # Adds distance_km to GET /reference's stations; null if unset.
       TOCSIN_LATITUDE: ${TOCSIN_LATITUDE:-}
       TOCSIN_LONGITUDE: ${TOCSIN_LONGITUDE:-}
-      # Where segment-capture's finished WAVs land, so GET /captures/{name}
-      # can serve the audio behind a transcript -- the guard-failed ones
-      # especially, where stt_worker deliberately dropped the text.
+      # segment-capture's WAV output, served at GET /captures/{name}.
       API_CAPTURES_DIR: /var/lib/segment_capture/captures
       ICECAST_HOST: icecast
       ICECAST_PORT: ${ICECAST_PORT:-8000}
-      # What the *browser* should use to reach Icecast, which is not
-      # `icecast:8000` -- that only resolves inside this network. Unset by
-      # default so the page falls back to its own hostname on the Icecast
-      # port, which is right for the usual "browse to the Pi on the LAN"
-      # case; set it for deployments behind a reverse proxy where it isn't.
+      # Browser-facing Icecast URL. Unset = same host as ICECAST_PORT; set
+      # behind a reverse proxy (absolute URL, or a relative path like
+      # /stream to proxy audio through api itself).
       ICECAST_PUBLIC_URL: ${ICECAST_PUBLIC_URL:-}
     volumes:
       - ./data:/app/data:ro
-      # read-only: api serves these, segment-capture (in the sdr-rx
-      # container) is the only writer.
+      # read-only -- segment-capture is the only writer.
       - segment-captures:/var/lib/segment_capture/captures:ro
     ports:
-      # Was web/nginx's port before that container merged in here -- still
-      # 8080 by default so the bring-up runbook (README.md) doesn't change.
-      # TOCSIN_WEB_PORT is the one to change when 8080 is already taken on
-      # the host; API_PORT only moves uvicorn's bind inside the container,
-      # which nothing outside compose ever sees.
+      # Change TOCSIN_WEB_PORT if 8080 is taken; API_PORT only matters
+      # inside the container.
       - "${TOCSIN_WEB_PORT:-8080}:${API_PORT:-8000}"
     depends_on:
       redis:
         condition: service_started
-      # service_healthy, not service_started: Postgres binds its port before
-      # first-boot initialization finishes, so "started" is not "ready" here
-      # and api would otherwise spend its startup window retrying a database
-      # that isn't listening for real queries yet.
+      # healthy, not just started -- Postgres isn't ready for real queries
+      # right after boot.
       timescaledb:
         condition: service_healthy
-      # Not a hard requirement -- /streams degrades to live-audio's own
-      # heartbeat view when Icecast is unreachable rather than erroring --
-      # but starting it first avoids a pointless failed fetch on boot.
+      # Not required -- /streams degrades gracefully if Icecast is down.
       icecast:
         condition: service_started
     profiles: [offgrid, hybrid]
 
 volumes:
   redis-data:
-  mosquitto-data:
   timescale-data:
-  # Not tmpfs: finished captures are real data worth keeping across a
-  # restart (replay, debugging a bad transcript), unlike the raw ring
-  # buffer they're extracted from (a private `tmpfs:` mount on sdr-rx
-  # itself now, not a named volume -- see that service's comment on why
-  # it no longer needs to be shared across containers).
+  # Not tmpfs -- captures are worth keeping across a restart.
   segment-captures:

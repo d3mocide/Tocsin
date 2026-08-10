@@ -4,10 +4,14 @@
   (docs/design/master-prompt.md §11, non-goals: no public rebroadcast),
   not meant to be exposed beyond the local network as shipped.
 
-  source-password/admin-password below are Icecast's traditional
-  placeholder ("hackme"); change both before exposing this port past
-  localhost, and update ICECAST_SOURCE_PASSWORD for services/live_audio to
-  match (see that service's README).
+  source-password/admin-password are ${ICECAST_SOURCE_PASSWORD}/
+  ${ICECAST_ADMIN_PASSWORD} placeholders, substituted by entrypoint.sh at
+  container start (both default to Icecast's traditional "hackme" if
+  unset). Change ICECAST_SOURCE_PASSWORD and ICECAST_ADMIN_PASSWORD in
+  .env before exposing this port past localhost -- not this file:
+  services/live_audio already reads the same ICECAST_SOURCE_PASSWORD, so
+  the two can no longer drift out of sync the way a hand-edit here used to
+  risk.
 -->
 <icecast>
     <location>Tocsin</location>
@@ -25,10 +29,10 @@
     </limits>
 
     <authentication>
-        <source-password>hackme</source-password>
-        <relay-password>hackme</relay-password>
+        <source-password>${ICECAST_SOURCE_PASSWORD}</source-password>
+        <relay-password>${ICECAST_SOURCE_PASSWORD}</relay-password>
         <admin-user>admin</admin-user>
-        <admin-password>hackme</admin-password>
+        <admin-password>${ICECAST_ADMIN_PASSWORD}</admin-password>
     </authentication>
 
     <hostname>localhost</hostname>

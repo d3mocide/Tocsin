@@ -9,7 +9,7 @@ crashed fusion and a working one produce identical output, and a status
 board that cannot tell those apart is worse than none.
 
 Deliberately duplicated per service instead of shared (CLAUDE.md: services
-communicate over Redis/ZMQ/MQTT, not Python imports). `beat()` is called
+communicate over Redis/ZMQ/HTTP, not Python imports). `beat()` is called
 unconditionally from the main loop and throttles itself, so callers don't
 need their own timer, and it never raises -- a Redis blip must not take
 down the process whose liveness it reports.

@@ -20,9 +20,7 @@ design doc's explicit "wait 15s for ack" behavior.
 
 A TCP node is *not* an internet dependency and stays valid in `offgrid`:
 it is a node on the local network (Ethernet/WiFi) rather than on a USB
-cable. Design doc §8's four network-gated components do not include the
-link to your own node -- the MQTT *fallback* leg is the mode-gated one,
-because that one genuinely needs an internet-connected gateway.
+cable.
 """
 
 from __future__ import annotations

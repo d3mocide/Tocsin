@@ -25,8 +25,8 @@ per-phase notes, and the Session Log) whenever you finish or materially advance 
 
 Each service under `services/` is an independent Python project (uv-managed:
 `pyproject.toml` + `uv.lock`, src layout). Don't reach across service boundaries by
-importing another service's package directly — they communicate over ZMQ, Redis, MQTT, and
-HTTP per the architecture in `docs/design/master-prompt.md` §2, not Python imports. Shared
+importing another service's package directly — they communicate over ZMQ, Redis, and HTTP
+per the architecture in `docs/design/master-prompt.md` §2, not Python imports. Shared
 reference data (event code tiers, FIPS mapping, SAME↔CAP mapping) lives in checked-in YAML
 under `data/`, not duplicated per-service.
 
@@ -61,3 +61,9 @@ invariant, a hazard from the design doc, a workaround), not what the code does. 
 build abstractions for services or providers that don't exist yet — `stt_worker`'s
 provider interface, for instance, should stay concrete until there are two real providers
 to generalize from, not before.
+
+Keep comments short — one line, rarely two or three for something that genuinely needs it.
+Skip the surrounding history and alternatives considered; state the current reason only.
+This matters most in `.env.example` and `compose.yaml`: they're what an operator reads
+first, and a wall of prose per line buries the one thing they need (the value to set or the
+gotcha to avoid).

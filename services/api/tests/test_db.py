@@ -288,7 +288,7 @@ async def test_dispatch_summary_splits_sent_from_skipped():
         fetch_results=[
             [
                 {"sent": True, "reason": "serial", "count": 2},
-                {"sent": True, "reason": "mqtt_fallback", "count": 1},
+                {"sent": True, "reason": "tcp", "count": 1},
                 {"sent": False, "reason": "skipped_duplicate", "count": 4},
             ]
         ]
@@ -298,4 +298,4 @@ async def test_dispatch_summary_splits_sent_from_skipped():
 
     assert summary["sent"] == 3
     assert summary["skipped"] == 4
-    assert summary["by_reason"] == {"serial": 2, "mqtt_fallback": 1, "skipped_duplicate": 4}
+    assert summary["by_reason"] == {"serial": 2, "tcp": 1, "skipped_duplicate": 4}
