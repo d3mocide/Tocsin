@@ -37,6 +37,9 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
   line-height: 1.5;
+  /* Belt-and-suspenders: no single child should be able to push the page
+     into horizontal scroll, sticky header included. */
+  overflow-x: hidden;
 }
 
 .mono {
@@ -52,9 +55,10 @@ body {
   top: 0;
   z-index: 10;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.6rem 1rem;
   padding: 0.75rem 1.25rem;
   background: color-mix(in srgb, var(--bg) 85%, transparent);
   backdrop-filter: blur(8px);
@@ -97,6 +101,17 @@ body {
 @media (max-width: 700px) {
   .brand-subtitle {
     display: none;
+  }
+}
+
+/* Shared with the `.layout` breakpoint below: past this width nav-tabs and
+   connection-status no longer fit next to the brand on one line. Forcing
+   brand onto its own row here means they wrap as a pair onto row two
+   (space-between still puts nav-tabs left, connection status right)
+   instead of connection-status wrapping alone beneath both. */
+@media (max-width: 900px) {
+  .brand {
+    flex: 1 1 100%;
   }
 }
 
@@ -1437,6 +1452,12 @@ footer {
   border: 1px solid var(--border);
   overflow: hidden;
   background: #090c10;
+  /* Leaflet's own panes/controls use z-index up to 1000 internally, and
+     without a stacking context to contain them that climbs straight past
+     the sticky header's z-index: 10, rendering the zoom control on top of
+     the header on scroll. `isolation: isolate` traps Leaflet's internal
+     stacking inside this element instead of fighting each value by hand. */
+  isolation: isolate;
 }
 
 /* Leaflet dark theme customization */

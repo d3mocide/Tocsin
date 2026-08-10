@@ -4,8 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0b0e13" />
     <title>Tocsin</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <!-- iOS ignores the SVG favicon for "Add to Home Screen" and needs a PNG here -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Tocsin" />
     <link rel="stylesheet" href="/src/style.css" />
 
   </head>
@@ -20,7 +28,7 @@
 
       <nav class="nav-tabs" aria-label="Main Navigation">
         <button id="tab-btn-dashboard" class="nav-tab active" type="button">Dashboard</button>
-        <button id="tab-btn-logs" class="nav-tab" type="button">Logs & Activity</button>
+        <button id="tab-btn-logs" class="nav-tab" type="button">Activity</button>
       </nav>
 
       <div id="connection-status"></div>
