@@ -8,7 +8,7 @@
   ${ICECAST_ADMIN_PASSWORD} placeholders, substituted by entrypoint.sh at
   container start (both default to Icecast's traditional "hackme" if
   unset). Change ICECAST_SOURCE_PASSWORD and ICECAST_ADMIN_PASSWORD in
-  .env before exposing this port past localhost -- not this file:
+  .env before exposing this port past localhost, not this file:
   services/live_audio already reads the same ICECAST_SOURCE_PASSWORD, so
   the two can no longer drift out of sync the way a hand-edit here used to
   risk.
