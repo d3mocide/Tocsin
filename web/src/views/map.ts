@@ -70,10 +70,10 @@ export class MapView {
     this.container.appendChild(controls);
     this.container.appendChild(mapDiv);
 
-    // Default center on Portland Metro
+    // Default center on Portland Metro (zoomed out to level 8)
     this.map = L.map(mapDiv, {
       center: [45.52, -122.67],
-      zoom: 9,
+      zoom: 8,
       zoomControl: true,
       attributionControl: false,
     });
