@@ -10,6 +10,7 @@ called.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -20,6 +21,22 @@ from fastapi.staticfiles import StaticFiles
 from . import db, reference as reference_module, spectrum as spectrum_module, status as status_module, streams as streams_module
 from .config import ApiConfig
 from .sse import Broadcaster, format_sse
+
+
+class _SpaStaticFiles(StaticFiles):
+    """Vite fingerprints everything under assets/, so those are safe to cache
+    forever. index.html, the icons and the manifest keep stable names, and
+    Starlette sends no Cache-Control of its own -- without this a browser
+    heuristically caches them and keeps showing a superseded logo long after
+    the container is rebuilt."""
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = super().file_response(full_path, stat_result, scope, status_code=status_code)
+        fingerprinted = self.get_path(scope).split(os.sep)[0] == "assets"
+        response.headers["Cache-Control"] = (
+            "public, max-age=31536000, immutable" if fingerprinted else "no-cache"
+        )
+        return response
 
 
 async def _default_http_get(url: str) -> str | None:
@@ -302,6 +319,6 @@ def create_app(
     # (design doc §9's "Vite + TypeScript UI", formerly its own nginx
     # container -- see web/README.md).
     if static_dir is not None and static_dir.is_dir():
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="web")
+        app.mount("/", _SpaStaticFiles(directory=static_dir, html=True), name="web")
 
     return app

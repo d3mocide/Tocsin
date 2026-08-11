@@ -156,6 +156,24 @@ def test_static_dir_serves_the_built_spa_at_root(tmp_path):
     assert "tocsin" in response.text
 
 
+def test_stable_named_static_assets_must_revalidate(tmp_path):
+    # Without this the browser keeps serving a superseded favicon.svg for
+    # days after a rebuild -- the filename never changes to evict it.
+    (tmp_path / "index.html").write_text("<html>tocsin</html>")
+    (tmp_path / "favicon.svg").write_text("<svg/>")
+    client = _client(static_dir=tmp_path)
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert client.get("/favicon.svg").headers["cache-control"] == "no-cache"
+
+
+def test_fingerprinted_static_assets_are_cached_immutably(tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "index-abc123.js").write_text("console.log(1)")
+    response = _client(static_dir=tmp_path).get("/assets/index-abc123.js")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
 def test_static_dir_does_not_shadow_api_routes(tmp_path):
     # An /alerts/index.html or similar under dist would be unusual, but the
     # point is the API route registered above the mount always wins for
