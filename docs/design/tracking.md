@@ -2428,3 +2428,17 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   hybrid mode actually turns on today (design doc §8: NWS polling, remote STT, stage-2 LLM
   enrichment -- no MQTT leg exists anymore). No code behavior changed by this pass beyond that
   one string; everything else was documentation-only.
+- **2026-08-11** — Fixed the "new logo isn't showing up after a rebuild" report. The logo
+  itself was fine: the redesign (`6bea7e0`) is on `main`, `web/public/`'s five icon files all
+  carry the new mark, and a clean `npm run build` copies them into `dist/` byte-identical. The
+  bug was on the serving side. `api` mounts the built SPA with a bare Starlette `StaticFiles`,
+  which sends `last-modified`/`etag` but no `Cache-Control`, so browsers fall back to
+  heuristic freshness on `index.html`, `favicon.svg`, and the PNGs -- all stable filenames
+  that nothing ever evicts -- and keep painting the previous logo for days regardless of how
+  many times the container is rebuilt. Added `_SpaStaticFiles` in `app.py`: `no-cache`
+  (revalidate, cheap via the existing ETag) for stable-named files, `max-age=31536000,
+  immutable` for Vite's fingerprinted `assets/` output, which is the split that mount always
+  should have had. That fixes future logo changes; for caches already poisoned, bumped a `?v=2`
+  on the icon URLs in `index.html` and `manifest.webmanifest` -- bump it again on the next
+  logo change. Two new tests in `services/api/tests/test_app.py` pin both header cases; 120
+  api tests pass.
