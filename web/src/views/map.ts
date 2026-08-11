@@ -6,6 +6,14 @@ import type { Store } from "../store";
 import type { Alert } from "../types";
 import { NWS_ZONES } from "./zone_data";
 
+const RADAR_LOCAL_LAYER = "ridge::RTX-N0B-0";
+const RADAR_WIDE_LAYER = "ridge::USCOMP-N0Q-0";
+const RADAR_WIDE_MAX_ZOOM = 6;
+
+function radarTileUrl(layer: string): string {
+  return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/${layer}/{z}/{x}/{y}.png`;
+}
+
 const FIPS_TO_ZONES: Record<string, string[]> = {
   "041051": ["ORZ111", "ORZ112", "ORZ113"], // Multnomah, OR
   "041067": ["ORZ109", "ORZ110"],           // Washington, OR
@@ -25,7 +33,9 @@ export class MapView {
   private map: L.Map | null = null;
   private zoneGroup: L.LayerGroup | null = null;
   private stationGroup: L.LayerGroup | null = null;
-  private radarLayer: L.TileLayer | null = null;
+  private radarLocalLayer: L.TileLayer | null = null;
+  private radarWideLayer: L.TileLayer | null = null;
+  private radarZoomListenerAttached = false;
   private showRadar = false;
   private tileStatus = "Live";
 
@@ -108,16 +118,47 @@ export class MapView {
   private toggleRadar(): void {
     if (!this.map) return;
     if (this.showRadar) {
-      if (!this.radarLayer) {
-        // Iowa State IEM WMS Radar Overlay
-        this.radarLayer = L.tileLayer(
-          "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png",
-          { opacity: 0.5, maxZoom: 18 }
-        );
+      if (!this.radarLocalLayer) {
+        this.radarLocalLayer = L.tileLayer(radarTileUrl(RADAR_LOCAL_LAYER), {
+          opacity: 0.50,
+          maxZoom: 18,
+          maxNativeZoom: 11,
+        });
       }
-      this.radarLayer.addTo(this.map);
-    } else if (this.radarLayer) {
-      this.map.removeLayer(this.radarLayer);
+
+      if (!this.radarWideLayer) {
+        this.radarWideLayer = L.tileLayer(radarTileUrl(RADAR_WIDE_LAYER), {
+          opacity: 0.50,
+          maxZoom: 18,
+          maxNativeZoom: 11,
+        });
+      }
+
+      if (!this.radarZoomListenerAttached) {
+        this.map.on("zoomend", this.updateRadarForZoom, this);
+        this.radarZoomListenerAttached = true;
+      }
+      this.updateRadarForZoom();
+    } else {
+      if (this.radarZoomListenerAttached) {
+        this.map.off("zoomend", this.updateRadarForZoom, this);
+        this.radarZoomListenerAttached = false;
+      }
+      if (this.radarLocalLayer) this.map.removeLayer(this.radarLocalLayer);
+      if (this.radarWideLayer) this.map.removeLayer(this.radarWideLayer);
+    }
+  }
+
+  private updateRadarForZoom(): void {
+    if (!this.map || !this.showRadar || !this.radarLocalLayer || !this.radarWideLayer) return;
+
+    const useWide = this.map.getZoom() <= RADAR_WIDE_MAX_ZOOM;
+    if (useWide) {
+      if (this.map.hasLayer(this.radarLocalLayer)) this.map.removeLayer(this.radarLocalLayer);
+      if (!this.map.hasLayer(this.radarWideLayer)) this.radarWideLayer.addTo(this.map);
+    } else {
+      if (this.map.hasLayer(this.radarWideLayer)) this.map.removeLayer(this.radarWideLayer);
+      if (!this.map.hasLayer(this.radarLocalLayer)) this.radarLocalLayer.addTo(this.map);
     }
   }
 

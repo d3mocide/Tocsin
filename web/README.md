@@ -110,8 +110,10 @@ than overflowing horizontally -- the map's internal Leaflet stacking context (z-
   nearby NWR transmitter as a tower marker (color by `status`, a pulsing ring on
   whichever station is nearest the operator, matches `KIG98`, or is otherwise
   inferred to be the one actually feeding a live channel/health sample). An
-  optional NEXRAD radar overlay (Iowa State's public IEM WMS tiles) toggles on
-  top of both. Zone polygon coordinates are a small hand-maintained table
+  optional NEXRAD radar overlay (Iowa State IEM raster tiles) toggles on top of
+  both and automatically switches products by zoom: a wide CONUS composite when
+  zoomed out, and a higher-detail local product when zoomed in. Zone polygon
+  coordinates are a small hand-maintained table
   (`views/zone_data.ts`) keyed by UGC code, not fetched from NWS at runtime.
 - **Live audio** (`views/streams.ts`) -- an `<audio>` player per Icecast
   mount. These streams always worked; nothing in the UI ever mentioned
