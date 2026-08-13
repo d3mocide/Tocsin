@@ -26,7 +26,7 @@ completion of the phase's actual exit criteria.
 |---|---|---|---|
 | 0 | Bootstrap | Done | 2026-08-07 |
 | 1 | Channelizer | Done | 2026-08-08 |
-| 2 | SAME decode end to end | In Progress | 2026-08-07 |
+| 2 | SAME decode end to end | Done | 2026-08-13 |
 | 3 | Live audio | Done | 2026-08-08 |
 | 4 | Segment capture + local STT | In Progress | 2026-08-08 |
 | 5 | NWS poller + fusion | In Progress | 2026-08-10 |
@@ -263,8 +263,12 @@ part of the stated exit criteria, which are now all met):
 
 ## Phase 2 — SAME decode end to end
 
-**Status:** In Progress (2026-08-07) — see the build-order note above; this is "implemented
-and unit tested," not "verified against real audio."
+**Status:** Done (2026-08-13) — live-hardware verified: a user's real RTL-SDR deployment
+decoded a real over-the-air NWR Required Weekly Test (RF-sourced `Required Weekly Test`
+alert visible on the dashboard, confidence 0.60, tagged `RF ONLY`), closing the one exit
+criterion (roadmap.md) that stayed open through every other phase's build-order exception --
+see the "Not started / open" section below, previously the blocker every later phase's
+build-order note pointed back to.
 
 **Done:**
 - `services/same_decoder`, a new uv-managed service (mirrors `sdr_rx`'s src layout):
@@ -328,18 +332,22 @@ and unit tested," not "verified against real audio."
   before it ever prints a line) is taken on faith from the design doc, not confirmed
   against multimon-ng's source. If that assumption is wrong, `dedup.py`'s simpler "collapse
   exact repeats" model may need to become an actual 2-of-3 vote across divergent copies.
-- Verification against a recorded RWT/RMT capture, or real SAME audio at all (roadmap
-  Phase 2 exit criteria) — **still open as of 2026-08-08** despite Phase 1/3 going live on
-  real hardware: the same user confirmed real, audible NOAA Weather Radio audio on the
-  `WX7` mount (Phase 1/3), but that's voice audio, not a SAME/EAS burst — nothing has
-  actually been decoded by multimon-ng yet, confirmed or otherwise (it's fed every NWR
-  channel continuously per `same-decoder`'s `service.py`, so it's already listening on
-  `WX7`, just hasn't seen a header air). NWR's own Required Weekly Test (RWT) is still the
-  natural first real-world check (repo root README bring-up runbook step 7) — worth
-  checking `docker compose logs sdr-rx | grep same-decoder` for a `SameEvent` JSON line
-  around the local transmitter's scheduled RWT time, or after any real activations
-  (`same-decoder` stopped being a separate compose service/container on 2026-08-08 — see
-  Phase 1's notes and the Session Log).
+  Not blocking Done above: the live RWT decode below proves the pipeline works end to end on
+  real air, it just doesn't by itself prove this specific majority-voting assumption either
+  way.
+
+- **2026-08-13 — Live-hardware verified, closing this phase's last open item:** a user's
+  real deployment decoded NWR's own Required Weekly Test off the air — exactly the "natural
+  first real-world check" this section named as the way to close this gap without waiting
+  for a real warning. The dashboard shows it as `Required Weekly Test`, `RF ONLY`, confidence
+  0.60, tier C (`data/same_event_codes.yaml`: `RWT` is Tier C, "tests, routine programming").
+  Confirms real air → `sdr-rx`'s channelizer → `same-decoder`'s multimon-ng subprocess →
+  parsed `SameEvent` → `fusion` → `api` → the dashboard, all genuinely working, not just
+  unit-tested against synthetic fixtures. The same session's Meshtastic dispatch question
+  (see Phase 6's notes) is explained by this event's tier, not a bug: `dispatcher.service`
+  gates on `TIER_A` only (`service.py` line 87), so a Tier C RWT is expected to log
+  `skipped_not_tier_a` and never reach the mesh — `GET /dispatches` or
+  `docker compose logs dispatcher` will show that reason for this specific event.
 
 ---
 
@@ -810,6 +818,18 @@ hardware requirement (a real Meshtastic node) that no phase before it needed.
   real package's actual signatures (not just docs) specifically because this gap exists and
   couldn't be closed by running the real hardware path.
 
+- **2026-08-13:** A user's real deployment decoded a live NWR Required Weekly Test (Phase
+  2's live-hardware verification, this date) but saw no mesh send, which surfaced a question
+  rather than a bug: RWT is Tier C (`data/same_event_codes.yaml`), and `Stage1Dispatcher`
+  only ever sends Tier A (`_evaluate`'s first gate, `service.py` line 87) -- worth capturing
+  here since it's the natural first thing a real decode surfaces, and this section is exactly
+  where "live-hardware verification is still open" was already tracked. Still true: no real
+  Meshtastic node has been exercised end to end in this repo's history yet. Testing the
+  actual egress path for real needs a genuine Tier A event -- either wait for a real warning
+  (rare by design), or exercise `egress/meshtastic_node.py` directly against the node
+  (bypassing tier gating on purpose, for a hardware-connectivity check only) rather than
+  waiting on `dispatcher`'s tier gate to pass a real alert through.
+
 **Depends on:** Phase 5 (needs `tocsin:alerts`, which is fully proven against its own exit
 criteria already) and, per roadmap.md, Phase 2 (a real decoded SAME header to dispatch in the
 first place) -- both still open for the same reason every phase since 2 has flagged: no real
@@ -1276,6 +1296,23 @@ FastAPI service, and the first TypeScript in this repo.
   favicon.svg`, regenerated into every PNG size) -- echoes the Spectrum panel's own visual
   language instead of a literal bell, and reads cleanly down to 16px.
 
+- **2026-08-13 (alert pruning):** `alerts` had no retention policy at all -- every alert
+  `fusion` ever published stayed in Postgres forever, `GET /alerts` only ever trimmed by
+  `limit`, and the web UI's `isActive()`/`expiresAt()` (`format.ts`) just kept labeling old
+  rows "expired" without anything ever removing them. Surfaced by a user question after
+  confirming the SAME decode path live (Phase 2, this date): how long an expired alert should
+  stick around before it's gone. Added a background sweep (`api/__init__.py`'s
+  `_prune_alerts_forever`, `ALERTS_PRUNE_INTERVAL_SECONDS`, default hourly) that deletes
+  alerts expired more than `ALERTS_PRUNE_GRACE_SECONDS` ago (default 86400 -- one day).
+  `db.alert_expiry` is a Python port of `format.ts`'s `expiresAt` (service boundary, two
+  independent implementations of the same rule, CLAUDE.md) -- CAP's own `expires`/`ends` wins
+  when present, falling back to the RF source's `received_at + purge_minutes`; an alert with
+  no computable expiry is never pruned, same "no data means keep it" posture the web UI
+  already uses. Implemented in Python rather than as a JSONB SQL expression specifically so it
+  stays unit-testable without a real Postgres, which this authoring sandbox has never had. 8
+  new tests in `api` (`alert_expiry`, `prune_expired_alerts`, config defaults/overrides), 128
+  passing (up from 116).
+
 **Not started / open:**
 - Argon2id local backend auth (design doc §9) is still not built -- the reverse-proxy half
   of that line is now addressed (single-port exposure via `/stream`, configurable CORS,
@@ -1291,9 +1328,9 @@ FastAPI service, and the first TypeScript in this repo.
 
 **Depends on:** Phase 5 (alert store) and Phase 1 (health signal) per roadmap.md -- both
 already built (Phase 5 fully proven against its own exit criteria; Phase 1 live-hardware
-verified). The only remaining real dependency is the same one every phase since 2 has
-flagged: no real SAME header has been decoded from actual RF in this repo's history yet, so
-the alert feed this UI displays has never shown a real RF-sourced alert end to end.
+verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag) closed
+2026-08-13 -- the alert feed this UI displays has now shown a real RF-sourced alert
+(`Required Weekly Test`, `RF ONLY`) end to end, not just fixtures.
 
 ---
 
@@ -2442,3 +2479,16 @@ the alert feed this UI displays has never shown a real RF-sourced alert end to e
   on the icon URLs in `index.html` and `manifest.webmanifest` -- bump it again on the next
   logo change. Two new tests in `services/api/tests/test_app.py` pin both header cases; 120
   api tests pass.
+- **2026-08-13** — A user's real deployment decoded a live NWR Required Weekly Test
+  (`RF ONLY`, confidence 0.60) on the dashboard, closing Phase 2's long-open live-hardware
+  gap — marked Phase 2 Done and updated Phase 8's "Depends on" note, which was still saying
+  no real SAME header had ever been decoded. The same session asked why that RWT didn't
+  reach the Meshtastic node: expected, not a bug — RWT is Tier C and `Stage1Dispatcher` only
+  ever sends Tier A (Phase 6's notes, this date). Separately, answered a question with no
+  existing behavior to point to: expired alerts had no retention policy at all and stayed in
+  Postgres forever. Added a background sweep (`api/__init__.py`'s `_prune_alerts_forever`,
+  `ALERTS_PRUNE_GRACE_SECONDS` default 86400/1 day, `ALERTS_PRUNE_INTERVAL_SECONDS` default
+  3600) that deletes alerts past that grace window, via a new `db.alert_expiry`/
+  `db.prune_expired_alerts` pair — `alert_expiry` is a Python port of `web/src/format.ts`'s
+  `expiresAt`, kept unit-testable without a real Postgres rather than pushed into a JSONB SQL
+  expression. 8 new tests, 128 api tests pass (up from 120).

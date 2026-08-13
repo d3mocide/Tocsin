@@ -286,15 +286,16 @@ tocsin/
 ## Status
 
 All eight design-doc milestones (`docs/design/roadmap.md`) have working, unit-tested code
-across `services/`. Phases 1 and 3 (`services/sdr_rx`, `services/live_audio`) are
-additionally verified against a real RTL-SDR dongle on a Raspberry Pi 5: all seven WX
-channels locked, live audio audible in a browser. The one gap every later phase inherits:
-no real SAME/EAS header has aired during testing yet, so decode (`services/same_decoder`)
-and everything downstream of it -- capture, transcription, NWS correlation, dispatch, the
-web UI's alert feed -- is proven against fixtures and synthetic signals, not a live warning.
-Nothing here has run against a real Meshtastic node, LiteLLM endpoint, or Postgres/Redis
-instance either, though every wire contract with an external system was checked against its
-published spec rather than guessed.
+across `services/`. Phases 1, 2, and 3 (`services/sdr_rx`, `services/same_decoder`,
+`services/live_audio`) are additionally verified against a real RTL-SDR dongle on a
+Raspberry Pi 5: all seven WX channels locked, live audio audible in a browser, and a real
+over-the-air NWR Required Weekly Test decoded end to end into the web UI's alert feed. What's
+still unverified is downstream of a *Tier A* event specifically -- capture, transcription,
+NWS correlation, and mesh dispatch have only ever run against fixtures and synthetic signals,
+since the real event decoded so far (a Required Weekly Test) is Tier C and by design never
+reaches the mesh (`services/dispatcher`). Nothing here has run against a real Meshtastic
+node, LiteLLM endpoint, or Postgres/Redis instance either, though every wire contract with an
+external system was checked against its published spec rather than guessed.
 
 `docs/design/tracking.md` is the living, per-phase record of exactly what's confirmed vs.
 still open -- read that instead of this section for anything more specific than "does it

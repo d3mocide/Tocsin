@@ -22,7 +22,7 @@ queries, so the real thing satisfies `PoolLike` with no wrapping).
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -226,6 +226,69 @@ def _alert_row_to_dict(row: Any) -> dict:
     if isinstance(sources, str):
         data["sources"] = json.loads(sources)
     return data
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def alert_expiry(sources: list[dict]) -> datetime | None:
+    """When an alert stops being in effect, mirroring `web/src/format.ts`'s
+    `expiresAt` exactly (two independent implementations of the same rule,
+    service boundary -- CLAUDE.md): CAP's own `expires`/`ends` wins when
+    present (a real absolute timestamp) over the RF source's SAME purge
+    window (`received_at` + `purge_minutes`, which drifts by however long
+    the header sat before decode). `None` means no expiry information at
+    all -- callers must treat that as "never prune," not "already
+    expired," same posture as the web UI's `isActive()`."""
+    api_expiry: datetime | None = None
+    rf_expiry: datetime | None = None
+    for source in sources:
+        if source.get("kind") == "API":
+            cap = source.get("alert") or {}
+            api_expiry = _parse_iso(cap.get("expires")) or _parse_iso(cap.get("ends"))
+        elif source.get("kind") == "RF":
+            event = source.get("event") or {}
+            received = _parse_iso(event.get("received_at"))
+            purge_minutes = event.get("purge_minutes")
+            if received is not None and isinstance(purge_minutes, (int, float)):
+                rf_expiry = received + timedelta(minutes=purge_minutes)
+    return api_expiry or rf_expiry
+
+
+async def prune_expired_alerts(pool: PoolLike, grace_seconds: float) -> int:
+    """Deletes alerts that expired more than `grace_seconds` ago. An alert
+    stays visible for that whole grace window after it lapses -- long
+    enough for someone to still be reading the card -- rather than
+    vanishing the instant it expires. Alerts with no computable expiry
+    (`alert_expiry` returns `None`) are never pruned, since the wrong way
+    to be wrong here is losing an alert whose provenance was thin, not
+    keeping it a little too long.
+
+    Fetches every alert's `sources` rather than pushing the expiry logic
+    into SQL: `alert_expiry` has to match `format.ts`'s rule exactly, and
+    that's far easier to keep in sync (and to unit test without a real
+    Postgres -- this sandbox has never had one) as one small Python
+    function than as a JSONB expression duplicated in two languages."""
+    rows = await pool.fetch("SELECT id, sources FROM alerts")
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=grace_seconds)
+    stale_ids = []
+    for row in rows:
+        sources = row["sources"]
+        if isinstance(sources, str):
+            sources = json.loads(sources)
+        expiry = alert_expiry(sources)
+        if expiry is not None and expiry < cutoff:
+            stale_ids.append(row["id"])
+    if not stale_ids:
+        return 0
+    await pool.execute("DELETE FROM alerts WHERE id = ANY($1::text[])", stale_ids)
+    return len(stale_ids)
 
 
 async def latest_health(pool: PoolLike) -> list[dict]:
