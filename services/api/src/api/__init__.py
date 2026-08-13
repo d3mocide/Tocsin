@@ -19,7 +19,7 @@ import sys
 from .app import create_app
 from .config import ApiConfig
 from .connect import PostgresStartupError, create_pool
-from .db import ensure_schema
+from .db import PoolLike, ensure_schema, prune_expired_alerts
 from .ingest import Ingestor
 from .redis_bus import StreamConsumer
 from .sse import Broadcaster
@@ -64,6 +64,27 @@ async def _heartbeat_forever(redis_client, mode: str, stop_event: asyncio.Event)
             pass
 
 
+async def _prune_alerts_forever(
+    pool: PoolLike, grace_seconds: float, interval_seconds: float, stop_event: asyncio.Event
+) -> None:
+    """Sweeps `alerts` on `ALERTS_PRUNE_INTERVAL_SECONDS`, deleting rows
+    expired more than `ALERTS_PRUNE_GRACE_SECONDS` ago -- see
+    `db.prune_expired_alerts` for what counts as expired. Runs once
+    immediately on startup rather than waiting out the first interval, the
+    same shape as `_heartbeat_forever`."""
+    while not stop_event.is_set():
+        try:
+            pruned = await prune_expired_alerts(pool, grace_seconds)
+            if pruned:
+                print(f"api: pruned {pruned} expired alert(s)", flush=True)
+        except Exception as exc:
+            print(f"api: alert pruning failed: {exc}", file=sys.stderr)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def _run(config: ApiConfig) -> None:
     import redis.asyncio as redis_asyncio
     import uvicorn
@@ -87,6 +108,13 @@ async def _run(config: ApiConfig) -> None:
     stop_event = asyncio.Event()
     background_tasks = [asyncio.create_task(consumer.run_forever(stop_event)) for consumer in consumers]
     background_tasks.append(asyncio.create_task(_heartbeat_forever(redis_client, config.mode, stop_event)))
+    background_tasks.append(
+        asyncio.create_task(
+            _prune_alerts_forever(
+                pool, config.alerts_prune_grace_seconds, config.alerts_prune_interval_seconds, stop_event
+            )
+        )
+    )
 
     app = create_app(pool, redis_client, broadcaster, static_dir=config.static_dir, config=config)
     server = uvicorn.Server(uvicorn.Config(app, host=config.host, port=config.port, log_level="info"))

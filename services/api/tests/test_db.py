@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
@@ -299,3 +299,61 @@ async def test_dispatch_summary_splits_sent_from_skipped():
     assert summary["sent"] == 3
     assert summary["skipped"] == 4
     assert summary["by_reason"] == {"serial": 2, "tcp": 1, "skipped_duplicate": 4}
+
+
+def test_alert_expiry_prefers_cap_expires_over_ends_and_rf_purge():
+    """Mirrors web/src/format.ts's expiresAt: CAP's real absolute timestamp
+    wins over SAME's decode-time-relative purge window."""
+    sources = [
+        {"kind": "RF", "event": {"received_at": "2026-08-08T20:00:00+00:00", "purge_minutes": 60}},
+        {"kind": "API", "alert": {"expires": "2026-08-08T23:00:00+00:00", "ends": "2026-08-08T22:00:00+00:00"}},
+    ]
+    assert db.alert_expiry(sources) == datetime(2026, 8, 8, 23, 0, tzinfo=timezone.utc)
+
+
+def test_alert_expiry_falls_back_to_cap_ends_when_expires_is_absent():
+    sources = [{"kind": "API", "alert": {"ends": "2026-08-08T22:00:00+00:00"}}]
+    assert db.alert_expiry(sources) == datetime(2026, 8, 8, 22, 0, tzinfo=timezone.utc)
+
+
+def test_alert_expiry_falls_back_to_rf_purge_window_when_no_api_source():
+    sources = [{"kind": "RF", "event": {"received_at": "2026-08-08T20:00:00+00:00", "purge_minutes": 15}}]
+    assert db.alert_expiry(sources) == datetime(2026, 8, 8, 20, 15, tzinfo=timezone.utc)
+
+
+def test_alert_expiry_is_none_with_no_computable_expiry():
+    """No data means keep it, not "already expired" -- same posture as the
+    web UI's isActive()."""
+    assert db.alert_expiry([{"kind": "RF", "event": {}}]) is None
+    assert db.alert_expiry([]) is None
+
+
+async def test_prune_expired_alerts_deletes_only_alerts_past_the_grace_window():
+    now = datetime.now(timezone.utc)
+    stale = (now - timedelta(days=2)).isoformat()
+    fresh = (now - timedelta(hours=1)).isoformat()
+    pool = FakePool(
+        fetch_results=[
+            [
+                {"id": "stale", "sources": json.dumps([{"kind": "API", "alert": {"expires": stale}}])},
+                {"id": "fresh", "sources": json.dumps([{"kind": "API", "alert": {"expires": fresh}}])},
+                {"id": "no-expiry", "sources": json.dumps([{"kind": "RF", "event": {}}])},
+            ]
+        ]
+    )
+
+    pruned = await db.prune_expired_alerts(pool, grace_seconds=86_400)
+
+    assert pruned == 1
+    query, args = pool.executed[0]
+    assert "DELETE FROM alerts" in query
+    assert args == (["stale"],)
+
+
+async def test_prune_expired_alerts_is_a_no_op_when_nothing_is_stale():
+    pool = FakePool(fetch_results=[[{"id": "a1", "sources": json.dumps([{"kind": "RF", "event": {}}])}]])
+
+    pruned = await db.prune_expired_alerts(pool, grace_seconds=86_400)
+
+    assert pruned == 0
+    assert pool.executed == []

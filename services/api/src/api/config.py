@@ -30,6 +30,11 @@ DEFAULT_ICECAST_PORT = 8000
 # reachable from the open internet. Set CORS_ALLOWED_ORIGINS to the
 # reverse proxy's actual origin(s) once exposed; see .env.example.
 DEFAULT_CORS_ALLOWED_ORIGINS = "*"
+# How long an expired alert stays in the feed before it's pruned, and how
+# often the prune sweep runs. An hourly sweep is plenty granular against a
+# day-long grace window -- see db.prune_expired_alerts.
+DEFAULT_ALERTS_PRUNE_GRACE_SECONDS = 86_400
+DEFAULT_ALERTS_PRUNE_INTERVAL_SECONDS = 3_600
 
 
 def _postgres_dsn_from_env() -> str | None:
@@ -92,6 +97,10 @@ class ApiConfig:
     # data/nwr_stations_or.yaml and services/api/README.md.
     latitude: float | None
     longitude: float | None
+    # How long past its computed expiry an alert stays in Postgres before
+    # a background sweep deletes it, and how often that sweep runs.
+    alerts_prune_grace_seconds: float
+    alerts_prune_interval_seconds: float
 
     @classmethod
     def from_env(cls) -> "ApiConfig":
@@ -117,4 +126,10 @@ class ApiConfig:
             cors_allowed_origins=tuple(origin.strip() for origin in cors_origins_raw.split(",") if origin.strip()),
             latitude=float(latitude) if latitude else None,
             longitude=float(longitude) if longitude else None,
+            alerts_prune_grace_seconds=float(
+                os.environ.get("ALERTS_PRUNE_GRACE_SECONDS", DEFAULT_ALERTS_PRUNE_GRACE_SECONDS)
+            ),
+            alerts_prune_interval_seconds=float(
+                os.environ.get("ALERTS_PRUNE_INTERVAL_SECONDS", DEFAULT_ALERTS_PRUNE_INTERVAL_SECONDS)
+            ),
         )

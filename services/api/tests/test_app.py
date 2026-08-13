@@ -204,6 +204,8 @@ def _config(**overrides):
         cors_allowed_origins=("*",),
         latitude=None,
         longitude=None,
+        alerts_prune_grace_seconds=86_400.0,
+        alerts_prune_interval_seconds=3_600.0,
     )
     defaults.update(overrides)
     return ApiConfig(**defaults)

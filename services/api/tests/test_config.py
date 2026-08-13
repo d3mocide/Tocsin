@@ -123,3 +123,23 @@ def test_from_env_reads_a_comma_separated_origin_list(monkeypatch):
     config = ApiConfig.from_env()
 
     assert config.cors_allowed_origins == ("https://tocsin.example.com", "https://admin.example.com")
+
+
+def test_from_env_defaults_alert_pruning_to_a_day_grace_and_hourly_sweep(monkeypatch):
+    monkeypatch.delenv("ALERTS_PRUNE_GRACE_SECONDS", raising=False)
+    monkeypatch.delenv("ALERTS_PRUNE_INTERVAL_SECONDS", raising=False)
+
+    config = ApiConfig.from_env()
+
+    assert config.alerts_prune_grace_seconds == 86_400
+    assert config.alerts_prune_interval_seconds == 3_600
+
+
+def test_from_env_reads_alert_pruning_overrides(monkeypatch):
+    monkeypatch.setenv("ALERTS_PRUNE_GRACE_SECONDS", "3600")
+    monkeypatch.setenv("ALERTS_PRUNE_INTERVAL_SECONDS", "300")
+
+    config = ApiConfig.from_env()
+
+    assert config.alerts_prune_grace_seconds == 3600.0
+    assert config.alerts_prune_interval_seconds == 300.0

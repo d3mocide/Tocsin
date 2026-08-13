@@ -58,10 +58,13 @@ against a hand-written async fake of Redis's stream semantics), the
 ingestion-to-Postgres-plus-SSE-fan-out wiring (`ingest.py`), the SSE
 broadcast hub (`sse.py`), the spectrum snapshot reader (`spectrum.py`),
 the heartbeat reader (`status.py`), the Icecast status merge
-(`streams.py`), the reference-data loader (`reference.py`), and every REST
+(`streams.py`), the reference-data loader (`reference.py`), every REST
 route (`app.py`, tested via FastAPI's `TestClient` against fake
 Postgres/Redis -- no real database or Redis instance in this authoring
-sandbox).
+sandbox), and a background sweep (`__init__.py`'s `_prune_alerts_forever`,
+`ALERTS_PRUNE_INTERVAL_SECONDS`) that deletes alerts expired more than
+`ALERTS_PRUNE_GRACE_SECONDS` ago (`db.prune_expired_alerts`) so the feed
+doesn't grow forever.
 
 **Known gaps, not yet handled:**
 - No auth (design doc §9 names "reverse proxy + Argon2id local backend
@@ -91,6 +94,8 @@ sandbox).
 | `ICECAST_HOST` / `ICECAST_PORT` | `icecast` / `8000` | Where *this process* reaches Icecast to read its status page. `ICECAST_PORT` is also what `GET /system` reports for the browser to build playback URLs from, so it must match the port Icecast is published on -- compose keeps the two sides equal on purpose. |
 | `ICECAST_PUBLIC_URL` | *(unset)* | Where the *browser* should reach Icecast. Unset means the page falls back to its own hostname on `ICECAST_PORT`, which is right for a LAN deployment. Set to an absolute URL (e.g. `https://stream.example.com`) if Icecast is reachable at its own address behind a reverse proxy. Set to a *relative* path (e.g. `/stream`) if the reverse proxy forwards only this service's port -- the UI then builds same-origin URLs and `GET /stream/{mount_path}` (above) proxies the audio bytes itself. |
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated browser origins allowed to read this API cross-origin. `*` is fine for localhost/LAN (this repo's posture so far, design doc §11); narrow it once reachable from the internet. Same-origin requests -- the normal case, since `api` serves the built SPA -- never need this at all. |
+| `ALERTS_PRUNE_GRACE_SECONDS` | `86400` (1 day) | How long past its computed expiry an alert stays in `alerts` before a background sweep deletes it. An alert with no computable expiry (rare -- see `db.alert_expiry`) is never pruned. |
+| `ALERTS_PRUNE_INTERVAL_SECONDS` | `3600` (1 hour) | How often the prune sweep runs. |
 
 ## Startup and Postgres
 
