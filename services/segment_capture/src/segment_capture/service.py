@@ -5,6 +5,7 @@ ring-buffer reader, and recorder into one capture pipeline (design doc §4).
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from .boundary import is_eom, parse_message_start
@@ -14,6 +15,8 @@ from .multimon import MultimonProcess
 from .recorder import DEFAULT_HARD_TIMEOUT_SECONDS, DEFAULT_PREROLL_SECONDS, SegmentRecorder
 from .ring_reader import RingBufferReader
 from .tiers import TierTable
+
+DEFAULT_LIVE_STATUS_INTERVAL_SECONDS = 300.0
 
 
 class SegmentCaptureService:
@@ -43,6 +46,9 @@ class SegmentCaptureService:
         live_channel: tuple[str, str] | None = None,
         live_segmenter_factory=LiveSegmenter,
         live_output_dir: Path | None = None,
+        live_segmenter_options: dict | None = None,
+        live_status_interval_seconds: float = DEFAULT_LIVE_STATUS_INTERVAL_SECONDS,
+        now_fn=time.monotonic,
     ):
         self._ring_buffer_dir = ring_buffer_dir
         self._output_dir = output_dir
@@ -66,6 +72,11 @@ class SegmentCaptureService:
         self._live_output_dir = live_output_dir or output_dir
         self._live_segmenter: LiveSegmenter | None = None
         self._live_warned = False
+        self._live_options = live_segmenter_options or {}
+        self._live_status_interval = live_status_interval_seconds
+        self._now = now_fn
+        self._live_last_status_at: float | None = None
+        self._live_total_chunks = 0
 
     def feed(self, site: str, channel: str, pcm_bytes: bytes) -> None:
         key = (site, channel)
@@ -96,7 +107,9 @@ class SegmentCaptureService:
         site, channel = self._live_channel
         if self._live_segmenter is None:
             ring_reader = self._ring_reader_factory(self._ring_buffer_dir / site, channel)
-            self._live_segmenter = self._live_segmenter_factory(site, channel, ring_reader, self._live_output_dir)
+            self._live_segmenter = self._live_segmenter_factory(
+                site, channel, ring_reader, self._live_output_dir, **self._live_options
+            )
         try:
             results = self._live_segmenter.poll()
         except Exception as exc:
@@ -136,9 +149,54 @@ class SegmentCaptureService:
                 )
                 self._live_warned = True
             return
-        self._live_warned = False
+        if self._live_warned:
+            # Recovery was previously silent, which left an operator who'd
+            # seen the startup warning with no way to tell whether it had
+            # resolved -- the failure was loud and the fix was invisible.
+            print(
+                f"segment-capture: live transcription reading {site}/{channel} now.",
+                file=sys.stderr,
+            )
+            self._live_warned = False
         for result in results:
+            self._live_total_chunks += 1
             self._publisher.publish_live(result)
+        self._report_live_status(site, channel)
+
+    def _report_live_status(self, site: str, channel: str) -> None:
+        """Periodic proof-of-life carrying the measured audio levels next to
+        the configured threshold.
+
+        Without this, a threshold set too high and a genuinely dead channel
+        produce identical output -- nothing, forever. `DEFAULT_RMS_THRESHOLD`
+        is explicitly uncalibrated (master prompt §12), so the numbers here
+        are what an operator actually tunes
+        `LIVE_TRANSCRIPTION_RMS_THRESHOLD` from."""
+        now = self._now()
+        if self._live_last_status_at is None:
+            self._live_last_status_at = now
+            return
+        if now - self._live_last_status_at < self._live_status_interval:
+            return
+        elapsed = now - self._live_last_status_at
+        self._live_last_status_at = now
+        stats = self._live_segmenter.drain_stats()
+        if not stats.frames:
+            return
+        threshold = self._live_segmenter.rms_threshold
+        speech_pct = 100.0 * stats.speech_frames / stats.frames
+        verdict = (
+            ""
+            if stats.speech_frames
+            else f" -- nothing above the threshold; if the channel is audible, lower LIVE_TRANSCRIPTION_RMS_THRESHOLD toward {stats.peak_rms:.4f}"
+        )
+        print(
+            f"segment-capture: live {site}/{channel} last {elapsed:.0f}s: "
+            f"rms mean {stats.mean_rms:.4f} peak {stats.peak_rms:.4f} vs threshold {threshold:.4f}, "
+            f"{speech_pct:.0f}% of audio counted as speech, {stats.chunks} chunk(s) sent "
+            f"({self._live_total_chunks} total){verdict}",
+            file=sys.stderr,
+        )
 
     def _describe_ring_buffers(self) -> str:
         """What sdr-rx has actually created under the ring buffer root, as

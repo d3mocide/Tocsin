@@ -1318,6 +1318,36 @@ body {
   font-size: 0.83rem;
 }
 
+/* Continuous-transcription rows: visually quieter than alert activity,
+   since there are far more of them and none is individually urgent. */
+.activity-live {
+  border-left: 2px solid color-mix(in srgb, var(--transcript-only) 55%, transparent);
+  padding-left: 0.5rem;
+}
+
+.activity-live .activity-text {
+  color: var(--text-dim);
+}
+
+.activity-live-toggle {
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  font: inherit;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--transcript-only);
+  background: color-mix(in srgb, var(--transcript-only) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--transcript-only) 35%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.activity-live-toggle:hover,
+.activity-live-toggle.on {
+  background: color-mix(in srgb, var(--transcript-only) 24%, transparent);
+}
+
 /* ---- footer ------------------------------------------------------- */
 
 footer {

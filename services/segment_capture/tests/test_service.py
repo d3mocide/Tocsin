@@ -387,3 +387,138 @@ def test_different_channels_get_independent_captures(tmp_path):
     _feed_until(service, [("home", "WX5"), ("home", "WX1")], lambda: len(publisher.results) >= 2)
     assert {(r.site, r.channel) for r in publisher.results} == {("home", "WX5"), ("home", "WX1")}
     service.close()
+
+
+class _StatsLiveSegmenter:
+    """Reports fixed stats, like a real `LiveSegmenter` accumulating frame
+    RMS -- these tests cover the status-line reporting in `service.py`, not
+    the VAD measurement itself."""
+
+    rms_threshold = 0.02
+
+    def __init__(self, site, channel, ring_reader, output_dir, **kwargs):
+        self.kwargs = kwargs
+        self._stats = None
+
+    def set_stats(self, **fields):
+        from segment_capture.live_segmenter import LiveSegmenterStats
+
+        self._stats = LiveSegmenterStats(**fields)
+
+    def poll(self):
+        return []
+
+    def drain_stats(self):
+        from segment_capture.live_segmenter import LiveSegmenterStats
+
+        stats, self._stats = self._stats or LiveSegmenterStats(), None
+        return stats
+
+
+def _live_service(tmp_path, clock, interval=60.0):
+    return SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        live_channel=("PDX", "WX7"),
+        live_segmenter_factory=_StatsLiveSegmenter,
+        ring_reader_factory=FakeRingReader,
+        live_status_interval_seconds=interval,
+        now_fn=lambda: clock[0],
+    )
+
+
+def test_live_status_line_is_not_printed_before_the_interval(tmp_path, capsys):
+    clock = [1000.0]
+    service = _live_service(tmp_path, clock)
+    service.tick()
+    clock[0] += 30.0
+    service.tick()
+    assert "last" not in capsys.readouterr().err
+    service.close()
+
+
+def test_live_status_line_reports_levels_against_the_threshold(tmp_path, capsys):
+    clock = [1000.0]
+    service = _live_service(tmp_path, clock)
+    service.tick()  # establishes the window start
+    service._live_segmenter.set_stats(frames=100, speech_frames=40, peak_rms=0.09, sum_rms=3.0, chunks=2)
+    clock[0] += 60.0
+    service.tick()
+
+    err = capsys.readouterr().err
+    assert "live PDX/WX7 last 60s" in err
+    assert "rms mean 0.0300 peak 0.0900 vs threshold 0.0200" in err
+    assert "40% of audio counted as speech" in err
+    assert "2 chunk(s) sent" in err
+    service.close()
+
+
+def test_live_status_line_calls_out_a_threshold_set_too_high(tmp_path, capsys):
+    """The most likely silent failure: audio is present but never clears the
+    uncalibrated default threshold, so nothing is ever cut and nothing is
+    ever logged. The status line must name the fix, not just the numbers."""
+    clock = [1000.0]
+    service = _live_service(tmp_path, clock)
+    service.tick()
+    service._live_segmenter.set_stats(frames=100, speech_frames=0, peak_rms=0.004, sum_rms=0.2, chunks=0)
+    clock[0] += 60.0
+    service.tick()
+
+    err = capsys.readouterr().err
+    assert "nothing above the threshold" in err
+    assert "lower LIVE_TRANSCRIPTION_RMS_THRESHOLD toward 0.0040" in err
+    service.close()
+
+
+def test_live_recovery_is_logged(tmp_path, capsys):
+    """A failure that resolves used to do so silently, leaving an operator
+    who'd seen the startup warning unable to tell whether it had."""
+    failing = {"yes": True}
+
+    class _FlakySegmenter:
+        rms_threshold = 0.02
+
+        def __init__(self, site, channel, ring_reader, output_dir, **kwargs):
+            pass
+
+        def poll(self):
+            if failing["yes"]:
+                raise FileNotFoundError("not yet")
+            return []
+
+        def drain_stats(self):
+            from segment_capture.live_segmenter import LiveSegmenterStats
+
+            return LiveSegmenterStats()
+
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        live_channel=("PDX", "WX7"),
+        live_segmenter_factory=_FlakySegmenter,
+        ring_reader_factory=FakeRingReader,
+    )
+    service.tick()
+    assert "can't read the ring buffer" in capsys.readouterr().err
+
+    failing["yes"] = False
+    service.tick()
+    assert "live transcription reading PDX/WX7 now" in capsys.readouterr().err
+    service.close()
+
+
+def test_live_segmenter_options_are_passed_through(tmp_path):
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        live_channel=("PDX", "WX7"),
+        live_segmenter_factory=_StatsLiveSegmenter,
+        ring_reader_factory=FakeRingReader,
+        live_segmenter_options={"rms_threshold": 0.005, "min_chunk_seconds": 2.0},
+    )
+    service.tick()
+    assert service._live_segmenter.kwargs == {"rms_threshold": 0.005, "min_chunk_seconds": 2.0}
+    service.close()

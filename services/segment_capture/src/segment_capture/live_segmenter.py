@@ -45,6 +45,29 @@ class LiveCaptureResult:
     num_samples: int
 
 
+@dataclass
+class LiveSegmenterStats:
+    """Observed audio levels since the last drain, for the periodic status
+    line `service.py` prints.
+
+    This exists because `DEFAULT_RMS_THRESHOLD` is explicitly uncalibrated
+    (module docstring, and master prompt §12's open item): without the
+    measured levels next to the configured threshold, a threshold set too
+    high is indistinguishable from a dead channel -- both are simply
+    silence, forever, with nothing in the log either way. Reporting both
+    turns calibration into reading one line."""
+
+    frames: int = 0
+    speech_frames: int = 0
+    peak_rms: float = 0.0
+    sum_rms: float = 0.0
+    chunks: int = 0
+
+    @property
+    def mean_rms(self) -> float:
+        return self.sum_rms / self.frames if self.frames else 0.0
+
+
 class LiveSegmenter:
     """One instance per continuously-transcribed (site, channel).
 
@@ -87,6 +110,18 @@ class LiveSegmenter:
         self._chunk_samples = 0
         self._speech_seen = False
         self._silence_run_samples = 0
+        self._stats = LiveSegmenterStats()
+
+    @property
+    def rms_threshold(self) -> float:
+        return self._rms_threshold
+
+    def drain_stats(self) -> LiveSegmenterStats:
+        """Returns the stats accumulated since the last call and resets
+        them, so each periodic status line covers only its own window
+        rather than all history."""
+        stats, self._stats = self._stats, LiveSegmenterStats()
+        return stats
 
     def poll(self) -> list[LiveCaptureResult]:
         if not self._started:
@@ -107,7 +142,12 @@ class LiveSegmenter:
             frame = samples[start : start + self._frame_samples]
             self._chunks.append(frame)
             self._chunk_samples += len(frame)
-            if _rms(frame) >= self._rms_threshold:
+            frame_rms = _rms(frame)
+            self._stats.frames += 1
+            self._stats.sum_rms += frame_rms
+            self._stats.peak_rms = max(self._stats.peak_rms, frame_rms)
+            if frame_rms >= self._rms_threshold:
+                self._stats.speech_frames += 1
                 self._speech_seen = True
                 self._silence_run_samples = 0
             else:
@@ -137,6 +177,7 @@ class LiveSegmenter:
         filename = f"{self.site}-{self.channel}-live-{int(self._now() * 1000)}.wav"
         wav_path = self._output_dir / filename
         num_samples = write_wav(wav_path, samples)
+        self._stats.chunks += 1
         return LiveCaptureResult(site=self.site, channel=self.channel, wav_path=wav_path, num_samples=num_samples)
 
 
