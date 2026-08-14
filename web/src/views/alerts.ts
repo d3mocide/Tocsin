@@ -29,12 +29,14 @@ interface AlertDetail {
   dispatches: Dispatch[];
 }
 
-/** How many cards are built at once. A hybrid deployment accumulates a
- * few hundred API_ONLY alerts within a day, and every one of them was
- * being rebuilt on every repaint. Cards past this are one button click
- * away, not gone -- the feed is a scrolling log, so numbered pages would
- * be the wrong shape for it. */
+/** Desktop: a scrolling log with "load more" at the bottom. */
 const PAGE_SIZE = 40;
+/** Mobile: true prev/next pagination -- five cards is roughly one
+ * screenful on a phone, keeping the pager and filter bar reachable
+ * without scrolling past an unbounded feed. */
+const MOBILE_PAGE_SIZE = 5;
+
+const mobileQuery = window.matchMedia("(max-width: 900px)");
 
 export class AlertFeedView {
   private readonly container: HTMLElement;
@@ -48,6 +50,7 @@ export class AlertFeedView {
    * system flash. */
   private readonly cards = new Map<string, { node: HTMLElement; signature: string }>();
   private limit = PAGE_SIZE;
+  private mobilePage = 0;
   private lastFilterSignature = "";
 
   constructor(container: HTMLElement, store: Store) {
@@ -64,13 +67,11 @@ export class AlertFeedView {
       return;
     }
 
-    // Changing a filter is a new query, not more of the same one: keeping
-    // an expanded page count across it would show a different number of
-    // results depending on what was scrolled through before.
     const filterSignature = JSON.stringify(this.store.state.filters);
     if (filterSignature !== this.lastFilterSignature) {
       this.lastFilterSignature = filterSignature;
       this.limit = PAGE_SIZE;
+      this.mobilePage = 0;
     }
 
     const now = new Date();
@@ -85,6 +86,19 @@ export class AlertFeedView {
       return;
     }
 
+    if (mobileQuery.matches) {
+      this.renderMobile(matching, reference, now, expandedAlertId);
+    } else {
+      this.renderDesktop(matching, reference, now, expandedAlertId);
+    }
+  }
+
+  private renderDesktop(
+    matching: Alert[],
+    reference: Reference | null,
+    now: Date,
+    expandedAlertId: string | null,
+  ): void {
     const visible = matching.slice(0, this.limit);
     const nodes: HTMLElement[] = visible.map((alert) =>
       this.cardFor(alert, reference, now, alert.id === expandedAlertId),
@@ -99,6 +113,29 @@ export class AlertFeedView {
     reconcile(this.container, nodes);
   }
 
+  private renderMobile(
+    matching: Alert[],
+    reference: Reference | null,
+    now: Date,
+    expandedAlertId: string | null,
+  ): void {
+    const pageCount = Math.max(1, Math.ceil(matching.length / MOBILE_PAGE_SIZE));
+    this.mobilePage = Math.min(this.mobilePage, pageCount - 1);
+    const start = this.mobilePage * MOBILE_PAGE_SIZE;
+    const visible = matching.slice(start, start + MOBILE_PAGE_SIZE);
+
+    const nodes: HTMLElement[] = visible.map((alert) =>
+      this.cardFor(alert, reference, now, alert.id === expandedAlertId),
+    );
+
+    for (const id of [...this.cards.keys()]) {
+      if (!visible.some((alert) => alert.id === id)) this.cards.delete(id);
+    }
+
+    if (pageCount > 1) nodes.push(this.mobilePager(pageCount, matching.length));
+    reconcile(this.container, nodes);
+  }
+
   private moreButton(hidden: number): HTMLElement {
     const button = el("button", {
       class: "feed-more",
@@ -110,6 +147,30 @@ export class AlertFeedView {
       this.render();
     });
     return button;
+  }
+
+  private mobilePager(pageCount: number, total: number): HTMLElement {
+    const prev = el("button", { class: "pager-button", text: "‹ Prev", attrs: { type: "button" } });
+    const next = el("button", { class: "pager-button", text: "Next ›", attrs: { type: "button" } });
+    (prev as HTMLButtonElement).disabled = this.mobilePage === 0;
+    (next as HTMLButtonElement).disabled = this.mobilePage >= pageCount - 1;
+    prev.addEventListener("click", () => {
+      this.mobilePage -= 1;
+      this.render();
+      this.container.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    next.addEventListener("click", () => {
+      this.mobilePage += 1;
+      this.render();
+      this.container.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return el(
+      "div",
+      { class: "pager" },
+      prev,
+      el("span", { class: "pager-status", text: `${this.mobilePage + 1} / ${pageCount}  ·  ${total} alerts` }),
+      next,
+    );
   }
 
   /** Builds a card only when its rendered content would differ from the
