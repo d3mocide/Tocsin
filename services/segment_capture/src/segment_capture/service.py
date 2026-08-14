@@ -4,6 +4,7 @@ ring-buffer reader, and recorder into one capture pipeline (design doc §4).
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from .boundary import is_eom, parse_message_start
@@ -64,6 +65,7 @@ class SegmentCaptureService:
         self._live_segmenter_factory = live_segmenter_factory
         self._live_output_dir = live_output_dir or output_dir
         self._live_segmenter: LiveSegmenter | None = None
+        self._live_warned = False
 
     def feed(self, site: str, channel: str, pcm_bytes: bytes) -> None:
         key = (site, channel)
@@ -95,7 +97,32 @@ class SegmentCaptureService:
         if self._live_segmenter is None:
             ring_reader = self._ring_reader_factory(self._ring_buffer_dir / site, channel)
             self._live_segmenter = self._live_segmenter_factory(site, channel, ring_reader, self._live_output_dir)
-        for result in self._live_segmenter.poll():
+        try:
+            results = self._live_segmenter.poll()
+        except Exception as exc:
+            # The configured (site, channel)'s ring buffer isn't readable
+            # yet -- either sdr-rx hasn't created it (a real startup race:
+            # this process and sdr-rx's own capture loop start together),
+            # or LIVE_TRANSCRIPTION_SITE/_CHANNEL doesn't name a real
+            # (site, channel) sdr-rx is actually running.
+            # LIVE_TRANSCRIPTION_SITE is the site *name* from
+            # SDR_RX_DEVICES (e.g. "home"), never the dongle serial
+            # number -- a mismatch here used to crash-loop this whole
+            # process, taking the core ZCZC/EOM alert-capture path down
+            # with it, since both run in the same service. An optional,
+            # off-by-default addendum must never do that: log once and
+            # keep retrying on the next tick() instead.
+            if not self._live_warned:
+                print(
+                    f"segment-capture: live transcription can't read the ring buffer for "
+                    f"{site}/{channel} ({exc!r}) -- is LIVE_TRANSCRIPTION_SITE the site name "
+                    "from SDR_RX_DEVICES, not a serial number? Will keep retrying.",
+                    file=sys.stderr,
+                )
+                self._live_warned = True
+            return
+        self._live_warned = False
+        for result in results:
             self._publisher.publish_live(result)
 
     def _handle_line(self, key: tuple[str, str], line: str) -> None:
