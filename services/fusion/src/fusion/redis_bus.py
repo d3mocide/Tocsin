@@ -1,14 +1,16 @@
-"""Consumes SAME events and CAP alerts from Redis Streams via consumer
-groups (design doc §5: "Both paths write raw events to Redis Streams
-before fusion sees them. If fusion crashes mid-event it resumes from the
-consumer group rather than losing an alert.").
+"""Consumes SAME events, CAP alerts, and keyword-matched transcript events
+from Redis Streams via consumer groups (design doc §5: "Both paths write
+raw events to Redis Streams before fusion sees them. If fusion crashes
+mid-event it resumes from the consumer group rather than losing an
+alert.").
 
-Two independent streams, one shared group -- `tocsin:same_events`
-(produced by `same_decoder.redis_sink`) and `tocsin:cap_alerts` (produced
-by `nws_poller.redis_sink`). Not shared imports from either producer --
-service boundary (CLAUDE.md); the stream names and JSON payload shapes
-below are the documented wire contract each producer's own module points
-back to.
+Three independent streams, one shared group -- `tocsin:same_events`
+(produced by `same_decoder.redis_sink`), `tocsin:cap_alerts` (produced by
+`nws_poller.redis_sink`), and `tocsin:keyword_events` (produced by
+`stt_worker.redis_sink`, the live-transcription addendum to §5). Not
+shared imports from any producer -- service boundary (CLAUDE.md); the
+stream names and JSON payload shapes below are the documented wire
+contract each producer's own module points back to.
 
 Consumer-group durability here is "at least once," not "exactly once": on
 restart after a crash, `_replay_pending` re-delivers whatever entries this
@@ -31,14 +33,28 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from .models import CapAlertIn, SameEventIn
+from .models import CapAlertIn, KeywordEventIn, SameEventIn
 from .store import AlertStore
 
 SAME_STREAM = "tocsin:same_events"
 CAP_STREAM = "tocsin:cap_alerts"
+KEYWORD_STREAM = "tocsin:keyword_events"
 GROUP_NAME = "fusion"
 
 _CAP_DATETIME_FIELDS = ("sent", "effective", "onset", "expires", "ends")
+
+
+def _parse_keyword_payload(payload: dict) -> KeywordEventIn:
+    return KeywordEventIn(
+        site=payload["site"],
+        channel=payload["channel"],
+        received_at=datetime.fromtimestamp(payload["timestamp_ns"] / 1e9, tz=timezone.utc),
+        event_code=payload["event_code"],
+        event_name=payload["event_name"],
+        tier=payload["tier"],
+        matched_phrase=payload["matched_phrase"],
+        transcript_text=payload["transcript_text"],
+    )
 
 
 def _parse_same_payload(payload: dict) -> SameEventIn:
@@ -110,6 +126,7 @@ class StreamConsumer:
         self._count = count
         ensure_group(self._redis, SAME_STREAM, group)
         ensure_group(self._redis, CAP_STREAM, group)
+        ensure_group(self._redis, KEYWORD_STREAM, group)
         self._replay_pending()
 
     def _replay_pending(self) -> None:
@@ -119,14 +136,16 @@ class StreamConsumer:
         artifact of using consumer groups at all."""
         self._read_and_handle(SAME_STREAM, "0", self._handle_same, block_ms=None)
         self._read_and_handle(CAP_STREAM, "0", self._handle_cap, block_ms=None)
+        self._read_and_handle(KEYWORD_STREAM, "0", self._handle_keyword, block_ms=None)
 
     def poll_once(self, block_ms: int = 1000) -> int:
-        """Reads new entries (if any) from both streams; returns the
+        """Reads new entries (if any) from all three streams; returns the
         number processed. `block_ms` applies per stream, so worst-case
-        latency for a full cycle is roughly `2 * block_ms` -- fine for
+        latency for a full cycle is roughly `3 * block_ms` -- fine for
         this volume (alerts, not continuous telemetry)."""
         processed = self._read_and_handle(SAME_STREAM, ">", self._handle_same, block_ms=block_ms)
         processed += self._read_and_handle(CAP_STREAM, ">", self._handle_cap, block_ms=block_ms)
+        processed += self._read_and_handle(KEYWORD_STREAM, ">", self._handle_keyword, block_ms=block_ms)
         return processed
 
     def _read_and_handle(self, stream: str, read_id: str, handler, block_ms: int | None) -> int:
@@ -149,3 +168,6 @@ class StreamConsumer:
 
     def _handle_cap(self, payload: dict) -> None:
         self._store.ingest_cap(_parse_cap_payload(payload))
+
+    def _handle_keyword(self, payload: dict) -> None:
+        self._store.ingest_keyword(_parse_keyword_payload(payload))

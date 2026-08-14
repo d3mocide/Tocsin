@@ -101,6 +101,22 @@ def test_tier_b_never_calls_litellm():
     assert litellm.calls == []
 
 
+def test_live_transcript_tier_c_never_calls_litellm_or_dispatches():
+    """`stt_worker.service.LIVE_TIER` is `"C"` for every continuously-
+    transcribed chunk (design doc's live-transcription addendum to §6) --
+    this is the other half, alongside `test_models.py`'s
+    `test_transcript_only_payload_has_no_rf_source`, of the guarantee that
+    a keyword-matched live transcript can never reach the mesh: even a
+    live transcript that happens to also carry a Tier A *keyword* match
+    stays at its own tier "C" here, since that match is a separate,
+    fusion-bound `KeywordEvent` (`stt_worker.service.handle_capture`), not
+    a promotion of the raw transcript record itself."""
+    litellm = FakeLiteLLM(response="should not be used")
+    outcome = _dispatcher(litellm=litellm).handle(_transcript(tier="C", raw_header="live:home:WX5"))
+    assert outcome.reason == "skipped_not_tier_a"
+    assert litellm.calls == []
+
+
 def test_failed_transcript_guard_never_calls_litellm():
     litellm = FakeLiteLLM(response="should not be used")
     outcome = _dispatcher(litellm=litellm).handle(_transcript(passed_guard=False, text=""))

@@ -41,6 +41,21 @@ segment (header, tone, and voice) as a 16 kHz mono s16le WAV -- already
 as metadata; trimming before inference is `stt_worker`'s job, not this
 service's (§6's first preprocessing step).
 
+### Live transcription addendum
+
+`LIVE_TRANSCRIPTION_ENABLED=true` runs a *second*, independent capture path
+(`live_segmenter.py`) on one configured `(site, channel)`, with no SAME
+header involved: a simple RMS-energy VAD polls the ring buffer
+continuously and cuts a WAV chunk on a silence-hysteresis boundary or a
+hard max-duration cap, publishing each chunk on the same `capture.*` topic
+as an alert capture but tagged `capture_kind: "live"` (`bus.py`'s
+`publish_live`). This is what lets `stt_worker` transcribe ordinary NWR
+narration continuously, not just SAME-triggered voice messages -- see its
+own README and `docs/design/master-prompt.md`'s live-transcription
+addendum to §4/§6. Off by default: continuous VAD on top of the occasional
+alert-triggered capture is real extra CPU load the Pi budget (§6) doesn't
+assume, so this is scoped to exactly one channel, never all seven.
+
 ## Status
 
 Implemented and unit tested: boundary line detection (`boundary.py`), the
@@ -66,6 +81,8 @@ authoring sandbox, so the full path isn't exercised end to end here -- see
 | `SEGMENT_CAPTURE_PREROLL_SECONDS` | `10` | How much already-buffered ring-buffer audio to grab when a message starts. |
 | `SEGMENT_CAPTURE_HARD_TIMEOUT_SECONDS` | `300` | Force-finalize a capture that never sees an EOM (design doc §4). |
 | `SEGMENT_CAPTURE_REDIS_URL` | *(unset)* | Optional, heartbeat only. When set, publishes liveness to `tocsin:status:segment_capture` for `api`'s `GET /services`. Captures still go out over ZMQ, never through Redis. |
+| `LIVE_TRANSCRIPTION_ENABLED` | `false` | Enables the continuous VAD capture path (see "Live transcription addendum" above). |
+| `LIVE_TRANSCRIPTION_SITE` / `LIVE_TRANSCRIPTION_CHANNEL` | *(unset)* | The single `(site, channel)` to transcribe continuously. Both required if enabled -- logs a warning and stays disabled otherwise. |
 
 ## Development
 

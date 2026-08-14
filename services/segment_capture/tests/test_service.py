@@ -140,6 +140,67 @@ def test_unrecognized_event_code_falls_back_to_tier_b(tmp_path):
     service.close()
 
 
+class _FakeLiveSegmenter:
+    """Stands in for `live_segmenter.LiveSegmenter` -- these tests exercise
+    `SegmentCaptureService`'s wiring (lazy construction, one poll per
+    `tick()`, publishing whatever comes back), not the VAD/cut logic
+    itself (that's test_live_segmenter.py's job)."""
+
+    instances = []
+
+    def __init__(self, site, channel, ring_reader, output_dir):
+        self.site = site
+        self.channel = channel
+        self.ring_reader = ring_reader
+        self.output_dir = output_dir
+        self.poll_calls = 0
+        type(self).instances.append(self)
+
+    def poll(self):
+        self.poll_calls += 1
+        return [f"result-from-{self.site}-{self.channel}-{self.poll_calls}"]
+
+
+def test_tick_polls_the_configured_live_channel(tmp_path):
+    _FakeLiveSegmenter.instances = []
+    publisher = FakePublisher()
+    publisher.live_results = []
+    publisher.publish_live = lambda result: publisher.live_results.append(result)
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=publisher,
+        live_channel=("home", "WX7"),
+        live_segmenter_factory=_FakeLiveSegmenter,
+        ring_reader_factory=FakeRingReader,
+    )
+    service.tick()
+    service.tick()
+
+    assert len(_FakeLiveSegmenter.instances) == 1  # constructed once, lazily, not per tick()
+    live_segmenter = _FakeLiveSegmenter.instances[0]
+    assert live_segmenter.site == "home"
+    assert live_segmenter.channel == "WX7"
+    assert live_segmenter.poll_calls == 2
+    assert publisher.live_results == ["result-from-home-WX7-1", "result-from-home-WX7-2"]
+    service.close()
+
+
+def test_tick_without_live_channel_never_touches_live_segmenter(tmp_path):
+    _FakeLiveSegmenter.instances = []
+    publisher = FakePublisher()
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=publisher,
+        live_segmenter_factory=_FakeLiveSegmenter,
+        ring_reader_factory=FakeRingReader,
+    )
+    service.tick()
+    assert _FakeLiveSegmenter.instances == []
+    service.close()
+
+
 def test_different_channels_get_independent_captures(tmp_path):
     publisher = FakePublisher()
     service = SegmentCaptureService(

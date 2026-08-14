@@ -1,6 +1,7 @@
 """In-memory correlation state machine (design doc §5): ingest one SAME
-event or CAP alert at a time, match it against currently open alerts, and
-emit a canonical `Alert` with `sources[]` -- never a merged blob.
+event, CAP alert, or keyword-matched transcript event at a time, match it
+against currently open alerts, and emit a canonical `Alert` with
+`sources[]` -- never a merged blob.
 
 Linear scan over open alerts is deliberate, not a placeholder: even a busy
 severe-weather evening produces a handful of concurrently open alerts, not
@@ -27,7 +28,17 @@ from typing import Protocol
 from .confidence import compute_confidence
 from .correlator import DEFAULT_TIME_TOLERANCE, matches
 from .mapping import EventMapping
-from .models import Alert, AlertSource, AlertState, ApiSource, CapAlertIn, RFSource, SameEventIn
+from .models import (
+    Alert,
+    AlertSource,
+    AlertState,
+    ApiSource,
+    CapAlertIn,
+    KeywordEventIn,
+    RFSource,
+    SameEventIn,
+    TranscriptSource,
+)
 from .serialize import alert_to_json
 
 
@@ -59,6 +70,12 @@ class AlertStore:
         self._tolerance = time_tolerance
         self._open_rf_only: list[Alert] = []
         self._open_api_only: list[Alert] = []
+        # Not exposed via `open_alerts` -- see `ingest_keyword`'s
+        # docstring for why a TRANSCRIPT_ONLY alert is never eligible for
+        # confirmation the way RF_ONLY/API_ONLY are. This list exists only
+        # so a repeated keyword hit for the same ongoing hazard updates
+        # one alert instead of creating a new one every few seconds.
+        self._open_transcript_only: list[Alert] = []
         self._all: list[Alert] = []
 
     @property
@@ -138,6 +155,49 @@ class AlertStore:
         self._sink.record(alert)
         return alert
 
+    def ingest_keyword(self, event: KeywordEventIn) -> Alert:
+        """Deliberately does not attempt correlation against open
+        `API_ONLY` alerts the way `ingest_same`/`ingest_cap` correlate RF
+        and CAP: `correlator.matches()` requires FIPS overlap, and
+        freeform speech carries no reliable county-level geography to
+        overlap with (`models.KeywordEventIn`'s own docstring). A keyword
+        hit therefore always resolves to its own `TRANSCRIPT_ONLY` alert,
+        never `CONFIRMED` -- worth revisiting with a name-and-time-only
+        correlation if real deployment traffic shows it's warranted, same
+        "not handled yet" posture as this module's other documented gaps.
+
+        Dedup key is (site, channel, event_code), not a header/callsign
+        match -- a keyword hit carries neither. Repeated hits for the same
+        ongoing hazard on the same channel update one alert rather than
+        spawning a new one every few seconds of continuous transcription.
+        """
+        for alert in self._open_transcript_only:
+            existing = _transcript_source_of(alert).keyword_event
+            if (
+                existing.site == event.site
+                and existing.channel == event.channel
+                and existing.event_code == event.event_code
+            ):
+                alert.last_updated = event.received_at
+                alert.sources = (TranscriptSource(event),)
+                self._sink.record(alert)
+                return alert
+
+        alert = Alert(
+            id=uuid.uuid4().hex,
+            state=AlertState.TRANSCRIPT_ONLY,
+            confidence=compute_confidence(AlertState.TRANSCRIPT_ONLY, self._mode),
+            event_name=event.event_name,
+            fips_codes=(),
+            first_seen=event.received_at,
+            last_updated=event.received_at,
+            sources=(TranscriptSource(event),),
+        )
+        self._open_transcript_only.append(alert)
+        self._all.append(alert)
+        self._sink.record(alert)
+        return alert
+
     def _confirm(self, alert: Alert, new_source: AlertSource, observed_at: datetime) -> None:
         alert.state = AlertState.CONFIRMED
         alert.confidence = compute_confidence(AlertState.CONFIRMED, self._mode)
@@ -155,4 +215,10 @@ def _rf_source_of(alert: Alert) -> RFSource:
 def _cap_source_of(alert: Alert) -> ApiSource:
     source = alert.sources[0]
     assert isinstance(source, ApiSource)
+    return source
+
+
+def _transcript_source_of(alert: Alert) -> TranscriptSource:
+    source = alert.sources[0]
+    assert isinstance(source, TranscriptSource)
     return source

@@ -17,6 +17,7 @@
   --confirmed: #3fb950;
   --rf-only: #d29922;
   --api-only: #58a6ff;
+  --transcript-only: #a371f7;
   --dead: #f85149;
   --alarm: #ff4d3d;
   --tier-a: #ff6b5a;
@@ -314,6 +315,7 @@ body {
 
 .badge-rf_only { background: color-mix(in srgb, var(--rf-only) 20%, transparent); color: var(--rf-only); }
 .badge-api_only { background: color-mix(in srgb, var(--api-only) 20%, transparent); color: var(--api-only); }
+.badge-transcript_only { background: color-mix(in srgb, var(--transcript-only) 20%, transparent); color: var(--transcript-only); }
 .badge-confirmed { background: color-mix(in srgb, var(--confirmed) 20%, transparent); color: var(--confirmed); }
 .badge-alive { background: color-mix(in srgb, var(--confirmed) 18%, transparent); color: var(--confirmed); }
 .badge-dead { background: color-mix(in srgb, var(--dead) 20%, transparent); color: var(--dead); }
@@ -393,6 +395,7 @@ body {
 .alert-card.state-confirmed { border-left-color: var(--confirmed); }
 .alert-card.state-rf_only { border-left-color: var(--rf-only); }
 .alert-card.state-api_only { border-left-color: var(--api-only); }
+.alert-card.state-transcript_only { border-left-color: var(--transcript-only); }
 
 /* An active Tier A alert is the loudest thing this page can show -- the
    same treatment a dead RF channel already gets, for the same reason. */
@@ -530,6 +533,7 @@ body {
 
 .provenance-rf { border-top: 2px solid var(--rf-only); }
 .provenance-api { border-top: 2px solid var(--api-only); }
+.provenance-transcript { border-top: 2px solid var(--transcript-only); }
 
 .fields {
   margin: 0;
@@ -721,10 +725,12 @@ body {
 .segment-rf { background: var(--rf-only); }
 .segment-api { background: var(--api-only); }
 
-/* Subgrid Layout for Metric Tiles */
+/* Subgrid Layout for Metric Tiles -- auto-fit rather than a fixed column
+   count so an optional tile (transcript-only, only shown when the deployment
+   has ever recorded one) doesn't leave a lopsided half-empty row. */
 .stats-subgrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(85px, 1fr));
   gap: 0.45rem;
 }
 
@@ -738,6 +744,7 @@ body {
 .stat-confirmed .stat-value { color: var(--confirmed); }
 .stat-rf_only .stat-value { color: var(--rf-only); }
 .stat-api_only .stat-value { color: var(--api-only); }
+.stat-transcript_only .stat-value { color: var(--transcript-only); }
 .stat-total .stat-value { color: var(--text); }
 
 .stat-value {

@@ -16,6 +16,16 @@ off-grid, every alert simply stays `RF_ONLY` by design. Publishes every
 canonical Alert to the `tocsin:alerts` Redis Stream (`redis_sink.py`) for
 `dispatcher` (Phase 6) to consume.
 
+A third stream, `tocsin:keyword_events` (from `stt_worker`'s keyword
+matcher on continuously-transcribed audio -- the live-transcription
+addendum to design doc §4/§6), feeds a fourth state, `TRANSCRIPT_ONLY`:
+`store.ingest_keyword` never attempts CAP correlation (freeform speech
+carries no FIPS to correlate on), so it always resolves to its own alert,
+with its own, lower, mode-relative confidence -- a fuzzy keyword match is
+never treated as equivalent to a decoded SAME header. `TRANSCRIPT_ONLY`
+alerts have no RF source, so `dispatcher`'s stage 1 never fires for one;
+see `docs/design/master-prompt.md`'s addendum for the full guarantee.
+
 ## Status
 
 Implemented and unit tested: the event-code -> CAP-event-text mapping

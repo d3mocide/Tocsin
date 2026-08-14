@@ -201,6 +201,15 @@ Ship as a checked-in YAML, not a dict in code — NWS revises the list periodica
 - **Tier B (MQTT only):** watches, advisories, statements
 - **Tier C (log only):** `RWT` `RMT` tests, routine programming
 
+### Continuous capture (addendum)
+
+`segment-capture` also, optionally, runs one *second* capture path, independent of the
+ZCZC/EOM detector above: a VAD-segmented continuous capture on a single configured
+`(site, channel)`, with no SAME header involved at all. See §6's addendum for the full
+shape — this exists because everything above only ever transcribes a message that both
+happened *and* was successfully SAME-decoded, and NWR carries plenty of voice that is
+neither.
+
 ---
 
 ## 5. `fusion` — correlation and provenance
@@ -232,9 +241,16 @@ One `Alert` with a `sources[]` array — never a merged blob. State:
 | `RF_ONLY` | SDR heard it, API hasn't. Emit immediately — NWR typically leads the API by seconds. |
 | `API_ONLY` | Transmitter down, out of footprint, or a non-broadcast product. |
 | `CONFIRMED` | Both agree. Highest confidence. |
+| `TRANSCRIPT_ONLY` | A keyword hit in continuously-transcribed audio (§6 addendum) — no SAME header, no CAP match. |
 
 The `RF_ONLY`/`API_ONLY` divergence rate over time is the best single health metric for the
-whole system.
+whole system. `TRANSCRIPT_ONLY` is deliberately excluded from that metric — it's a
+fuzzy keyword match in ordinary narration, not a second independent decode of the same
+event, so folding it into RF-vs-API agreement would corrupt the one number this system
+uses to say "the dual-path architecture is working." It also never attempts CAP
+correlation itself: freeform speech carries no reliable county-level geography for
+`matches()`'s FIPS-overlap check to run against, so a keyword hit stays its own alert
+rather than trying (and reliably failing) to confirm.
 
 ### Confidence must be mode-relative
 
@@ -242,6 +258,12 @@ In `hybrid`, `RF_ONLY` means the API lagged or disagreed — mildly interesting.
 `offgrid`, it is the *only possible state*. If confidence is computed absolutely, off-grid
 deployments show a permanent warning light on a perfectly healthy system. **Deployment mode
 is an input to the confidence calculation.**
+
+`TRANSCRIPT_ONLY` does *not* get `RF_ONLY`'s "only possible state off-grid, so don't warn
+about it" treatment, even though it can also be the only signal available off-grid: unlike
+`RF_ONLY`'s deterministic SAME header decode, it's a fuzzy phrase match with a real
+false-positive rate, so its confidence stays low in both modes — low enough to read as
+"worth a look," never "as good as a decoded header."
 
 ### Durability
 
@@ -305,6 +327,49 @@ Core budget on a 4-core Pi: 1 for the channelizer, 2 for Whisper, 1 for everythi
    warning detail sent to every node on the mesh. Treat this as a correctness requirement,
    not a polish item.
 
+### Continuous transcription and keyword-triggered alerts (addendum)
+
+Everything above transcribes only what `segment-capture` hands it, and `segment-capture`
+(§4) only ever starts recording on a decoded `ZCZC` header. That leaves two real gaps: a
+listener gets no sense of what NWR is actually saying between alerts, and a product that
+never got SAME-encoded — a forecaster ad-lib, or a header `multimon-ng` failed to decode
+under poor SNR — produces no transcript and no alert at all, even though the hazard was
+genuinely spoken over the air.
+
+**Continuous capture, one channel only.** `segment-capture` optionally runs a second,
+independent capture path alongside its ZCZC/EOM detector: a simple energy-based VAD
+segmenter that polls the same ring buffer continuously, cutting a WAV chunk on a
+silence-hysteresis boundary or a hard max-chunk-duration cap, with no SAME header involved
+at all. Deliberately scoped to a single configured `(site, channel)`, never "every channel
+with audio" — the CPU budget above (2 of 4 Pi cores for Whisper) assumes occasional,
+alert-triggered inference, not continuous inference across all seven NWR channels at once.
+Off by default (`LIVE_TRANSCRIPTION_ENABLED`).
+
+**Transcription, local-only, always.** A continuous chunk always transcribes with the
+local provider, never races remote — the Tier A race above is for alert enrichment on a
+soft latency budget, not ambient narration — and is dropped outright, never sent over the
+network, if no local provider is configured at all. Continuous transcription must work
+fully off-grid, the same as every other path this document calls core. It still passes
+through the same hallucination guard as every other transcript before its text is trusted
+for anything, including keyword matching below.
+
+**Keyword matching is a backstop, not a primary path.** A guarded live transcript is
+scanned against a checked-in phrase table, `data/keyword_triggers.yaml` (spoken phrase →
+SAME event code, resolved to a name/tier via `data/same_event_codes.yaml` — the same tier
+table §4 uses, so a keyword match carries identical tier semantics to a decoded header). A
+match produces a `fusion` alert in the `TRANSCRIPT_ONLY` state (§5), with its own, lower,
+mode-relative confidence: a fuzzy phrase match in a Whisper transcript is never treated as
+equivalent to a deterministic SAME header decode.
+
+**Never reaches the mesh.** A `TRANSCRIPT_ONLY` alert has no RF source, so dispatcher's
+stage 1 (§7), which fires only off a decoded SAME header, never sees it. Its underlying
+transcript record also carries a fixed `LIVE`/Tier C marker regardless of what tier a
+keyword match inside it resolves to, so stage 2's Tier A gate excludes it as well. The
+worst failure chain named just above — an unguarded transcript reaching the mesh — stays
+impossible by construction for this path too; a keyword hit only ever surfaces in the web
+UI today (§12 has the open item on a general Tier B/MQTT publish path, which this would
+also want once it exists).
+
 ---
 
 ## 7. `dispatcher` — two-stage emission
@@ -317,6 +382,11 @@ itself. No STT, no LLM, no API. This fires before the voice message has finished
 ```
 TOR WARN | Multnomah,Clackamas OR | exp 2145Z | RF
 ```
+
+Requires an RF source, full stop — a `TRANSCRIPT_ONLY` alert (§5, §6 addendum) has none,
+so stage 1 never fires for one no matter its keyword-matched tier. A fuzzy phrase match in
+a Whisper transcript must never carry stage 1's "this came straight off a decoded header"
+guarantee.
 
 ### Stage 2 — T+60–120s, after EOM and STT
 
@@ -468,3 +538,10 @@ Each milestone is independently verifiable. Do not proceed until the prior one i
 - Evaluate NWWS-OI (XMPP push) as a lower-latency third source alongside API polling in
   hybrid mode.
 - Confirm the `same_to_cap.yaml` mapping against the current NWS event code list.
+- Calibrate the live-transcription VAD's RMS threshold against a real discriminator feed on
+  target hardware (§6 addendum) — the current default is a starting point, not a measured
+  value, the same posture as the Whisper RTF benchmark above.
+- Build a general Tier B "MQTT only" alert publish path (§4's tiering table has named this
+  since the design doc's first draft, but no code implements it yet — the mesh/MQTT dual
+  path in §7 is Meshtastic's own ack-fallback bridge, not this). The live-transcription
+  addendum's `TRANSCRIPT_ONLY` alerts would use it once it exists; today they're UI-only.

@@ -4,6 +4,7 @@ from pathlib import Path
 import zmq
 
 from segment_capture.bus import CapturePublisher
+from segment_capture.live_segmenter import LiveCaptureResult
 from segment_capture.recorder import CaptureResult
 
 
@@ -45,6 +46,7 @@ def test_publish_sends_topic_and_json_payload():
     topic, payload_bytes = frames
     assert topic == b"capture.home.WX5"
     payload = json.loads(payload_bytes)
+    assert payload["capture_kind"] == "alert"
     assert payload["site"] == "home"
     assert payload["channel"] == "WX5"
     assert payload["event_code"] == "TOR"
@@ -72,6 +74,34 @@ def test_voice_start_sample_can_be_null():
     frames = _recv_with_retry(sub, lambda: pub.publish(_result(voice_start_sample=None)))
     payload = json.loads(frames[1])
     assert payload["voice_start_sample"] is None
+
+    pub.close()
+    sub.close()
+    ctx.term()
+
+
+def test_publish_live_sends_topic_and_minimal_payload():
+    ctx = zmq.Context()
+    pub = CapturePublisher("inproc://test-capture-bus-3", context=ctx)
+    sub = ctx.socket(zmq.SUB)
+    sub.connect("inproc://test-capture-bus-3")
+    sub.setsockopt(zmq.SUBSCRIBE, b"")
+
+    result = LiveCaptureResult(site="home", channel="WX5", wav_path=Path("/tmp/home-WX5-live-1.wav"), num_samples=8000)
+    frames = _recv_with_retry(sub, lambda: pub.publish_live(result))
+
+    topic, payload_bytes = frames
+    assert topic == b"capture.home.WX5"
+    payload = json.loads(payload_bytes)
+    assert payload["capture_kind"] == "live"
+    assert payload["site"] == "home"
+    assert payload["channel"] == "WX5"
+    assert payload["wav_path"] == "/tmp/home-WX5-live-1.wav"
+    assert payload["num_samples"] == 8000
+    # No SAME-derived fields at all -- nothing has been decoded or matched
+    # yet at capture time for a live chunk.
+    assert "event_code" not in payload
+    assert "tier" not in payload
 
     pub.close()
     sub.close()

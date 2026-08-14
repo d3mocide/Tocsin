@@ -29,3 +29,21 @@ def test_api_only_only_meaningful_in_hybrid():
 def test_unknown_state_raises():
     with pytest.raises(ValueError):
         compute_confidence("bogus", "offgrid")
+
+
+def test_transcript_only_is_below_rf_only_in_both_modes():
+    for mode in ("offgrid", "hybrid"):
+        assert compute_confidence(AlertState.TRANSCRIPT_ONLY, mode) < compute_confidence(AlertState.RF_ONLY, mode)
+
+
+def test_transcript_only_is_not_the_offgrid_free_pass_rf_only_gets():
+    """Unlike RF_ONLY, being the only signal available off-grid does not
+    push TRANSCRIPT_ONLY's confidence up near 1.0 -- it's still a fuzzy
+    keyword match, not a decoded SAME header."""
+    assert compute_confidence(AlertState.TRANSCRIPT_ONLY, "offgrid") < 0.7
+
+
+def test_transcript_only_is_lower_in_hybrid_than_offgrid():
+    offgrid = compute_confidence(AlertState.TRANSCRIPT_ONLY, "offgrid")
+    hybrid = compute_confidence(AlertState.TRANSCRIPT_ONLY, "hybrid")
+    assert offgrid > hybrid > 0.0

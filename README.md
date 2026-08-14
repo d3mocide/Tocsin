@@ -131,7 +131,12 @@ two tabs, no client-side routing:
   nearby transmitters (optional NEXRAD radar overlay), the alert feed (both provenance
   sources shown side by side, never merged), the spectrum waterfall, per-channel RF health,
   system health (the `RF_ONLY`/`API_ONLY` divergence rate), and dispatch outcomes.
-- **Activity** -- the merged transcript/dispatch log and per-service status.
+- **Activity** -- the merged transcript/dispatch log and per-service status. With
+  `LIVE_TRANSCRIPTION_ENABLED=true`, this also shows a rolling transcript of one channel's
+  ordinary NWR narration, not just SAME-triggered voice messages -- and a `TRANSCRIPT_ONLY`
+  alert whenever a hazard phrase (`data/keyword_triggers.yaml`) turns up in it without a SAME
+  header. This is a backstop for a missed or garbled decode, not a primary path: it never
+  reaches the mesh (see `docs/design/master-prompt.md`'s live-transcription addendum to §4/§6).
 
 Installable to a phone's home screen (web manifest + iOS touch icon). No CDN, webfont, or
 other external asset, same offgrid rule as the rest of the system -- it degrades to a plain

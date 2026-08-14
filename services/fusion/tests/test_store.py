@@ -1,9 +1,9 @@
 from datetime import timedelta
 
-from fusion.models import AlertState, ApiSource, RFSource
+from fusion.models import AlertState, ApiSource, RFSource, TranscriptSource
 from fusion.store import AlertStore
 
-from fixtures import CLACKAMAS, MULTNOMAH, TOR_MAPPING, BASE_TIME, cap_alert, same_event
+from fixtures import CLACKAMAS, MULTNOMAH, TOR_MAPPING, BASE_TIME, cap_alert, keyword_event, same_event
 
 
 class FakeSink:
@@ -128,3 +128,59 @@ def test_repeated_cap_alert_updates_existing_alert_instead_of_duplicating():
     assert alert1.id == alert2.id
     assert len(store.all_alerts) == 1
     assert store.all_alerts[0].last_updated == BASE_TIME + timedelta(minutes=5)
+
+
+def test_keyword_event_creates_transcript_only_alert():
+    store = _store()
+    alert = store.ingest_keyword(keyword_event())
+
+    assert alert.state == AlertState.TRANSCRIPT_ONLY
+    assert len(alert.sources) == 1
+    assert isinstance(alert.sources[0], TranscriptSource)
+    assert alert.fips_codes == ()
+    assert alert in store.all_alerts
+
+
+def test_transcript_only_alert_is_not_eligible_for_confirmation():
+    """Unlike RF_ONLY/API_ONLY, a keyword-matched alert never enters
+    `open_alerts` -- it's never attempted against the other source (see
+    `store.ingest_keyword`'s docstring for why: no FIPS to correlate on)."""
+    store = _store()
+    alert = store.ingest_keyword(keyword_event())
+    assert alert not in store.open_alerts
+
+    # A CAP alert for the exact same event/area does not confirm it.
+    confirmed_candidate = store.ingest_cap(cap_alert())
+    assert confirmed_candidate.state == AlertState.API_ONLY
+    assert alert.state == AlertState.TRANSCRIPT_ONLY
+
+
+def test_repeated_keyword_event_on_same_channel_updates_existing_alert():
+    store = _store()
+    first = store.ingest_keyword(keyword_event(received_at=BASE_TIME))
+    second = store.ingest_keyword(keyword_event(received_at=BASE_TIME + timedelta(seconds=30)))
+
+    assert first.id == second.id
+    assert len(store.all_alerts) == 1
+    assert store.all_alerts[0].last_updated == BASE_TIME + timedelta(seconds=30)
+
+
+def test_keyword_event_on_a_different_channel_creates_a_separate_alert():
+    store = _store()
+    first = store.ingest_keyword(keyword_event(channel="WX5"))
+    second = store.ingest_keyword(keyword_event(channel="WX7"))
+
+    assert first.id != second.id
+    assert len(store.all_alerts) == 2
+
+
+def test_keyword_event_confidence_is_mode_relative_and_below_rf_only():
+    offgrid_store = _store(mode="offgrid")
+    hybrid_store = _store(mode="hybrid")
+
+    offgrid_alert = offgrid_store.ingest_keyword(keyword_event())
+    hybrid_alert = hybrid_store.ingest_keyword(keyword_event())
+    rf_alert = offgrid_store.ingest_same(same_event())
+
+    assert offgrid_alert.confidence > hybrid_alert.confidence
+    assert offgrid_alert.confidence < rf_alert.confidence

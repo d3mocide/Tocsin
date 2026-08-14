@@ -2,7 +2,7 @@
 // duplicated knowledge, not a shared schema package, same posture every
 // Python service in this repo takes toward its Redis/ZMQ neighbors).
 
-export type AlertState = "RF_ONLY" | "API_ONLY" | "CONFIRMED";
+export type AlertState = "RF_ONLY" | "API_ONLY" | "CONFIRMED" | "TRANSCRIPT_ONLY";
 
 /** `same_decoder`'s SAME header fields, as fusion carries them on an
  * alert's RF source. Every field here was previously fetched by the UI
@@ -45,10 +45,30 @@ export interface CapAlert {
   vtec: string | null;
 }
 
+/** A hazard phrase matched in continuously-transcribed NWR narration --
+ * `stt_worker.service.KeywordEvent` via `fusion`'s `TranscriptSource`, the
+ * design doc's live-transcription addendum to §5. No SAME header and no
+ * FIPS codes: this is a fuzzy keyword match, not a decoded alert. */
+export interface KeywordEvent {
+  site: string;
+  channel: string;
+  received_at: string;
+  event_code: string;
+  event_name: string;
+  tier: string;
+  matched_phrase: string;
+  transcript_text: string;
+}
+
 export interface AlertSource {
-  kind: "RF" | "API";
+  kind: "RF" | "API" | "TRANSCRIPT";
   event?: SameEvent;
   alert?: CapAlert;
+  // Named to match fusion's `TranscriptSource.keyword_event`, not `event`
+  // -- `event` above is already `SameEvent`-shaped for an "RF" source, and
+  // a same-named field with a different shape here would force every
+  // caller to narrow it before use.
+  keyword_event?: KeywordEvent;
 }
 
 export interface Alert {

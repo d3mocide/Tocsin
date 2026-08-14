@@ -74,6 +74,12 @@ services:
       SEGMENT_CAPTURE_ZMQ_BIND: tcp://0.0.0.0:5556
       SEGMENT_CAPTURE_RING_BUFFER_DIR: /run/sdr_rx_ring
       SEGMENT_CAPTURE_OUTPUT_DIR: /var/lib/segment_capture/captures
+      # Continuous, non-SAME-gated transcription of one channel -- off by
+      # default (see .env.example). Blank site/channel is a no-op even if
+      # enabled=true (segment_capture logs and continues without it).
+      LIVE_TRANSCRIPTION_ENABLED: ${LIVE_TRANSCRIPTION_ENABLED:-false}
+      LIVE_TRANSCRIPTION_SITE: ${LIVE_TRANSCRIPTION_SITE:-}
+      LIVE_TRANSCRIPTION_CHANNEL: ${LIVE_TRANSCRIPTION_CHANNEL:-}
     depends_on:
       - redis
       - icecast
@@ -124,9 +130,16 @@ services:
       STT_WORKER_REMOTE_BASE_URL: ${STT_WORKER_REMOTE_BASE_URL:-}
       STT_WORKER_REMOTE_API_KEY: ${STT_WORKER_REMOTE_API_KEY:-}
       STT_WORKER_REMOTE_MODEL: ${STT_WORKER_REMOTE_MODEL:-whisper-1}
+      # data/keyword_triggers.yaml + data/same_event_codes.yaml, for
+      # keyword-matching live transcripts (see LIVE_TRANSCRIPTION_ENABLED
+      # on sdr-rx above). Needed regardless of whether live transcription
+      # is on -- see keyword_match._default_data_dir's own docstring for
+      # why this can't be inferred inside the container.
+      TOCSIN_DATA_DIR: /app/data
     volumes:
       - segment-captures:/var/lib/segment_capture/captures
       - ./models:/models:ro
+      - ./data:/app/data:ro
     depends_on:
       - sdr-rx
       - redis

@@ -1,0 +1,74 @@
+# Spoken phrases -> SAME event code, for stt_worker's keyword matcher
+# (docs/design/master-prompt.md's live-transcription addendum under §4/§6).
+#
+# This is a backstop, not a primary path: every Tier A/B product NWS
+# actually SAME-encodes is already caught by same-decoder before a human
+# ever hears it. What this catches is the product that never got a SAME
+# header in the first place (a forecaster ad-lib, a Special Weather
+# Statement folded into routine narration) or one whose header multimon-ng
+# failed to decode under poor SNR. Deliberately keyed on natural spoken
+# phrasing, not the 3-letter code -- stt_worker matches this against
+# Whisper output, which never contains "TOR" or "SVR".
+#
+# Event names and tiers are NOT duplicated here -- looked up from
+# same_event_codes.yaml by event_code at load time (CLAUDE.md: shared
+# reference data lives once under data/). Only include phrases for codes
+# where the spoken warning itself is the actionable content; administrative/
+# network codes (ADR, NMN, EAT, NIC) and test codes (RWT, RMT, NPT, DMO)
+# carry nothing worth a keyword trigger, so they're deliberately absent.
+#
+# A keyword hit only ever produces a TRANSCRIPT_ONLY alert (fusion) --
+# UI/log visibility, never a mesh dispatch. See master-prompt.md's
+# connectivity/dispatch-tier notes for why an unguarded, fuzzily-matched
+# transcript must never reach the mesh path directly.
+
+# --- Tier A: immediate-threat warnings -------------------------------------
+TOR: { phrases: ["tornado warning"] }
+SVR: { phrases: ["severe thunderstorm warning"] }
+FFW: { phrases: ["flash flood warning"] }
+EWW: { phrases: ["extreme wind warning"] }
+TSW: { phrases: ["tsunami warning"] }
+CEM: { phrases: ["civil emergency message", "civil emergency"] }
+CDW: { phrases: ["civil danger warning"] }
+LEW: { phrases: ["law enforcement warning"] }
+SPW: { phrases: ["shelter in place warning", "shelter in place"] }
+EQW: { phrases: ["earthquake warning"] }
+VOW: { phrases: ["volcano warning", "volcanic eruption warning"] }
+AVW: { phrases: ["avalanche warning"] }
+HMW: { phrases: ["hazardous materials warning", "hazmat warning"] }
+NUW: { phrases: ["nuclear power plant warning", "nuclear plant warning"] }
+RHW: { phrases: ["radiological hazard warning"] }
+EAN: { phrases: ["emergency action notification"] }
+
+# --- Tier B: watches, advisories, statements -------------------------------
+TOA: { phrases: ["tornado watch"] }
+SVA: { phrases: ["severe thunderstorm watch"] }
+SVS: { phrases: ["severe weather statement"] }
+SPS: { phrases: ["special weather statement"] }
+FFA: { phrases: ["flash flood watch"] }
+FFS: { phrases: ["flash flood statement"] }
+FLW: { phrases: ["flood warning"] }
+FLA: { phrases: ["flood watch"] }
+FLS: { phrases: ["flood statement"] }
+CFW: { phrases: ["coastal flood warning"] }
+CFA: { phrases: ["coastal flood watch"] }
+WSW: { phrases: ["winter storm warning"] }
+WSA: { phrases: ["winter storm watch"] }
+BZW: { phrases: ["blizzard warning"] }
+FZW: { phrases: ["freeze warning"] }
+HWW: { phrases: ["high wind warning"] }
+HWA: { phrases: ["high wind watch"] }
+DSW: { phrases: ["dust storm warning"] }
+HUW: { phrases: ["hurricane warning"] }
+HUA: { phrases: ["hurricane watch"] }
+TRW: { phrases: ["tropical storm warning"] }
+TRA: { phrases: ["tropical storm watch"] }
+TSA: { phrases: ["tsunami watch"] }
+SSW: { phrases: ["storm surge warning"] }
+SSA: { phrases: ["storm surge watch"] }
+SMW: { phrases: ["special marine warning"] }
+AVA: { phrases: ["avalanche watch"] }
+FRW: { phrases: ["fire warning"] }
+LAE: { phrases: ["local area emergency"] }
+CAE: { phrases: ["child abduction emergency", "amber alert"] }
+EVI: { phrases: ["evacuation immediate", "immediate evacuation"] }

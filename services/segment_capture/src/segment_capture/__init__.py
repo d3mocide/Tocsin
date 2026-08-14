@@ -33,6 +33,29 @@ DEFAULT_OUTPUT_DIR = Path("/var/lib/segment_capture/captures")
 DEFAULT_PREROLL_SECONDS = 10.0
 DEFAULT_HARD_TIMEOUT_SECONDS = 300.0
 
+_FALSEY = {"false", "0", "no", "off"}
+
+
+def _live_channel() -> tuple[str, str] | None:
+    """`LIVE_TRANSCRIPTION_ENABLED` gates continuous transcription
+    entirely (default off -- it's extra CPU load `stt_worker`'s Pi budget,
+    design doc §6, doesn't assume by default). When enabled, exactly one
+    (site, channel) is transcribed continuously, not "every channel with
+    audio" -- see `service.SegmentCaptureService`'s own docstring for why."""
+    if os.environ.get("LIVE_TRANSCRIPTION_ENABLED", "false").strip().lower() in _FALSEY:
+        return None
+    site = os.environ.get("LIVE_TRANSCRIPTION_SITE", "").strip()
+    channel = os.environ.get("LIVE_TRANSCRIPTION_CHANNEL", "").strip()
+    if not site or not channel:
+        print(
+            "segment-capture: LIVE_TRANSCRIPTION_ENABLED=true requires both "
+            "LIVE_TRANSCRIPTION_SITE and LIVE_TRANSCRIPTION_CHANNEL -- continuing with "
+            "live transcription disabled.",
+            file=sys.stderr,
+        )
+        return None
+    return site, channel
+
 
 def _build_redis_client():
     """Redis is optional here and used only for the liveness heartbeat --
@@ -70,6 +93,8 @@ def main() -> None:
         print(f"segment-capture: could not load event-code table: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    live_channel = _live_channel()
+
     subscriber = SameAudioSubscriber(connect_addr)
     publisher = CapturePublisher(bind_addr)
     service = SegmentCaptureService(
@@ -79,9 +104,15 @@ def main() -> None:
         tiers=tiers,
         preroll_seconds=preroll_seconds,
         hard_timeout_seconds=hard_timeout_seconds,
+        live_channel=live_channel,
     )
     heartbeat = heartbeat_module.build(_build_redis_client())
-    print(f"segment-capture: subscribed to {connect_addr}, publishing captures on {bind_addr}", flush=True)
+    live_label = f"{live_channel[0]}/{live_channel[1]}" if live_channel else "disabled"
+    print(
+        f"segment-capture: subscribed to {connect_addr}, publishing captures on {bind_addr}, "
+        f"live transcription: {live_label}",
+        flush=True,
+    )
     try:
         while True:
             if heartbeat is not None:

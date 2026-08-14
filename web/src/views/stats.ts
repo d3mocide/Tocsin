@@ -20,6 +20,12 @@ export function renderStats(container: HTMLElement, store: Store): void {
   const confirmed = stats.counts.CONFIRMED ?? 0;
   const rfOnly = stats.counts.RF_ONLY ?? 0;
   const apiOnly = stats.counts.API_ONLY ?? 0;
+  // Not part of the RF/API divergence metric below (design doc §5 defines
+  // that as an RF-vs-CAP comparison specifically) -- shown as its own
+  // tile only once the deployment has actually used keyword detection,
+  // so a stack that's never enabled live transcription doesn't carry a
+  // permanently-zero tile.
+  const transcriptOnly = stats.counts.TRANSCRIPT_ONLY ?? 0;
   const total = stats.total;
 
   const confirmedPct = total > 0 ? Math.round((confirmed / total) * 100) : 0;
@@ -109,6 +115,15 @@ export function renderStats(container: HTMLElement, store: Store): void {
           el("div", { class: "stat-label", text: "API Only" }),
           el("div", { class: "stat-subtext", text: total > 0 ? `${apiOnlyPct}%` : "—" })
         ),
+        transcriptOnly > 0
+          ? el(
+              "div",
+              { class: "stat-tile stat-transcript_only" },
+              el("div", { class: "stat-value", text: String(transcriptOnly) }),
+              el("div", { class: "stat-label", text: "Transcript Only" }),
+              el("div", { class: "stat-subtext", text: total > 0 ? `${Math.round((transcriptOnly / total) * 100)}%` : "—" })
+            )
+          : null,
         el(
           "div",
           { class: "stat-tile stat-total" },

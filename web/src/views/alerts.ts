@@ -12,7 +12,9 @@ import {
   relativeTime,
   rfApiLatencySeconds,
   rfSource,
+  siteOf,
   tierOf,
+  transcriptSource,
 } from "../format";
 import type { Store } from "../store";
 import type { Alert, Dispatch, Reference, Transcript } from "../types";
@@ -141,7 +143,7 @@ export class AlertFeedView {
     const { state, tier, site, query, activeOnly } = this.store.state.filters;
     if (state && alert.state !== state) return false;
     if (tier && tierOf(alert, reference) !== tier) return false;
-    if (site && rfSource(alert)?.site !== site) return false;
+    if (site && siteOf(alert) !== site) return false;
     if (activeOnly && !isActive(alert, now)) return false;
     if (query) {
       const haystack = [
@@ -151,6 +153,8 @@ export class AlertFeedView {
         rfSource(alert)?.event_code ?? "",
         apiSource(alert)?.headline ?? "",
         apiSource(alert)?.area_desc ?? "",
+        transcriptSource(alert)?.matched_phrase ?? "",
+        transcriptSource(alert)?.transcript_text ?? "",
       ]
         .join(" ")
         .toLowerCase();
@@ -219,11 +223,19 @@ export class AlertFeedView {
   }
 
   private async loadDetail(alert: Alert): Promise<void> {
+    if (this.details.has(alert.id) || this.pending.has(alert.id)) return;
     const rawHeader = rfSource(alert)?.raw_header;
-    // No RF source means no SAME header, and raw_header is the only key
-    // transcripts and dispatches are recorded under -- a pure API_ONLY
-    // alert genuinely has no detail to fetch, rather than a fetch to fail.
-    if (!rawHeader || this.details.has(alert.id) || this.pending.has(alert.id)) return;
+    if (!rawHeader) {
+      // No RF source means no SAME header, and raw_header is the only key
+      // transcripts and dispatches are recorded under. A pure API_ONLY
+      // alert genuinely has nothing there; a TRANSCRIPT_ONLY alert's
+      // "transcript" is already embedded directly on its keyword-event
+      // source (see transcriptSourcePanel below), not fetched from this
+      // endpoint. Either way, resolve immediately rather than leaving the
+      // card on "Loading detail…" forever.
+      this.details.set(alert.id, { transcripts: [], dispatches: [] });
+      return;
+    }
     this.pending.add(alert.id);
     try {
       const [transcripts, dispatches] = await Promise.all([
@@ -243,6 +255,7 @@ export class AlertFeedView {
   private detail(alert: Alert, reference: Reference | null, now: Date): HTMLElement {
     const rf = rfSource(alert);
     const cap = apiSource(alert);
+    const transcript = transcriptSource(alert);
     const latency = rfApiLatencySeconds(alert);
     const detail = this.details.get(alert.id);
     const mode = this.store.state.system?.mode;
@@ -267,6 +280,7 @@ export class AlertFeedView {
         rfPanel(rf, reference),
         capPanel(cap, mode),
       ),
+      transcript ? transcriptSourcePanel(transcript) : null,
       detail ? transcriptPanel(detail.transcripts) : el("p", { class: "empty", text: "Loading detail…" }),
       detail ? dispatchPanel(detail.dispatches, now) : null,
     );
@@ -351,6 +365,33 @@ function capPanel(cap: ReturnType<typeof apiSource>, mode: string | null | undef
     { class: "provenance-panel provenance-api" },
     el("h4", { text: "What NWS said" }),
     body,
+  );
+}
+
+/** A TRANSCRIPT_ONLY alert's provenance -- a keyword hit in continuously-
+ * transcribed NWR narration (`stt_worker.keyword_match`), never a decoded
+ * SAME header. The matched phrase and its source sentence are already
+ * embedded on the alert itself (`transcriptSource`), unlike `rfPanel`/
+ * `capPanel`'s detail, which is a separate fetch keyed on `raw_header`. */
+function transcriptSourcePanel(transcript: ReturnType<typeof transcriptSource>): HTMLElement | null {
+  if (!transcript) return null;
+  return el(
+    "section",
+    { class: "provenance-panel provenance-transcript" },
+    el("h4", { text: "What the live transcript caught" }),
+    el(
+      "dl",
+      { class: "fields" },
+      field("Matched phrase", transcript.matched_phrase, { mono: true }),
+      field("Tier", transcript.tier),
+      field("Heard", absoluteTime(transcript.received_at)),
+      field("Source", `${transcript.site} / ${transcript.channel}`),
+    ),
+    el("p", { class: "transcript-text", text: transcript.transcript_text }),
+    el("p", {
+      class: "empty",
+      text: "No SAME header — caught by keyword match in continuous transcription, not a decoded alert.",
+    }),
   );
 }
 

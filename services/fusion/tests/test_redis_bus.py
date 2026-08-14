@@ -4,7 +4,7 @@ import pytest
 
 from fusion.mapping import EventMapping
 from fusion.models import AlertState
-from fusion.redis_bus import CAP_STREAM, GROUP_NAME, SAME_STREAM, StreamConsumer, ensure_group
+from fusion.redis_bus import CAP_STREAM, GROUP_NAME, KEYWORD_STREAM, SAME_STREAM, StreamConsumer, ensure_group
 from fusion.store import AlertStore
 
 from fake_redis_streams import FakeRedisStreams
@@ -55,6 +55,21 @@ def _cap_payload(**overrides) -> dict:
     return payload
 
 
+def _keyword_payload(**overrides) -> dict:
+    payload = {
+        "site": "home",
+        "channel": "WX5",
+        "timestamp_ns": 1_786_224_720_000_000_000,  # 2026-08-08T21:32:00Z
+        "event_code": "TOR",
+        "event_name": "Tornado Warning",
+        "tier": "A",
+        "matched_phrase": "tornado warning",
+        "transcript_text": "a tornado warning has been issued",
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _store():
     return AlertStore(MAPPING, "hybrid")
 
@@ -99,6 +114,19 @@ def test_new_cap_alert_is_ingested_and_acked():
 
     assert processed == 1
     assert store.all_alerts[0].state == AlertState.API_ONLY
+
+
+def test_new_keyword_event_is_ingested_and_acked():
+    redis = FakeRedisStreams()
+    redis.xadd(KEYWORD_STREAM, {"payload": json.dumps(_keyword_payload())})
+    store = _store()
+    consumer = StreamConsumer(redis, store, "fusion-test")
+
+    processed = consumer.poll_once(block_ms=None)
+
+    assert processed == 1
+    assert store.all_alerts[0].state == AlertState.TRANSCRIPT_ONLY
+    assert redis.xreadgroup(GROUP_NAME, "fusion-test", {KEYWORD_STREAM: "0"}) == []
 
 
 def test_matching_events_across_both_streams_confirm_one_alert():
