@@ -253,6 +253,102 @@ def test_tick_survives_a_live_segmenter_poll_failure_and_keeps_retrying(tmp_path
     service.close()
 
 
+def test_live_failure_message_names_the_sites_that_do_exist(tmp_path):
+    """The real deployment's message said only "can't read the ring buffer
+    for PDX:49435794/WX7", which still left the operator guessing. Naming
+    what sdr-rx actually created makes the mismatch obvious on sight."""
+
+    class _AlwaysFails:
+        def __init__(self, site, channel, ring_reader, output_dir):
+            pass
+
+        def poll(self):
+            raise FileNotFoundError("[Errno 2] No such file or directory")
+
+    (tmp_path / "PDX").mkdir()
+    (tmp_path / "PDX" / "WX7.meta.json").write_text("{}")
+    (tmp_path / "PDX" / "WX1.meta.json").write_text("{}")
+
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        live_channel=("PDX:49435794", "WX7"),  # the exact bad value from the report
+        live_segmenter_factory=_AlwaysFails,
+        ring_reader_factory=FakeRingReader,
+    )
+    service.tick()
+    message = service._describe_ring_buffers()
+    assert "PDX (WX1, WX7)" == message
+    service.close()
+
+
+def test_ring_buffer_description_survives_a_missing_directory(tmp_path):
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path / "does-not-exist",
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        ring_reader_factory=FakeRingReader,
+    )
+    # Must not raise -- this only ever runs while reporting another failure.
+    assert "unreadable" in service._describe_ring_buffers()
+    service.close()
+
+
+def test_ring_buffer_description_when_sdr_rx_has_not_started(tmp_path):
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        ring_reader_factory=FakeRingReader,
+    )
+    assert "no sites yet" in service._describe_ring_buffers()
+    service.close()
+
+
+def _service_with_failing_live_poll(tmp_path, exc):
+    class _Fails:
+        def __init__(self, site, channel, ring_reader, output_dir):
+            pass
+
+        def poll(self):
+            raise exc
+
+    return SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        live_channel=("PDX", "WX7"),
+        live_segmenter_factory=_Fails,
+        ring_reader_factory=FakeRingReader,
+    )
+
+
+def test_missing_ring_buffer_message_points_at_the_config(tmp_path, capsys):
+    service = _service_with_failing_live_poll(tmp_path, FileNotFoundError("[Errno 2] No such file"))
+    service.tick()
+    err = capsys.readouterr().err
+    assert "LIVE_TRANSCRIPTION_SITE must be the site name" in err
+    service.close()
+
+
+def test_non_missing_failure_message_does_not_blame_the_config(tmp_path, capsys):
+    """The torn-sidecar JSONDecodeError from the real deployment was
+    reported with a "is LIVE_TRANSCRIPTION_SITE the site name...?" hint,
+    which sent the operator to debug a setting that was correct all along.
+    A failure that isn't a missing file means the ring buffer *is* there."""
+    import json as _json
+
+    service = _service_with_failing_live_poll(
+        tmp_path, _json.JSONDecodeError("Expecting value", "", 0)
+    )
+    service.tick()
+    err = capsys.readouterr().err
+    assert "not a LIVE_TRANSCRIPTION_SITE/_CHANNEL problem" in err
+    assert "must be the site name" not in err
+    service.close()
+
+
 def test_persistent_live_segmenter_failure_never_crashes_tick(tmp_path):
     """The misconfiguration case (wrong site name, never recovers) --
     `tick()` must stay callable indefinitely, since it also drives the

@@ -14,6 +14,7 @@ side can be a different process than any future reader.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -45,17 +46,33 @@ class ChannelRingBuffer:
         self._write_meta()
 
     def _write_meta(self) -> None:
-        self._meta_path.write_text(
-            json.dumps(
-                {
-                    "channel": self.channel,
-                    "sample_rate_hz": self.sample_rate_hz,
-                    "capacity": self.capacity,
-                    "write_pos": self._write_pos,
-                    "total_written": self._total_written,
-                }
-            )
+        """Written atomically (temp file + `os.replace`), never in place.
+
+        `Path.write_text` truncates to zero bytes before rewriting, and this
+        runs on *every* `write()` -- i.e. continuously, per channel, at audio
+        chunk rate. Any reader that opens the file inside that window gets an
+        empty string and dies on `json.loads`. `segment_capture`'s alert
+        capture only reads the ring buffer during an actual SAME message, so
+        it hit that window rarely enough to never surface; the live segmenter
+        reads it on every tick and hit it constantly
+        (`JSONDecodeError: Expecting value: line 1 column 1 (char 0)` --
+        docs/design/tracking.md, 2026-08-14). `os.replace` is atomic on POSIX,
+        so a reader now always sees either the previous meta or the new one,
+        never a torn one. The temp file is per-channel, so concurrent writers
+        for different channels can't clobber each other's rename.
+        """
+        payload = json.dumps(
+            {
+                "channel": self.channel,
+                "sample_rate_hz": self.sample_rate_hz,
+                "capacity": self.capacity,
+                "write_pos": self._write_pos,
+                "total_written": self._total_written,
+            }
         )
+        tmp_path = self._meta_path.with_name(f"{self._meta_path.name}.tmp")
+        tmp_path.write_text(payload)
+        os.replace(tmp_path, self._meta_path)
 
     def write(self, samples: np.ndarray) -> None:
         samples = np.asarray(samples, dtype=np.float32)

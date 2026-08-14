@@ -104,19 +104,34 @@ class SegmentCaptureService:
             # yet -- either sdr-rx hasn't created it (a real startup race:
             # this process and sdr-rx's own capture loop start together),
             # or LIVE_TRANSCRIPTION_SITE/_CHANNEL doesn't name a real
-            # (site, channel) sdr-rx is actually running.
-            # LIVE_TRANSCRIPTION_SITE is the site *name* from
-            # SDR_RX_DEVICES (e.g. "home"), never the dongle serial
-            # number -- a mismatch here used to crash-loop this whole
-            # process, taking the core ZCZC/EOM alert-capture path down
-            # with it, since both run in the same service. An optional,
-            # off-by-default addendum must never do that: log once and
-            # keep retrying on the next tick() instead.
+            # (site, channel) sdr-rx is actually running. A mismatch here
+            # used to crash-loop this whole process, taking the core
+            # ZCZC/EOM alert-capture path down with it, since both run in
+            # the same service. An optional, off-by-default addendum must
+            # never do that: log once and keep retrying on the next
+            # tick() instead. The listing is what makes the message
+            # self-diagnosing -- naming the sites that *do* exist turns a
+            # guess ("is it the serial?") into a direct comparison.
             if not self._live_warned:
+                # Only a *missing* ring buffer implicates the configured
+                # site/channel. Any other failure (e.g. a torn read of the
+                # meta sidecar) means the ring buffer is there and being
+                # read -- pointing at LIVE_TRANSCRIPTION_SITE then sends
+                # the operator to debug a setting that was correct all
+                # along, which is exactly what this message did on its
+                # first real deployment (docs/design/tracking.md,
+                # 2026-08-14).
+                if isinstance(exc, FileNotFoundError):
+                    hint = (
+                        f" No ring buffer for that site/channel. Available now: "
+                        f"{self._describe_ring_buffers()}. LIVE_TRANSCRIPTION_SITE must be the "
+                        "site name from SDR_RX_DEVICES ('site:serial' -> 'site')."
+                    )
+                else:
+                    hint = " The ring buffer exists, so this is not a LIVE_TRANSCRIPTION_SITE/_CHANNEL problem."
                 print(
                     f"segment-capture: live transcription can't read the ring buffer for "
-                    f"{site}/{channel} ({exc!r}) -- is LIVE_TRANSCRIPTION_SITE the site name "
-                    "from SDR_RX_DEVICES, not a serial number? Will keep retrying.",
+                    f"{site}/{channel} ({exc!r}).{hint} Will keep retrying.",
                     file=sys.stderr,
                 )
                 self._live_warned = True
@@ -124,6 +139,23 @@ class SegmentCaptureService:
         self._live_warned = False
         for result in results:
             self._publisher.publish_live(result)
+
+    def _describe_ring_buffers(self) -> str:
+        """What sdr-rx has actually created under the ring buffer root, as
+        `site (WX1, WX2, ...)`. Best-effort by construction: this only ever
+        runs while reporting another failure, so it must not raise one of
+        its own."""
+        try:
+            sites = sorted(p for p in self._ring_buffer_dir.iterdir() if p.is_dir())
+        except OSError as exc:
+            return f"<ring buffer directory {self._ring_buffer_dir} unreadable: {exc!r}>"
+        if not sites:
+            return f"<no sites yet under {self._ring_buffer_dir} -- has sdr-rx started?>"
+        described = []
+        for site_dir in sites:
+            channels = sorted(p.name[: -len(".meta.json")] for p in site_dir.glob("*.meta.json"))
+            described.append(f"{site_dir.name} ({', '.join(channels) if channels else 'no channels yet'})")
+        return "; ".join(described)
 
     def _handle_line(self, key: tuple[str, str], line: str) -> None:
         site, channel = key
