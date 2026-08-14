@@ -198,6 +198,20 @@ class TranscriptionWorker:
         )
         self._sink.record(guarded)
 
+        if capture_kind == "live":
+            # The transcript itself, on stderr. With a Redis sink configured
+            # (every compose deployment) a live transcript otherwise reaches
+            # only Postgres and the UI, so `docker compose logs -f
+            # stt-worker` showed nothing at all while continuous
+            # transcription was working perfectly -- indistinguishable from
+            # broken. This is the feature's proof of life.
+            detail = text if result.passed else f"<withheld: {result.reason}>"
+            print(
+                f"stt-worker: live {guarded.site}/{guarded.channel}: {detail}",
+                file=sys.stderr,
+                flush=True,
+            )
+
         if capture_kind == "live" and result.passed and text and self._keyword_matcher is not None:
             match = self._keyword_matcher.match(text)
             if match is not None:

@@ -132,11 +132,19 @@ two tabs, no client-side routing:
   sources shown side by side, never merged), the spectrum waterfall, per-channel RF health,
   system health (the `RF_ONLY`/`API_ONLY` divergence rate), and dispatch outcomes.
 - **Activity** -- the merged transcript/dispatch log and per-service status. With
-  `LIVE_TRANSCRIPTION_ENABLED=true`, this also shows a rolling transcript of one channel's
-  ordinary NWR narration, not just SAME-triggered voice messages -- and a `TRANSCRIPT_ONLY`
-  alert whenever a hazard phrase (`data/keyword_triggers.yaml`) turns up in it without a SAME
-  header. This is a backstop for a missed or garbled decode, not a primary path: it never
-  reaches the mesh (see `docs/design/master-prompt.md`'s live-transcription addendum to §4/§6).
+  `LIVE_TRANSCRIPTION_ENABLED=true`, a "Show N live" toggle in this panel's header reveals a
+  rolling transcript of one channel's ordinary NWR narration, not just SAME-triggered voice
+  messages (hidden by default -- continuous transcription produces a row every few seconds
+  and would otherwise bury alert activity). A hazard phrase
+  (`data/keyword_triggers.yaml`) appearing in that narration without a SAME header raises a
+  `TRANSCRIPT_ONLY` alert in the feed. This is a backstop for a missed or garbled decode,
+  not a primary path: it never reaches the mesh (see `docs/design/master-prompt.md`'s
+  live-transcription addendum to §4/§6).
+
+  If live transcription is enabled but nothing appears, `segment-capture` logs the measured
+  audio levels beside the configured VAD threshold every few minutes -- an uncalibrated
+  `LIVE_TRANSCRIPTION_RMS_THRESHOLD` set too high is silent rather than noisy, and that line
+  is what it's tuned from.
 
 Installable to a phone's home screen (web manifest + iOS touch icon). No CDN, webfont, or
 other external asset, same offgrid rule as the rest of the system -- it degrades to a plain

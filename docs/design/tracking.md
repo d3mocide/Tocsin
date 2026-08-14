@@ -2662,3 +2662,34 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   while the live segmenter polled it: 1057 ticks, zero exceptions, 38 chunks captured.
   segment_capture 77 tests, sdr_rx 134 tests. **Requires rebuilding the `sdr-rx` image** --
   the fix is in code that ships inside it.
+- **2026-08-14 (live transcription observability + VAD tuning):** with the atomic-write fix
+  deployed, the remaining startup `FileNotFoundError` was the expected one-shot race (the
+  live segmenter polls before sdr-rx has created the ring buffer) and the retry recovered --
+  but the operator had no way to know that, because the failure was logged and *nothing
+  else ever was*. Two real gaps behind "I can't tell if this works":
+  - **The VAD threshold was never wired to anything.** `_poll_live` built `LiveSegmenter`
+    with all defaults, so `DEFAULT_RMS_THRESHOLD` -- explicitly uncalibrated (master prompt
+    §12) -- couldn't be changed without editing code. A threshold set above the actual
+    discriminator level yields silence forever with no other symptom, which is
+    indistinguishable from a dead channel. Now configurable:
+    `LIVE_TRANSCRIPTION_RMS_THRESHOLD`, `_MIN_CHUNK_SECONDS`, `_MAX_CHUNK_SECONDS`,
+    `_SILENCE_HANG_SECONDS`.
+  - **Nothing logged success.** Added: a recovery line when the ring buffer becomes readable
+    (previously silent, so a resolved warning looked identical to an unresolved one); a
+    periodic status line (`LiveSegmenterStats` -> `service._report_live_status`) carrying
+    measured mean/peak RMS *next to* the configured threshold, the share of audio counted as
+    speech, and chunks sent -- and naming the fix outright ("lower
+    LIVE_TRANSCRIPTION_RMS_THRESHOLD toward <peak>") when nothing clears it; and a
+    `stt-worker: live <site>/<channel>: <text>` line per live transcript, since with a Redis
+    sink configured the text otherwise reached only Postgres and the UI, so
+    `docker compose logs -f stt-worker` showed nothing while the feature worked perfectly.
+  - **Web:** live rows were being merged into the Activity feed uncapped, which on a
+    continuously-transcribed channel buries alert activity in a feed capped at 200. They're
+    now hidden behind a "Show N live" toggle in the panel header (`store.showLiveTranscripts`,
+    default off), badged `live` and styled quieter than alert rows. Answering the user's
+    question directly: live transcripts *were* already reaching the frontend end to end
+    (`stt_worker` -> `tocsin:transcripts` -> `api` consumer -> Postgres + SSE ->
+    `store.prependTranscript` -> `activity.ts`), just unlabeled and drowning everything else.
+  11 new tests (status-line reporting including the threshold-too-high case, recovery
+  logging, option pass-through); segment_capture 82, stt_worker 71, `tsc --noEmit` and
+  `vite build` clean.

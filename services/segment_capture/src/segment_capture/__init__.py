@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import heartbeat as heartbeat_module
 from .bus import CapturePublisher
-from .service import SegmentCaptureService
+from .service import DEFAULT_LIVE_STATUS_INTERVAL_SECONDS, SegmentCaptureService
 from .subscriber import SameAudioSubscriber
 from .tiers import TierTable
 
@@ -75,6 +75,33 @@ def _live_channel() -> tuple[str, str] | None:
     return site, channel
 
 
+def _live_segmenter_options() -> dict:
+    """VAD tuning, exposed because `DEFAULT_RMS_THRESHOLD` is a starting
+    point rather than a measured value (master prompt §12's open item) and
+    varies with gain, squelch, and the transmitter. `segment_capture`
+    prints the observed levels next to the configured threshold
+    periodically (`service._report_live_status`) -- that line is what these
+    are meant to be tuned from."""
+    options: dict = {}
+    for env_name, kwarg in (
+        ("LIVE_TRANSCRIPTION_RMS_THRESHOLD", "rms_threshold"),
+        ("LIVE_TRANSCRIPTION_MIN_CHUNK_SECONDS", "min_chunk_seconds"),
+        ("LIVE_TRANSCRIPTION_MAX_CHUNK_SECONDS", "max_chunk_seconds"),
+        ("LIVE_TRANSCRIPTION_SILENCE_HANG_SECONDS", "silence_hang_seconds"),
+    ):
+        raw = os.environ.get(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            options[kwarg] = float(raw)
+        except ValueError:
+            print(
+                f"segment-capture: {env_name}={raw!r} is not a number -- using the default.",
+                file=sys.stderr,
+            )
+    return options
+
+
 def _build_redis_client():
     """Redis is optional here and used only for the liveness heartbeat --
     this service's actual output goes over ZMQ to stt_worker, not through
@@ -123,6 +150,10 @@ def main() -> None:
         preroll_seconds=preroll_seconds,
         hard_timeout_seconds=hard_timeout_seconds,
         live_channel=live_channel,
+        live_segmenter_options=_live_segmenter_options(),
+        live_status_interval_seconds=float(
+            os.environ.get("LIVE_TRANSCRIPTION_STATUS_INTERVAL_SECONDS", DEFAULT_LIVE_STATUS_INTERVAL_SECONDS)
+        ),
     )
     heartbeat = heartbeat_module.build(_build_redis_client())
     live_label = f"{live_channel[0]}/{live_channel[1]}" if live_channel else "disabled"

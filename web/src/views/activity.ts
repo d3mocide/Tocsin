@@ -16,17 +16,32 @@ type Entry =
   | { kind: "transcript"; at: number; transcript: Transcript }
   | { kind: "dispatch"; at: number; dispatch: Dispatch };
 
+/** `stt_worker.service.LIVE_EVENT_CODE` -- a continuously-transcribed chunk
+ * of ordinary narration rather than a SAME-triggered voice message. */
+const LIVE_EVENT_CODE = "LIVE";
+
+export function isLiveTranscript(transcript: Transcript): boolean {
+  return transcript.event_code === LIVE_EVENT_CODE;
+}
+
 export function renderActivity(container: HTMLElement, store: Store): void {
-  const { transcripts, dispatches, errors } = store.state;
+  const { transcripts, dispatches, errors, showLiveTranscripts } = store.state;
   const error = errors.get("activity");
   if (error) {
     replaceChildren(container, el("p", { class: "panel-error", text: `Activity unavailable — ${error}` }));
     return;
   }
 
+  // Continuous transcription produces a row every few seconds, which buries
+  // alert activity in a feed capped at MAX_ACTIVITY_ROWS. Alert-only is the
+  // default view for that reason; live rows are one click away, never a
+  // permanent flood nobody asked for.
+  const liveCount = transcripts.filter(isLiveTranscript).length;
+  const shownTranscripts = showLiveTranscripts ? transcripts : transcripts.filter((t) => !isLiveTranscript(t));
+
   const entries: Entry[] = [
     // timestamp_ns is nanoseconds since the epoch; Date wants ms.
-    ...transcripts.map((transcript) => ({
+    ...shownTranscripts.map((transcript) => ({
       kind: "transcript" as const,
       at: transcript.timestamp_ns / 1e6,
       transcript,
@@ -40,10 +55,23 @@ export function renderActivity(container: HTMLElement, store: Store): void {
 
   const headerSummary = byIdOptional("activity-header-summary");
   if (headerSummary) {
-    replaceChildren(
-      headerSummary,
-      el("span", { class: "badge badge-status-idle", text: `${entries.length} LOGGED` })
-    );
+    const children: (HTMLElement | null)[] = [
+      el("span", { class: "badge badge-status-idle", text: `${entries.length} LOGGED` }),
+    ];
+    if (liveCount > 0) {
+      const toggle = el("button", {
+        class: `activity-live-toggle${showLiveTranscripts ? " on" : ""}`,
+        text: showLiveTranscripts ? `Hide ${liveCount} live` : `Show ${liveCount} live`,
+        attrs: { type: "button", "aria-pressed": String(showLiveTranscripts) },
+      });
+      toggle.addEventListener("click", () =>
+        store.update("activity", (state) => {
+          state.showLiveTranscripts = !state.showLiveTranscripts;
+        }),
+      );
+      children.push(toggle);
+    }
+    replaceChildren(headerSummary, ...children);
   }
 
   if (entries.length === 0) {
@@ -64,14 +92,15 @@ function entryRow(entry: Entry): HTMLElement {
 
   if (entry.kind === "transcript") {
     const { transcript } = entry;
+    const live = isLiveTranscript(transcript);
     return el(
       "li",
-      { class: "activity activity-transcript" },
+      { class: `activity activity-transcript${live ? " activity-live" : ""}` },
       el(
         "div",
         { class: "activity-head" },
-        badge("transcript", "api_only"),
-        el("span", { class: "activity-code", text: transcript.event_code }),
+        live ? badge("live", "transcript_only") : badge("transcript", "api_only"),
+        el("span", { class: "activity-code", text: live ? transcript.channel : transcript.event_code }),
         el("span", { class: "activity-where", text: `${transcript.site}/${transcript.channel}` }),
         time,
       ),
