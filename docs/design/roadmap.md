@@ -121,6 +121,34 @@ RTF against the `base.en`/`small.en` defaults (master prompt §12 open item).
 **Depends on:** Phase 2 (needs the ring buffer boundary metadata from `segment_capture`,
 which depends on SAME detection).
 
+### Addendum — continuous transcription and keyword-triggered alerts
+
+**Goal:** a transcript of ordinary NWR narration, not just SAME-triggered voice messages,
+and a backstop alert for a hazard that was spoken but never SAME-encoded (or whose header
+`multimon-ng` failed to decode).
+
+- `segment_capture`: a second, VAD-segmented capture path (`LiveSegmenter`) on one
+  configured `(site, channel)`, independent of the ZCZC/EOM detector, gated off by default
+  (`LIVE_TRANSCRIPTION_ENABLED`).
+- `stt_worker`: transcribes continuous chunks local-only (never races remote, never sent
+  over the network with no local provider configured), then scans a guarded transcript
+  against `data/keyword_triggers.yaml` for a hazard phrase.
+- `fusion`: a match becomes a `TRANSCRIPT_ONLY` `Alert` (master prompt §5 addendum) — its
+  own state, its own lower mode-relative confidence, no attempted CAP correlation (no FIPS
+  to correlate on).
+- `dispatcher`: unaffected by construction — a `TRANSCRIPT_ONLY` alert has no RF source, so
+  stage 1 never fires for one; its underlying transcript carries a fixed Tier C marker, so
+  stage 2 never does either.
+
+**Exit criteria:** met — this addendum is implemented and unit tested (see
+`docs/design/tracking.md`). Real-hardware verification (a live channel transcribing
+continuously, a real keyword hit reaching the UI as a `TRANSCRIPT_ONLY` alert) is still
+open, same "no real RF decoded in this repo's history yet" gap every phase since 2 has
+flagged.
+
+**Depends on:** Phase 4 (the capture/transcription pipeline this extends) and Phase 5
+(the `TRANSCRIPT_ONLY` alert state and `fusion` wiring below).
+
 ---
 
 ## Phase 5 — NWS poller + fusion (milestone 5)
@@ -130,8 +158,9 @@ which depends on SAME detection).
 - `nws_poller` (hybrid only): ETag-conditional polling of `api.weather.gov/alerts/active`.
 - `fusion`: correlation key from master prompt §5 (event-code mapping AND FIPS overlap AND
   time-window match), canonical `Alert` model with `sources[]` and
-  `RF_ONLY`/`API_ONLY`/`CONFIRMED` state, mode-relative confidence, Redis Streams
-  durability.
+  `RF_ONLY`/`API_ONLY`/`CONFIRMED`/`TRANSCRIPT_ONLY` state, mode-relative confidence, Redis
+  Streams durability. `TRANSCRIPT_ONLY` is the Phase 4 addendum's state, consumed from
+  `stt_worker`'s keyword-match output rather than correlated from SAME/CAP.
 
 **Exit criteria:** correlation logic verified against recorded fixtures from both sources
 (not live traffic) covering true matches, near-misses (right event wrong county), and
@@ -200,3 +229,6 @@ resolved opportunistically as the relevant phase is built, not deferred to the e
 - Evaluate NWWS-OI as a lower-latency third source (Phase 5, hybrid mode only).
 - Confirm `data/same_to_cap.yaml` against the current NWS event code list (Phase 5, and
   periodically after — NWS revises this list).
+- Calibrate the live-transcription VAD's RMS threshold on real hardware (Phase 4 addendum).
+- Build the general Tier B "MQTT only" alert publish path (master prompt §12) — the
+  live-transcription addendum's `TRANSCRIPT_ONLY` alerts are UI-only until it exists.

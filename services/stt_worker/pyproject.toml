@@ -5,6 +5,7 @@ description = "Trims a segment_capture WAV to voice-only, transcribes it with wh
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "pyyaml>=6.0",
     "pyzmq>=25.1",
     "redis>=5.0",
     "requests>=2.31",

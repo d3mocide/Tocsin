@@ -1,4 +1,4 @@
-import type { Alert, AlertSource, CapAlert, Reference, SameEvent } from "./types";
+import type { Alert, AlertSource, CapAlert, KeywordEvent, Reference, SameEvent } from "./types";
 
 /** Derived presentation logic shared by every view. Kept out of the views
  * themselves because most of it answers questions the API deliberately
@@ -15,9 +15,29 @@ export function apiSource(alert: Alert): CapAlert | null {
   return source?.alert ?? null;
 }
 
+export function transcriptSource(alert: Alert): KeywordEvent | null {
+  const source = alert.sources.find((s: AlertSource) => s.kind === "TRANSCRIPT");
+  return source?.keyword_event ?? null;
+}
+
+/** The (site, channel) that produced an alert, regardless of source kind
+ * -- an RF or TRANSCRIPT source both carry one; a pure API_ONLY alert has
+ * neither. Used for the site filter (filters.ts), which would otherwise
+ * only ever recognize RF-sourced alerts and silently hide every
+ * TRANSCRIPT_ONLY one whenever a site filter is active. */
+export function siteOf(alert: Alert): string | null {
+  return rfSource(alert)?.site ?? transcriptSource(alert)?.site ?? null;
+}
+
 export function tierOf(alert: Alert, reference: Reference | null): string | null {
   const rf = rfSource(alert);
   if (rf?.tier) return rf.tier;
+  // A TRANSCRIPT_ONLY alert already carries its own resolved tier from
+  // the keyword match (stt_worker.keyword_match) -- no reference lookup
+  // needed, and its event_name wouldn't reliably match the reference
+  // table by name the way apiSource's CAP text does below.
+  const transcript = transcriptSource(alert);
+  if (transcript?.tier) return transcript.tier;
   // An API_ONLY alert has no SAME header and so no tier of its own. The
   // CAP event name maps back to a code only via data/same_to_cap.yaml,
   // which isn't loaded here -- so fall back to matching the event name

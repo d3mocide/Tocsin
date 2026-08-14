@@ -13,6 +13,16 @@ compressed impact clause as a second, later message (stage 2, milestone
 TOR WARN | Multnomah,Clackamas OR | exp 2145Z | RF
 ```
 
+`fusion`'s `TRANSCRIPT_ONLY` alerts (the live-transcription addendum to
+design doc §4/§6/§7 -- a keyword hit in continuously-transcribed audio,
+never a decoded SAME header) needed no changes here at all: `models.py`'s
+`parse_rf_source` already returns `None` for an alert with no `"RF"`
+source, so stage 1 never fires for one, and `stt_worker` tags every live
+transcript `tier=C`, which already fails stage 2's Tier A gate. Both are
+pinned by regression tests (`tests/test_models.py`,
+`tests/test_stage2_dispatcher.py`) rather than left as an incidental
+property of the existing gates.
+
 ## Status
 
 Implemented and unit tested, both stages:

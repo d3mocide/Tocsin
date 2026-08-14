@@ -1,11 +1,14 @@
-"""fusion entrypoint: consume SAME events and CAP alerts from Redis
-Streams, correlate them, emit canonical Alerts (design doc §5, §10
-milestone 5).
+"""fusion entrypoint: consume SAME events, CAP alerts, and keyword-matched
+transcript events from Redis Streams, correlate them, emit canonical
+Alerts (design doc §5, §10 milestone 5; keyword events are the
+live-transcription addendum to §5).
 
 Runs in both `offgrid` and `hybrid` (`compose.yaml`) -- `offgrid` never
 sees a CAP alert (`nws-poller` doesn't run there), so every Alert simply
 stays `RF_ONLY`, which is by design (design doc §5: "In offgrid, [RF_ONLY]
-is the only possible state").
+is the only possible state"). Keyword events can arrive in either mode --
+live transcription is local-only and works fully off-grid (`stt_worker`'s
+own connectivity posture).
 """
 
 from __future__ import annotations

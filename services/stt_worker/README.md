@@ -65,6 +65,29 @@ Two of the design doc's preprocessing steps live here:
    failure chain in this system -- treated as a correctness requirement,
    not a polish item.
 
+### Live transcription and keyword-triggered alerts addendum
+
+`handle_capture` branches on the incoming payload's `capture_kind`
+(`segment_capture.bus`'s discriminator). A `"live"` capture -- continuous,
+VAD-cut, from `segment_capture`'s `LIVE_TRANSCRIPTION_ENABLED` path, no
+SAME header involved -- always transcribes local-only, never races
+remote, and is dropped outright (not sent over the network) if no local
+provider is configured at all: continuous transcription has to work fully
+offgrid, same as everything else this document calls core. Its guarded
+transcript is recorded with `event_code=LIVE`/`tier=C`
+(`LIVE_EVENT_CODE`/`LIVE_TIER`) rather than nulls, which is also what
+keeps it out of `dispatcher`'s stage 2 with no changes needed there --
+Tier C already fails that gate.
+
+A `"live"` transcript that passes the hallucination guard is then scanned
+by `keyword_match.KeywordMatcher` (loads `data/keyword_triggers.yaml` +
+`data/same_event_codes.yaml`, same per-service loader pattern as every
+other `TierTable`) for a spoken hazard phrase. A match publishes a
+`KeywordEvent` to `tocsin:keyword_events` (`redis_sink.py`), which
+`fusion` turns into a `TRANSCRIPT_ONLY` alert -- see
+`docs/design/master-prompt.md`'s live-transcription addendum to §4/§6/§7
+and `services/fusion/README.md`.
+
 **A real caveat, found via research rather than assumed:** whisper.cpp's
 CLI JSON output (`-oj -ojf`) only gained per-segment `no_speech_prob` in a
 2026 upstream PR (`ggml-org/whisper.cpp#2654`), and `avg_logprob` doesn't
@@ -119,6 +142,7 @@ to end here -- see `docs/design/tracking.md`.
 | `STT_WORKER_REMOTE_API_KEY` | *(none)* | Sent as `Authorization: Bearer <key>` if set. |
 | `STT_WORKER_REMOTE_MODEL` | `whisper-1` | Passed as the `model` form field. |
 | `STT_WORKER_REMOTE_BUDGET_SECONDS` | `10` | How long remote gets to win the race, measured from when both providers start. |
+| `TOCSIN_DATA_DIR` | *(unset -- inferred, fails inside a container)* | Directory containing `keyword_triggers.yaml`/`same_event_codes.yaml` for keyword matching. Must be set in Docker (see "Live transcription addendum" above); a missing/unloadable table degrades to no keyword detection rather than refusing to start. |
 
 ## Development
 

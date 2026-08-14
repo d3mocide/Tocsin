@@ -52,6 +52,45 @@ def _build_sink(redis_client):
     return RedisStreamTranscriptSink(redis_client)
 
 
+def _build_keyword_sink(redis_client):
+    if redis_client is None:
+        return None
+    from .redis_sink import RedisStreamKeywordEventSink
+
+    return RedisStreamKeywordEventSink(redis_client)
+
+
+def _build_keyword_matcher():
+    """Loaded unconditionally, not gated by an env var of its own --
+    it's only ever consulted for `capture_kind == "live"` captures
+    (`service.py`), which segment_capture's own `LIVE_TRANSCRIPTION_ENABLED`
+    already gates, so there's no separate flag to keep in sync here. A
+    missing/malformed table degrades to "no keyword detection" rather than
+    refusing to start -- unlike the SAME event-code table every capture
+    needs for tiering, this is a supplementary detection path, not a core
+    one (CLAUDE.md's connectivity rule doesn't apply -- this stays fully
+    local either way).
+
+    Catches `RuntimeError` too, not just `OSError`: an unset
+    `TOCSIN_DATA_DIR` inside a Docker image makes `_default_data_dir()`
+    raise `RuntimeError` rather than fail to find a file (see its
+    docstring/test) -- same class of bug as the one `tiers.py` across
+    every other service already guards against (docs/design/tracking.md,
+    2026-08-08), just reachable from a different loader here."""
+    from .keyword_match import KeywordMatcher
+
+    data_dir = os.environ.get("TOCSIN_DATA_DIR")
+    try:
+        return KeywordMatcher.load(Path(data_dir) if data_dir else None)
+    except (OSError, RuntimeError) as exc:
+        print(
+            f"stt-worker: could not load keyword trigger table, continuing without keyword "
+            f"detection on live transcripts: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
 def parse_chain(raw: str | None) -> set[str]:
     """`STT_CHAIN` (design doc §6): `local` (offgrid default), `local,remote`
     (hybrid race), or `remote` alone -- a deployment that transcribes
@@ -183,6 +222,8 @@ def main() -> None:
         local_enabled=local_enabled,
         remote_run=remote_run,
         remote_budget_seconds=remote_budget_seconds,
+        keyword_matcher=_build_keyword_matcher(),
+        keyword_sink=_build_keyword_sink(redis_client),
     )
     chain_label = ",".join(sorted(chain))
     model_label = Path(model_path).name if local_enabled and model_path else "none (remote only)"

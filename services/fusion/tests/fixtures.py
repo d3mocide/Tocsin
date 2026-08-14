@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from fusion.mapping import EventMapping
-from fusion.models import CapAlertIn, SameEventIn
+from fusion.models import CapAlertIn, KeywordEventIn, SameEventIn
 
 MULTNOMAH = "041051"
 CLACKAMAS = "041005"
@@ -67,4 +67,24 @@ def cap_alert(
         same_codes=same_codes,
         ugc_codes=("ORZ006",),
         vtec="/O.NEW.KPQR.TO.W.0012.260808T2132Z-260808T2215Z/",
+    )
+
+
+def keyword_event(
+    event_code: str = "TOR",
+    event_name: str = "Tornado Warning",
+    tier: str = "A",
+    received_at: datetime = BASE_TIME,
+    site: str = "home",
+    channel: str = "WX5",
+) -> KeywordEventIn:
+    return KeywordEventIn(
+        site=site,
+        channel=channel,
+        received_at=received_at,
+        event_code=event_code,
+        event_name=event_name,
+        tier=tier,
+        matched_phrase="tornado warning",
+        transcript_text="a tornado warning has been issued for the area",
     )

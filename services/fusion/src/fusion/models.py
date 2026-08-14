@@ -32,6 +32,26 @@ class SameEventIn:
 
 
 @dataclass(frozen=True)
+class KeywordEventIn:
+    """Wire shape of `stt_worker.service.KeywordEvent` (design doc's
+    live-transcription addendum to §5): a hazard phrase matched in a
+    *continuously*-transcribed chunk of ordinary NWR narration, never a
+    SAME header. No FIPS codes at all -- unlike a decoded SAME header,
+    freeform speech carries no reliable county-level geography, so
+    correlation against CAP by area isn't attempted for this source (see
+    `store.ingest_keyword`'s own docstring)."""
+
+    site: str
+    channel: str
+    received_at: datetime
+    event_code: str
+    event_name: str
+    tier: str
+    matched_phrase: str
+    transcript_text: str
+
+
+@dataclass(frozen=True)
 class CapAlertIn:
     id: str
     event: str
@@ -57,6 +77,15 @@ class AlertState(str, Enum):
     RF_ONLY = "RF_ONLY"
     API_ONLY = "API_ONLY"
     CONFIRMED = "CONFIRMED"
+    # A keyword hit in continuously-transcribed audio, with no SAME header
+    # and no CAP match -- the design doc's live-transcription addendum to
+    # §5. Deliberately its own state, not folded into RF_ONLY: RF_ONLY
+    # means a deterministic SAME header decode, and dispatcher's stage 1
+    # (design doc §7) fires off that guarantee. A fuzzy keyword match in a
+    # Whisper transcript must never carry that same guarantee -- see
+    # `store.ingest_keyword`'s docstring and dispatcher's own
+    # `parse_rf_source` (no RF source here, so stage 1 never even sees it).
+    TRANSCRIPT_ONLY = "TRANSCRIPT_ONLY"
 
 
 @dataclass(frozen=True)
@@ -71,7 +100,18 @@ class ApiSource:
     kind: str = field(default="API", init=False)
 
 
-AlertSource = RFSource | ApiSource
+@dataclass(frozen=True)
+class TranscriptSource:
+    # Named `keyword_event`, not `event` -- the frontend's `AlertSource`
+    # type (web/src/types.ts) already uses `event` for `RFSource`'s
+    # `SameEvent` payload; a same-named field with a different shape here
+    # would either collide or force callers to narrow a widened union
+    # before touching it. Distinct names sidestep both.
+    keyword_event: KeywordEventIn
+    kind: str = field(default="TRANSCRIPT", init=False)
+
+
+AlertSource = RFSource | ApiSource | TranscriptSource
 
 
 @dataclass

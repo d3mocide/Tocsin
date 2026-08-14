@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .boundary import is_eom, parse_message_start
 from .bus import CapturePublisher
+from .live_segmenter import LiveSegmenter
 from .multimon import MultimonProcess
 from .recorder import DEFAULT_HARD_TIMEOUT_SECONDS, DEFAULT_PREROLL_SECONDS, SegmentRecorder
 from .ring_reader import RingBufferReader
@@ -17,7 +18,15 @@ from .tiers import TierTable
 class SegmentCaptureService:
     """One boundary detector per (site, channel), created lazily on first
     audio for that key; a `SegmentRecorder` only exists while a message is
-    actually in progress for that key."""
+    actually in progress for that key.
+
+    `live_channel`, when given, additionally runs one `LiveSegmenter` on
+    that single (site, channel) -- continuous, VAD-cut transcription
+    capture, independent of the ZCZC/EOM detector above (design doc's
+    live-transcription addendum). Deliberately one channel, not "every
+    channel that has audio": `stt_worker`'s CPU budget (design doc §6) is
+    sized for occasional alert captures, not continuous inference on all
+    seven NWR channels at once."""
 
     def __init__(
         self,
@@ -30,6 +39,9 @@ class SegmentCaptureService:
         hard_timeout_seconds: float = DEFAULT_HARD_TIMEOUT_SECONDS,
         recorder_factory=SegmentRecorder,
         ring_reader_factory=RingBufferReader,
+        live_channel: tuple[str, str] | None = None,
+        live_segmenter_factory=LiveSegmenter,
+        live_output_dir: Path | None = None,
     ):
         self._ring_buffer_dir = ring_buffer_dir
         self._output_dir = output_dir
@@ -48,6 +60,10 @@ class SegmentCaptureService:
         self._ring_reader_factory = ring_reader_factory
         self._detectors: dict[tuple[str, str], MultimonProcess] = {}
         self._recorders: dict[tuple[str, str], SegmentRecorder] = {}
+        self._live_channel = live_channel
+        self._live_segmenter_factory = live_segmenter_factory
+        self._live_output_dir = live_output_dir or output_dir
+        self._live_segmenter: LiveSegmenter | None = None
 
     def feed(self, site: str, channel: str, pcm_bytes: bytes) -> None:
         key = (site, channel)
@@ -70,6 +86,17 @@ class SegmentCaptureService:
             recorder = self._recorders.get(key)
             if recorder is not None and recorder.timed_out():
                 self._finalize(key, timed_out=True)
+        self._poll_live()
+
+    def _poll_live(self) -> None:
+        if self._live_channel is None:
+            return
+        site, channel = self._live_channel
+        if self._live_segmenter is None:
+            ring_reader = self._ring_reader_factory(self._ring_buffer_dir / site, channel)
+            self._live_segmenter = self._live_segmenter_factory(site, channel, ring_reader, self._live_output_dir)
+        for result in self._live_segmenter.poll():
+            self._publisher.publish_live(result)
 
     def _handle_line(self, key: tuple[str, str], line: str) -> None:
         site, channel = key

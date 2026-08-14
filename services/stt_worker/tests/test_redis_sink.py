@@ -1,7 +1,7 @@
 import json
 
-from stt_worker.redis_sink import RedisStreamTranscriptSink, STREAM_NAME
-from stt_worker.service import GuardedTranscript
+from stt_worker.redis_sink import KEYWORD_STREAM_NAME, RedisStreamKeywordEventSink, RedisStreamTranscriptSink, STREAM_NAME
+from stt_worker.service import GuardedTranscript, KeywordEvent
 
 
 class FakeRedis:
@@ -40,3 +40,31 @@ def test_xadds_to_the_documented_stream():
     assert payload["text"] == "a tornado warning"
     assert payload["raw_header"] == "ZCZC-WXR-TOR-017021+0045-1000042-KILX/NWS-"
     assert payload["fips_codes"] == ["017021"]
+
+
+def _keyword_event():
+    return KeywordEvent(
+        site="home",
+        channel="WX5",
+        event_code="TOR",
+        event_name="Tornado Warning",
+        tier="A",
+        matched_phrase="tornado warning",
+        transcript_text="a tornado warning has been issued",
+        timestamp_ns=123,
+    )
+
+
+def test_keyword_event_sink_xadds_to_the_documented_stream():
+    redis = FakeRedis()
+    sink = RedisStreamKeywordEventSink(redis)
+
+    sink.record(_keyword_event())
+
+    assert len(redis.calls) == 1
+    call = redis.calls[0]
+    assert call["name"] == KEYWORD_STREAM_NAME
+    payload = json.loads(call["fields"]["payload"])
+    assert payload["event_code"] == "TOR"
+    assert payload["matched_phrase"] == "tornado warning"
+    assert payload["transcript_text"] == "a tornado warning has been issued"

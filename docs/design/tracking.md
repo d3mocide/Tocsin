@@ -28,8 +28,8 @@ completion of the phase's actual exit criteria.
 | 1 | Channelizer | Done | 2026-08-08 |
 | 2 | SAME decode end to end | Done | 2026-08-13 |
 | 3 | Live audio | Done | 2026-08-08 |
-| 4 | Segment capture + local STT | In Progress | 2026-08-08 |
-| 5 | NWS poller + fusion | In Progress | 2026-08-10 |
+| 4 | Segment capture + local STT | In Progress | 2026-08-14 |
+| 5 | NWS poller + fusion | In Progress | 2026-08-14 |
 | 6 | Dispatcher stage 1 | In Progress | 2026-08-08 |
 | 7 | Dispatcher stage 2 + remote STT | In Progress | 2026-08-10 |
 | 8 | API + web UI | In Progress | 2026-08-10 |
@@ -423,10 +423,13 @@ build-order note pointed back to.
 
 ## Phase 4 — Segment capture + local STT
 
-**Status:** In Progress (2026-08-08) -- started ahead of Phase 2's real-audio verification
-at the user's explicit direction (Phase 2's own SAME-decode-from-real-audio confirmation is
-lower priority than forward progress right now); the design doc's own dependency note below
-still holds design-wise, it's just not gating implementation order here.
+**Status:** In Progress (2026-08-08, addendum 2026-08-14) -- started ahead of Phase 2's
+real-audio verification at the user's explicit direction (Phase 2's own
+SAME-decode-from-real-audio confirmation is lower priority than forward progress right
+now); the design doc's own dependency note below still holds design-wise, it's just not
+gating implementation order here. The 2026-08-14 addendum (continuous transcription and
+keyword-triggered alerts) is implemented and unit tested; see its own dated note below for
+what's still open.
 
 **Done:**
 - `services/segment_capture`, a new uv-managed service:
@@ -539,21 +542,99 @@ criteria above still can't be met until Phase 2's own real-audio gap closes.
   volume (removed) that used to share it across two containers. `stt-worker` (still
   separate) now reaches its capture-ready ZMQ socket at `sdr-rx`'s hostname instead of its
   own. See Phase 1's notes and the Session Log entry this date.
+- **2026-08-14 (addendum -- continuous transcription and keyword-triggered alerts):** a
+  user pointed out that "live translation" as advertised only ever happened on a
+  SAME-triggered capture, and asked for two related things: a running transcript of
+  ordinary NWR narration, and alerts triggered by spoken hazard phrases that never got a
+  SAME header. Implemented as a genuine new requirement (master prompt §4/§6/§7 updated,
+  not just this doc -- see CLAUDE.md's carve-out for when the master prompt itself may
+  change):
+  - `segment_capture.live_segmenter.LiveSegmenter`: energy-based VAD chunker (silence-
+    hysteresis cut + hard max-duration cap), polling the ring buffer directly rather than
+    through `RingBufferReader`'s pre-roll machinery (a continuous capture has no detection
+    event to roll back before). One instance, for one operator-configured `(site,
+    channel)` -- see its own docstring and `service.py`'s for why not every channel.
+    `SegmentCaptureService.tick()` polls it every main-loop iteration and publishes each
+    finalized chunk via `CapturePublisher.publish_live()`, a second, minimal payload shape
+    on the same `capture.*` topic discriminated by a new `capture_kind` field
+    (`"alert"`/`"live"`).
+  - `stt_worker.service.TranscriptionWorker.handle_capture`: branches on `capture_kind`.
+    A `"live"` capture skips the Tier A/remote race entirely (local-only, always -- dropped
+    outright rather than sent over the network if no local provider is configured, since
+    continuous transcription must work fully offgrid), and a guarded transcript's
+    event_code/tier default to `LIVE`/`C` (`LIVE_EVENT_CODE`/`LIVE_TIER`) so it renders
+    sensibly and, not incidentally, so dispatcher's existing Tier A gate already excludes
+    it from stage 2 with no dispatcher changes needed.
+  - `stt_worker.keyword_match.KeywordMatcher`: loads the new checked-in
+    `data/keyword_triggers.yaml` (spoken phrase -> SAME event code) plus the existing
+    `data/same_event_codes.yaml` (for name/tier), same per-service loader pattern as every
+    other `TierTable`/`EventMapping`. Word-boundary, case-insensitive, longest-phrase-wins.
+    Only run against a `"live"` transcript that already passed the hallucination guard --
+    a transcript reaching keyword matching that shouldn't have is a worse version of the
+    exact failure mode the guard exists to prevent.
+  - `fusion`: new `AlertState.TRANSCRIPT_ONLY`, `KeywordEventIn`/`TranscriptSource`
+    (field named `keyword_event`, not `event` -- see `models.py`'s comment on why:
+    `web/src/types.ts`'s `AlertSource.event` is already `SameEvent`-shaped), mode-relative
+    confidence well below `RF_ONLY`'s in both modes (`confidence.py`), and
+    `store.ingest_keyword()` -- deliberately never attempts CAP correlation (freeform
+    speech carries no FIPS to correlate on), so a keyword hit always resolves to its own
+    alert, never `CONFIRMED`. `redis_bus.py` gained a third consumed stream,
+    `tocsin:keyword_events`, alongside the existing two.
+  - `dispatcher`: no code changes at all -- verified instead. A `TRANSCRIPT_ONLY` alert's
+    only source has `kind == "TRANSCRIPT"`, so `parse_rf_source` already returns `None`
+    and stage 1 never fires (new regression test,
+    `test_models.py::test_transcript_only_payload_has_no_rf_source`); the live transcript's
+    Tier C already fails stage 2's Tier A gate (new regression test,
+    `test_stage2_dispatcher.py::test_live_transcript_tier_c_never_calls_litellm_or_dispatches`).
+    This is exactly the design doc's "an unguarded transcript reaching the mesh is the
+    worst failure chain" guarantee, holding by construction rather than by a new guard.
+  - `api`: also no code changes -- `db.py`/`app.py` already treat `Alert.state` and
+    `AlertSource.kind` as opaque strings throughout (grouped SQL, generic JSON passthrough),
+    so a new state/kind reaches Postgres, `/stats`, `/alerts`, and the SSE feed for free.
+    `/stats`'s `divergence_rate` stays exactly RF_ONLY/API_ONLY as before -- verified this
+    wasn't accidentally widened.
+  - `web`: `types.ts` gained `TRANSCRIPT_ONLY`/`KeywordEvent`/`kind: "TRANSCRIPT"`;
+    `format.ts` gained `transcriptSource()`/`siteOf()` and `tierOf()` now checks the
+    keyword match's own tier; `alerts.ts` gained a `transcriptSourcePanel` (the matched
+    phrase and source sentence are already embedded on the alert, not a separate fetch)
+    and fixed a latent "Loading detail…forever" for any alert with no RF source (API_ONLY
+    included) by resolving `loadDetail` immediately when there's no `raw_header` to fetch
+    against. New CSS token `--transcript-only`; `.stats-subgrid` changed from a fixed
+    4-column grid to `auto-fit` so the new optional stats tile (shown only once a
+    deployment has actually recorded one) doesn't leave a lopsided row.
+  - `data/keyword_triggers.yaml`: new checked-in table, phrase -> SAME event code for
+    every Tier A/B hazard code, deliberately excluding administrative/test codes (nothing
+    in a keyword-matched sentence would ever usefully trigger those).
+  - Config: `LIVE_TRANSCRIPTION_ENABLED`/`_SITE`/`_CHANNEL` (`.env.example`,
+    `compose.yaml`'s `sdr-rx` service, off by default); `stt-worker`'s compose block
+    gained `TOCSIN_DATA_DIR`/the `./data` mount, which it never needed before this.
+  - Full test suites green in all four touched Python services (segment_capture 57,
+    stt_worker 71, fusion 53, dispatcher 115) plus `tsc --noEmit` and `vite build` clean
+    for `web`.
+  - **Not done, deliberately out of scope this pass:** real-hardware verification (same
+    "no real RF decoded in this repo's history yet" gap every phase since 2 carries); the
+    RMS threshold is uncalibrated (master prompt §12); Tier B's general MQTT publish path
+    doesn't exist yet, so a `TRANSCRIPT_ONLY` alert is UI-only, not also MQTT-published, in
+    this pass -- also now a named master prompt §12 open item, not a gap specific to this
+    feature.
 
 ---
 
 ## Phase 5 — NWS poller + fusion
 
-**Status:** In Progress (2026-08-08) -- at the user's explicit direction, built ahead of
-Phase 2's real-audio confirmation to get the whole stack to an end-to-end MVP faster, same
-build-order exception as Phase 4. Unlike Phases 2-4, this phase's actual exit criteria
-(roadmap.md: "correlation logic verified against recorded fixtures... covering true
-matches, near-misses..., and each unmatched state") don't need real hardware or a running
-Redis at all -- so unlike those phases, this one **is** fully verified against its stated
-exit criteria already, not just unit tested ahead of hardware proof. What's still open is
-integration with the real, running system (live Redis, live `same-decoder`/`nws-poller`
-output, a real `api.weather.gov` response), which does depend on Phase 2's still-open
-real-audio gap for the RF side.
+**Status:** In Progress (2026-08-08, addendum 2026-08-14) -- at the user's explicit
+direction, built ahead of Phase 2's real-audio confirmation to get the whole stack to an
+end-to-end MVP faster, same build-order exception as Phase 4. Unlike Phases 2-4, this
+phase's actual exit criteria (roadmap.md: "correlation logic verified against recorded
+fixtures... covering true matches, near-misses..., and each unmatched state") don't need
+real hardware or a running Redis at all -- so unlike those phases, this one **is** fully
+verified against its stated exit criteria already, not just unit tested ahead of hardware
+proof. What's still open is integration with the real, running system (live Redis, live
+`same-decoder`/`nws-poller` output, a real `api.weather.gov` response), which does depend
+on Phase 2's still-open real-audio gap for the RF side. The 2026-08-14 addendum added a
+fourth `AlertState`, `TRANSCRIPT_ONLY`, and a third consumed Redis stream,
+`tocsin:keyword_events` -- see Phase 4's own dated note for the full cross-service
+change.
 
 **Done:**
 - `services/nws_poller`, a new uv-managed service:
@@ -2492,3 +2573,22 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   `db.prune_expired_alerts` pair — `alert_expiry` is a Python port of `web/src/format.ts`'s
   `expiresAt`, kept unit-testable without a real Postgres rather than pushed into a JSONB SQL
   expression. 8 new tests, 128 api tests pass (up from 120).
+- **2026-08-14 (continuous transcription + keyword-triggered alerts)** — A user asked why
+  "live translation" only ever happened on a SAME-triggered capture, and asked for (1) a
+  running transcript of ordinary NWR narration and (2) alerts for hazards spoken without a
+  SAME header. Implemented end to end across five services plus the design docs; see Phase
+  4's dated note above for the full per-service breakdown. Two product decisions made with
+  the user up front, both load-bearing on the design: keyword hits stay UI-only, never mesh
+  (an unguarded, fuzzily keyword-matched transcript reaching the mesh is the design doc's
+  own named worst failure chain, one layer removed), and continuous transcription covers
+  exactly one operator-configured channel, not all seven (the Pi CPU budget in master
+  prompt §6 assumes occasional inference, not continuous). New `AlertState.TRANSCRIPT_ONLY`
+  turned out to need no `dispatcher` or `api` code changes at all — both already generalize
+  correctly over `Alert.state`/`AlertSource.kind` as opaque strings, which is worth noting
+  as a case where the existing architecture's provenance-preserving `sources[]` design paid
+  for itself directly. Master prompt gained a real new subsection (§4/§6/§7 touched, plus
+  §5's canonical-model table and §12's open items) — a deliberate exception to "don't edit
+  the master prompt for implementation decisions," since this is a genuine new requirement,
+  per CLAUDE.md's own carve-out for exactly that case. All touched suites green:
+  segment_capture 57, stt_worker 71, fusion 53, dispatcher 115, plus `web`'s `tsc --noEmit`
+  and `vite build`.
