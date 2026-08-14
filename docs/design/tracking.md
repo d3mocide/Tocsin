@@ -2592,3 +2592,22 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   per CLAUDE.md's own carve-out for exactly that case. All touched suites green:
   segment_capture 57, stt_worker 71, fusion 53, dispatcher 115, plus `web`'s `tsc --noEmit`
   and `vite build`.
+- **2026-08-14 (live-transcription crash-loop fix)** — Merged, then a real deployment hit
+  `FileNotFoundError: .../WX7.meta.json` immediately: `LIVE_TRANSCRIPTION_SITE` had been set
+  to the dongle's serial number rather than the site *name* from `SDR_RX_DEVICES=site:serial`
+  (e.g. `home`), so `segment_capture`'s live path tried to read a ring buffer directory that
+  was never created, and the whole `segment-capture` process crash-looped every 5s. The user
+  error was real, but the severity was a genuine bug: `_poll_live()` had no error handling at
+  all, so a bad live-transcription config took down the *entire* process -- including the
+  core ZCZC/EOM alert-capture path this same process runs, which must never depend on an
+  optional, off-by-default addendum working correctly. Fixed in `service.py`: a
+  `LiveSegmenter.poll()` failure (missing/unreadable ring buffer -- a real startup race with
+  sdr-rx, or a lasting misconfiguration) is now caught, logged once with an actionable hint
+  ("is LIVE_TRANSCRIPTION_SITE the site name from SDR_RX_DEVICES, not a serial number?"),
+  and retried on the next `tick()` rather than propagated. Self-heals if the ring buffer
+  later appears (a real race); degrades to a quiet, indefinitely-retried no-op if the
+  config is simply wrong (the config itself isn't validated at startup -- worth a future
+  improvement, not done here). Strengthened `.env.example`'s and the README's own comments
+  on `LIVE_TRANSCRIPTION_SITE` to say this explicitly. Two new regression tests
+  (`test_service.py`) reproduce the exact failure and pin both the one-time-warning and
+  the never-crashes-`tick()` guarantees; 59 segment_capture tests pass (up from 57).

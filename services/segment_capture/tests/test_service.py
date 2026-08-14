@@ -201,6 +201,84 @@ def test_tick_without_live_channel_never_touches_live_segmenter(tmp_path):
     service.close()
 
 
+class _FakeLiveSegmenterThatFailsThenRecovers:
+    """Reproduces the real bug: the ring buffer for the configured (site,
+    channel) isn't readable yet (sdr-rx hasn't created it -- a startup
+    race -- or LIVE_TRANSCRIPTION_SITE/_CHANNEL is misconfigured), which
+    is exactly what `RingBufferReader.start()` raises `FileNotFoundError`
+    for against a real ring buffer directory."""
+
+    instances = []
+
+    def __init__(self, site, channel, ring_reader, output_dir):
+        self.site = site
+        self.channel = channel
+        self.poll_calls = 0
+        type(self).instances.append(self)
+
+    def poll(self):
+        self.poll_calls += 1
+        if self.poll_calls <= 2:
+            raise FileNotFoundError(f"[Errno 2] No such file or directory: '{self.channel}.meta.json'")
+        return [f"result-{self.poll_calls}"]
+
+
+def test_tick_survives_a_live_segmenter_poll_failure_and_keeps_retrying(tmp_path, capsys):
+    _FakeLiveSegmenterThatFailsThenRecovers.instances = []
+    publisher = FakePublisher()
+    publisher.live_results = []
+    publisher.publish_live = lambda result: publisher.live_results.append(result)
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=publisher,
+        live_channel=("home", "WX7"),
+        live_segmenter_factory=_FakeLiveSegmenterThatFailsThenRecovers,
+        ring_reader_factory=FakeRingReader,
+    )
+
+    # Two ticks fail (the "not created yet" race) -- must not raise, and
+    # must not take the rest of the service down.
+    service.tick()
+    service.tick()
+    assert publisher.live_results == []
+
+    # A third tick, once the ring buffer exists, succeeds normally.
+    service.tick()
+    assert publisher.live_results == ["result-3"]
+
+    err = capsys.readouterr().err
+    assert err.count("segment-capture: live transcription can't read the ring buffer") == 1  # warned once, not per tick
+    assert "LIVE_TRANSCRIPTION_SITE" in err
+    service.close()
+
+
+def test_persistent_live_segmenter_failure_never_crashes_tick(tmp_path):
+    """The misconfiguration case (wrong site name, never recovers) --
+    `tick()` must stay callable indefinitely, since it also drives the
+    core ZCZC/EOM alert-capture timeout check (see its own docstring)."""
+
+    class _AlwaysFails:
+        def __init__(self, site, channel, ring_reader, output_dir):
+            pass
+
+        def poll(self):
+            raise FileNotFoundError("permanently missing")
+
+    publisher = FakePublisher()
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=publisher,
+        live_channel=("home", "WX7"),
+        live_segmenter_factory=_AlwaysFails,
+        ring_reader_factory=FakeRingReader,
+    )
+    for _ in range(10):
+        service.tick()  # must never raise
+    service.close()
+
+
 def test_different_channels_get_independent_captures(tmp_path):
     publisher = FakePublisher()
     service = SegmentCaptureService(

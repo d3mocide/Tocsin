@@ -82,7 +82,7 @@ authoring sandbox, so the full path isn't exercised end to end here -- see
 | `SEGMENT_CAPTURE_HARD_TIMEOUT_SECONDS` | `300` | Force-finalize a capture that never sees an EOM (design doc §4). |
 | `SEGMENT_CAPTURE_REDIS_URL` | *(unset)* | Optional, heartbeat only. When set, publishes liveness to `tocsin:status:segment_capture` for `api`'s `GET /services`. Captures still go out over ZMQ, never through Redis. |
 | `LIVE_TRANSCRIPTION_ENABLED` | `false` | Enables the continuous VAD capture path (see "Live transcription addendum" above). |
-| `LIVE_TRANSCRIPTION_SITE` / `LIVE_TRANSCRIPTION_CHANNEL` | *(unset)* | The single `(site, channel)` to transcribe continuously. Both required if enabled -- logs a warning and stays disabled otherwise. |
+| `LIVE_TRANSCRIPTION_SITE` / `LIVE_TRANSCRIPTION_CHANNEL` | *(unset)* | The single `(site, channel)` to transcribe continuously. Both required if enabled -- logs a warning and stays disabled otherwise. `SITE` is the site *name* from `SDR_RX_DEVICES=site:serial` (e.g. `home`), never the dongle serial number -- a mismatch can't find that site's ring buffer, logs `segment-capture: live transcription can't read the ring buffer for <site>/<channel>...` once, and keeps retrying rather than crashing (this process also runs the core SAME-alert capture path, which must never go down over a live-transcription misconfiguration). |
 
 ## Development
 
