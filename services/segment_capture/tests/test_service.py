@@ -253,6 +253,59 @@ def test_tick_survives_a_live_segmenter_poll_failure_and_keeps_retrying(tmp_path
     service.close()
 
 
+def test_live_failure_message_names_the_sites_that_do_exist(tmp_path):
+    """The real deployment's message said only "can't read the ring buffer
+    for PDX:49435794/WX7", which still left the operator guessing. Naming
+    what sdr-rx actually created makes the mismatch obvious on sight."""
+
+    class _AlwaysFails:
+        def __init__(self, site, channel, ring_reader, output_dir):
+            pass
+
+        def poll(self):
+            raise FileNotFoundError("[Errno 2] No such file or directory")
+
+    (tmp_path / "PDX").mkdir()
+    (tmp_path / "PDX" / "WX7.meta.json").write_text("{}")
+    (tmp_path / "PDX" / "WX1.meta.json").write_text("{}")
+
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        live_channel=("PDX:49435794", "WX7"),  # the exact bad value from the report
+        live_segmenter_factory=_AlwaysFails,
+        ring_reader_factory=FakeRingReader,
+    )
+    service.tick()
+    message = service._describe_ring_buffers()
+    assert "PDX (WX1, WX7)" == message
+    service.close()
+
+
+def test_ring_buffer_description_survives_a_missing_directory(tmp_path):
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path / "does-not-exist",
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        ring_reader_factory=FakeRingReader,
+    )
+    # Must not raise -- this only ever runs while reporting another failure.
+    assert "unreadable" in service._describe_ring_buffers()
+    service.close()
+
+
+def test_ring_buffer_description_when_sdr_rx_has_not_started(tmp_path):
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        ring_reader_factory=FakeRingReader,
+    )
+    assert "no sites yet" in service._describe_ring_buffers()
+    service.close()
+
+
 def test_persistent_live_segmenter_failure_never_crashes_tick(tmp_path):
     """The misconfiguration case (wrong site name, never recovers) --
     `tick()` must stay callable indefinitely, since it also drives the

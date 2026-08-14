@@ -36,6 +36,17 @@ DEFAULT_HARD_TIMEOUT_SECONDS = 300.0
 _FALSEY = {"false", "0", "no", "off"}
 
 
+def normalize_site(raw: str) -> str:
+    """`SDR_RX_DEVICES` entries are `site:serial` (`sdr_rx.capture.
+    parse_device_config`), and the ring buffer directory is named for the
+    *site* half alone. Copying a whole entry into `LIVE_TRANSCRIPTION_SITE`
+    is the obvious mistake to make and produced nothing but a
+    `FileNotFoundError` on a directory that never existed, so accept that
+    form and take the site from it. Split on the first colon, matching how
+    `parse_device_config` itself splits."""
+    return raw.split(":", 1)[0].strip()
+
+
 def _live_channel() -> tuple[str, str] | None:
     """`LIVE_TRANSCRIPTION_ENABLED` gates continuous transcription
     entirely (default off -- it's extra CPU load `stt_worker`'s Pi budget,
@@ -44,8 +55,9 @@ def _live_channel() -> tuple[str, str] | None:
     audio" -- see `service.SegmentCaptureService`'s own docstring for why."""
     if os.environ.get("LIVE_TRANSCRIPTION_ENABLED", "false").strip().lower() in _FALSEY:
         return None
-    site = os.environ.get("LIVE_TRANSCRIPTION_SITE", "").strip()
-    channel = os.environ.get("LIVE_TRANSCRIPTION_CHANNEL", "").strip()
+    raw_site = os.environ.get("LIVE_TRANSCRIPTION_SITE", "").strip()
+    channel = os.environ.get("LIVE_TRANSCRIPTION_CHANNEL", "").strip().upper()
+    site = normalize_site(raw_site)
     if not site or not channel:
         print(
             "segment-capture: LIVE_TRANSCRIPTION_ENABLED=true requires both "
@@ -54,6 +66,12 @@ def _live_channel() -> tuple[str, str] | None:
             file=sys.stderr,
         )
         return None
+    if site != raw_site:
+        print(
+            f"segment-capture: LIVE_TRANSCRIPTION_SITE={raw_site!r} looks like a whole "
+            f"SDR_RX_DEVICES entry -- using the site name {site!r} from it.",
+            file=sys.stderr,
+        )
     return site, channel
 
 
