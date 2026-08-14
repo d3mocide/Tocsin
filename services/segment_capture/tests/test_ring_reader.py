@@ -122,3 +122,38 @@ def test_read_new_returns_nothing_when_no_new_samples(tmp_path):
     new_samples, overrun = reader.read_new()
     assert len(new_samples) == 0
     assert overrun is False
+
+
+def test_meta_read_retries_a_torn_sidecar_then_succeeds(tmp_path, monkeypatch):
+    """Defense in depth for a mid-upgrade mismatch: an *older* sdr-rx still
+    writes the sidecar in place (truncate-then-write), leaving a zero-byte
+    window. A capture in progress must not die on that."""
+    writer = _FakeRingBufferWriter(tmp_path, "WX5", capacity=10)
+    writer.write(np.arange(5, dtype=np.float32))
+    reader = RingBufferReader(tmp_path, "WX5")
+
+    meta_path = tmp_path / "WX5.meta.json"
+    real_text = meta_path.read_text()
+    reads = iter(["", "", real_text])
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: next(reads))
+
+    assert reader._read_meta()["total_written"] == 5
+
+
+def test_meta_read_gives_up_after_repeated_torn_reads(tmp_path, monkeypatch):
+    writer = _FakeRingBufferWriter(tmp_path, "WX5", capacity=10)
+    writer.write(np.arange(5, dtype=np.float32))
+    reader = RingBufferReader(tmp_path, "WX5")
+
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: "")
+    with pytest.raises(json.JSONDecodeError):
+        reader._read_meta()
+
+
+def test_missing_meta_file_still_raises_immediately(tmp_path):
+    """A missing file means the ring buffer doesn't exist -- a startup or
+    configuration condition the caller must see, not a transient torn read
+    worth retrying."""
+    reader = RingBufferReader(tmp_path, "NOPE")
+    with pytest.raises(FileNotFoundError):
+        reader._read_meta()

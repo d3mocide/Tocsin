@@ -2630,3 +2630,35 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   at startup and refusing to start on a mismatch -- `segment_capture` doesn't read that
   variable today, and a hard failure would reintroduce exactly the "optional addendum takes
   down the core capture path" coupling the fix above removed.
+- **2026-08-14 (the actual bug: non-atomic ring-buffer meta writes):** the two entries above
+  both misdiagnosed this. The user had already tested the *correct* site name (`PDX`) and
+  got a different error the whole time -- `JSONDecodeError('Expecting value: line 1 column 1
+  (char 0)')`, repeating forever -- which the config-focused error message actively
+  obscured by asking "is LIVE_TRANSCRIPTION_SITE the site name?" for a setting that was
+  right. Root cause is in `sdr_rx.ring_buffer.ChannelRingBuffer._write_meta`, not in the
+  live-transcription code at all: it used `Path.write_text`, which **truncates to zero bytes
+  before rewriting**, and it runs on *every* `write()` -- continuously, per channel, at audio
+  chunk rate. Any reader opening the sidecar inside that window reads `""`. This was a
+  latent bug from Phase 1, invisible until now only because `SegmentRecorder` reads the ring
+  buffer solely during an active SAME capture (minutes apart, so it essentially never landed
+  in the window); the live segmenter reads it every tick and landed in it constantly.
+  Fixes, in the order that matters:
+  - `sdr_rx/ring_buffer.py`: `_write_meta` now writes a per-channel temp file and
+    `os.replace`s it into position. `os.replace` is atomic on POSIX, so a reader sees either
+    the previous document or the new one, never a torn one. Regression test spins a reader
+    thread against a live writer and asserts zero torn reads -- confirmed to *fail* on the
+    old implementation with 512 torn reads carrying the exact reported message, which is the
+    only way to know the test is worth anything.
+  - `segment_capture/ring_reader.py`: bounded retry (3 attempts, 10ms) on a torn read, as
+    defense in depth for a mid-upgrade version mismatch where an older `sdr-rx` process is
+    still writing in place. A missing file still raises immediately -- that's a real
+    startup/config condition the caller must see, not a transient.
+  - `segment_capture/service.py`: the failure message no longer blames
+    `LIVE_TRANSCRIPTION_SITE` for anything but an actual `FileNotFoundError`. Any other
+    failure now says explicitly that the ring buffer exists and this is *not* a config
+    problem -- the misdirection above cost a debugging round trip and shouldn't be able to
+    again.
+  Verified end to end with a real `ChannelRingBuffer` written continuously from a thread
+  while the live segmenter polled it: 1057 ticks, zero exceptions, 38 chunks captured.
+  segment_capture 77 tests, sdr_rx 134 tests. **Requires rebuilding the `sdr-rx` image** --
+  the fix is in code that ships inside it.

@@ -81,3 +81,47 @@ def test_separate_channels_use_separate_files(tmp_path):
     rb2.write(np.zeros(5, dtype=np.float32))
     np.testing.assert_allclose(rb1.read_last(5), np.ones(5))
     np.testing.assert_allclose(rb2.read_last(5), np.zeros(5))
+
+
+def test_meta_write_is_atomic_never_leaving_a_zero_byte_window(tmp_path):
+    """`Path.write_text` truncates before rewriting, so a reader polling
+    the sidecar continuously (segment_capture's live segmenter does) caught
+    it empty and died on `json.loads` -- the JSONDecodeError from a real
+    deployment (docs/design/tracking.md, 2026-08-14). A concurrent reader
+    must only ever observe a complete document.
+    """
+    import threading
+
+    rb = ChannelRingBuffer(tmp_path, "WX7", sample_rate_hz=100, window_seconds=1)
+    meta_path = tmp_path / "WX7.meta.json"
+    torn_reads: list[str] = []
+    stop = threading.Event()
+
+    def reader():
+        while not stop.is_set():
+            try:
+                json.loads(meta_path.read_text())
+            except json.JSONDecodeError as exc:
+                torn_reads.append(str(exc))
+            except FileNotFoundError:
+                torn_reads.append("meta file vanished")
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    try:
+        for _ in range(300):
+            rb.write(np.ones(5, dtype=np.float32))
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+
+    assert torn_reads == []
+
+
+def test_meta_write_leaves_no_temp_file_behind(tmp_path):
+    rb = ChannelRingBuffer(tmp_path, "WX7", sample_rate_hz=100, window_seconds=1)
+    rb.write(np.ones(5, dtype=np.float32))
+    assert list(tmp_path.glob("*.tmp")) == []
+    # The reader globs `*.meta.json` to enumerate channels; a stray temp
+    # file must never look like one.
+    assert [p.name for p in tmp_path.glob("*.meta.json")] == ["WX7.meta.json"]

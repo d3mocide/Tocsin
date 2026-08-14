@@ -113,11 +113,25 @@ class SegmentCaptureService:
             # self-diagnosing -- naming the sites that *do* exist turns a
             # guess ("is it the serial?") into a direct comparison.
             if not self._live_warned:
+                # Only a *missing* ring buffer implicates the configured
+                # site/channel. Any other failure (e.g. a torn read of the
+                # meta sidecar) means the ring buffer is there and being
+                # read -- pointing at LIVE_TRANSCRIPTION_SITE then sends
+                # the operator to debug a setting that was correct all
+                # along, which is exactly what this message did on its
+                # first real deployment (docs/design/tracking.md,
+                # 2026-08-14).
+                if isinstance(exc, FileNotFoundError):
+                    hint = (
+                        f" No ring buffer for that site/channel. Available now: "
+                        f"{self._describe_ring_buffers()}. LIVE_TRANSCRIPTION_SITE must be the "
+                        "site name from SDR_RX_DEVICES ('site:serial' -> 'site')."
+                    )
+                else:
+                    hint = " The ring buffer exists, so this is not a LIVE_TRANSCRIPTION_SITE/_CHANNEL problem."
                 print(
                     f"segment-capture: live transcription can't read the ring buffer for "
-                    f"{site}/{channel} ({exc!r}). Available now: {self._describe_ring_buffers()}. "
-                    "LIVE_TRANSCRIPTION_SITE must be the site name from SDR_RX_DEVICES "
-                    "('site:serial' -> 'site'). Will keep retrying.",
+                    f"{site}/{channel} ({exc!r}).{hint} Will keep retrying.",
                     file=sys.stderr,
                 )
                 self._live_warned = True

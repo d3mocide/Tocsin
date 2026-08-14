@@ -21,11 +21,22 @@ no live audio is silently overwritten before it's been read.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import numpy as np
 
 RING_BUFFER_SAMPLE_RATE_HZ = 50_000  # sdr_rx.resample.BIN_RATE_HZ
+
+# Retries for a torn read of the meta sidecar. `sdr_rx.ring_buffer` writes
+# it atomically (temp file + os.replace), so in a matched pair of versions
+# this never retries at all -- it's here because the writer is a separate
+# process that can legitimately be an *older* build mid-upgrade, where the
+# in-place `write_text` leaves a zero-byte window this reader would
+# otherwise raise a JSONDecodeError out of. A capture in progress must not
+# die on that (docs/design/tracking.md, 2026-08-14).
+_META_READ_ATTEMPTS = 3
+_META_RETRY_SLEEP_SECONDS = 0.01
 
 
 class RingBufferReader:
@@ -37,7 +48,19 @@ class RingBufferReader:
         self._last_seen_total_written: int | None = None
 
     def _read_meta(self) -> dict:
-        return json.loads(self._meta_path.read_text())
+        """A missing file still raises `FileNotFoundError` immediately --
+        that means "this channel's ring buffer doesn't exist," a
+        configuration/startup condition the caller must see, not a
+        transient one worth retrying."""
+        for attempt in range(_META_READ_ATTEMPTS):
+            raw = self._meta_path.read_text()
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                if attempt == _META_READ_ATTEMPTS - 1:
+                    raise
+                time.sleep(_META_RETRY_SLEEP_SECONDS)
+        raise AssertionError("unreachable")  # loop either returns or raises
 
     def _mmap_for(self, capacity: int) -> np.memmap:
         if self._mmap is None or self._mmap_capacity != capacity:
