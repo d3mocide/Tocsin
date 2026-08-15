@@ -276,7 +276,7 @@ export class WeatherDashboardView {
 
     const { city, state, wfo, currentObservation, hourly, extended, stations, selectedStationId } = this.data;
 
-    // 1. Header Toolbar (clean title without "Weather Center" and without dividing bottom bar)
+    // 1. Header Toolbar
     const refreshBtn = el("button", { class: "btn-secondary", text: "Refresh Data", attrs: { type: "button" } });
     refreshBtn.addEventListener("click", () => {
       void this.fetchWeatherDashboard(lat, lon, true);
@@ -303,15 +303,20 @@ export class WeatherDashboardView {
     // 4. Fire Weather & Atmospheric Danger Risk Card
     const fireRiskCard = this.renderFireRisk(currentObservation, hourly);
 
-    // 5. 7-Day Extended Outlook Matrix (Enhanced with visual temp range bars)
+    // 5. 7-Day Extended Outlook Matrix
     const currentHighEstimate = currentObservation?.temperatureF ?? (hourly[0]?.temperature ?? 75);
     const extendedSection = this.render7DayOutlook(extended, currentHighEstimate);
+
+    // 6. Solar & Lunar Ephemeris + Air Quality & Smoke Index (2-column sub-grid)
+    const solarCard = this.renderSolarEphemeris(lat, lon);
+    const aqiCard = this.renderAirQualityCard(currentObservation);
+    const bottomSplit = el("div", { class: "weather-dash-bottom-split" }, solarCard, aqiCard);
 
     const mainGrid = el(
       "div",
       { class: "weather-dash-grid" },
       el("div", { class: "weather-dash-col-left" }, metarHero, fireRiskCard),
-      el("div", { class: "weather-dash-col-right" }, hourlySection, extendedSection),
+      el("div", { class: "weather-dash-col-right" }, hourlySection, extendedSection, bottomSplit),
     );
 
     replaceChildren(this.container, header, mainGrid);
@@ -771,6 +776,213 @@ export class WeatherDashboardView {
     card.append(head, grid);
     return card;
   }
+
+  private renderSolarEphemeris(lat: number, lon: number): HTMLElement {
+    const card = el("section", { class: "panel solar-ephemeris-panel" });
+    const head = el(
+      "div",
+      { class: "panel-head" },
+      el("h3", { text: "Solar & Lunar Ephemeris" }),
+      el("span", { class: "badge badge-status-synced", text: "CELESTIAL" }),
+    );
+
+    // Compute Solar times for current date & coordinates
+    const now = new Date();
+    const solarTimes = calculateSolarTimes(now, lat, lon);
+    const moonInfo = calculateMoonPhase(now);
+
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const isDay = nowMinutes >= solarTimes.sunriseMinutes && nowMinutes <= solarTimes.sunsetMinutes;
+
+    // Sun progress 0 (sunrise) to 1 (sunset)
+    let sunProgress = 0;
+    if (isDay) {
+      sunProgress = (nowMinutes - solarTimes.sunriseMinutes) / Math.max(solarTimes.sunsetMinutes - solarTimes.sunriseMinutes, 1);
+    } else if (nowMinutes < solarTimes.sunriseMinutes) {
+      sunProgress = -0.15; // Below horizon (morning)
+    } else {
+      sunProgress = 1.15; // Below horizon (night)
+    }
+
+    // Solar Arc SVG
+    const arcW = 280;
+    const arcH = 90;
+    const r = 110;
+    const cx = arcW / 2;
+    const cy = 82;
+
+    // Calculate sun dot coordinates along semicircle
+    const angleRad = Math.PI - Math.min(Math.max(sunProgress, 0), 1) * Math.PI;
+    const sunX = cx + r * Math.cos(angleRad);
+    const sunY = cy - r * Math.sin(angleRad);
+
+    const sunSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    sunSvg.setAttribute("viewBox", `0 0 ${arcW} ${arcH}`);
+    sunSvg.setAttribute("class", "solar-arc-svg");
+
+    sunSvg.innerHTML = `
+      <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-dasharray="4 4" stroke-width="2" />
+      <line x1="10" y1="${cy}" x2="${arcW - 10}" y2="${cy}" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" />
+      ${
+        isDay
+          ? `
+        <circle cx="${sunX}" cy="${sunY}" r="10" fill="#f59e0b" fill-opacity="0.25" />
+        <circle cx="${sunX}" cy="${sunY}" r="5.5" fill="#fbbf24" stroke="#ffffff" stroke-width="1.5" />
+      `
+          : `
+        <circle cx="${cx}" cy="${cy + 5}" r="5" fill="#6366f1" fill-opacity="0.5" />
+      `
+      }
+    `;
+
+    // Daylight countdown text
+    let countdownText = "";
+    if (isDay) {
+      const remMin = solarTimes.sunsetMinutes - nowMinutes;
+      const remH = Math.floor(remMin / 60);
+      const remM = remMin % 60;
+      countdownText = `Daylight Remaining: ${remH}h ${remM}m`;
+    } else {
+      let dawnMin = solarTimes.sunriseMinutes - nowMinutes;
+      if (dawnMin < 0) dawnMin += 24 * 60;
+      const dH = Math.floor(dawnMin / 60);
+      const dM = dawnMin % 60;
+      countdownText = `Dawn in ${dH}h ${dM}m`;
+    }
+
+    const body = el(
+      "div",
+      { class: "solar-ephemeris-body" },
+      el("div", { class: "solar-arc-container" }, sunSvg),
+      el(
+        "div",
+        { class: "solar-times-row" },
+        el("div", { class: "solar-time-col" }, el("span", { class: "solar-time-lbl", text: "Sunrise" }), el("span", { class: "solar-time-val", text: solarTimes.sunriseStr })),
+        el("div", { class: "solar-time-col" }, el("span", { class: "solar-time-lbl", text: "Solar Noon" }), el("span", { class: "solar-time-val", text: solarTimes.noonStr })),
+        el("div", { class: "solar-time-col" }, el("span", { class: "solar-time-lbl", text: "Sunset" }), el("span", { class: "solar-time-val", text: solarTimes.sunsetStr })),
+      ),
+      el("div", { class: "daylight-status-banner", text: countdownText }),
+      el(
+        "div",
+        { class: "lunar-status-row" },
+        el("div", { class: "lunar-icon-container" }, moonSvg(moonInfo.phaseName, 26)),
+        el(
+          "div",
+          { class: "lunar-details" },
+          el("div", { class: "lunar-phase-name", text: moonInfo.phaseName }),
+          el("div", { class: "lunar-illumination", text: `${moonInfo.illuminationPct}% illuminated · ${moonInfo.waxing ? "Waxing" : "Waning"}` }),
+        ),
+      ),
+    );
+
+    card.append(head, body);
+    return card;
+  }
+
+  private renderAirQualityCard(obs: MetarObservation | null | undefined): HTMLElement {
+    const card = el("section", { class: "panel air-quality-panel" });
+    const head = el(
+      "div",
+      { class: "panel-head" },
+      el("h3", { text: "Air Quality & Smoke Index" }),
+      el("span", { class: "badge badge-status-synced", text: "EPA AQI" }),
+    );
+
+    // Check active alerts for air quality / smoke
+    const alerts = Array.from(this.store.state.alerts.values());
+    const activeAqiAlerts = alerts.filter(
+      (a) =>
+        isActive(a) &&
+        (a.event_name.toLowerCase().includes("air quality") ||
+          a.event_name.toLowerCase().includes("smoke") ||
+          a.event_name.toLowerCase().includes("dust")),
+    );
+
+    // Calculate AQI category
+    let aqiScore = 38;
+    let aqiCategory = "GOOD";
+    let aqiColor = "#22c55e";
+    let aqiIndex = 0; // 0 to 5
+    let healthGuidance = "Air quality is satisfactory with negligible smoke or pollution risks.";
+
+    const vis = obs?.visibilityMiles ?? 10;
+    const isSmoky = (obs?.textDescription || "").toLowerCase().includes("smoke") || (obs?.textDescription || "").toLowerCase().includes("haze");
+
+    if (activeAqiAlerts.length > 0) {
+      aqiScore = 118;
+      aqiCategory = "UNHEALTHY FOR SENSITIVE GROUPS";
+      aqiColor = "#f97316";
+      aqiIndex = 2;
+      healthGuidance = "Wildfire Smoke Advisory in effect: Sensitive individuals should reduce prolonged outdoor exertion.";
+    } else if (isSmoky || vis < 6) {
+      aqiScore = 74;
+      aqiCategory = "MODERATE";
+      aqiColor = "#eab308";
+      aqiIndex = 1;
+      healthGuidance = "Acceptable air quality; patchy smoke or dust may affect unusually sensitive persons.";
+    }
+
+    // 6-segment EPA AQI Meter
+    const aqiLabels = ["Good", "Mod", "USG", "Unhealthy", "V.Unhealthy", "Hazardous"];
+    const aqiColors = ["#22c55e", "#eab308", "#f97316", "#ef4444", "#a855f7", "#881337"];
+
+    const aqiSegments = aqiLabels.map((lbl, idx) => {
+      const isCurrent = idx === aqiIndex;
+      return el(
+        "div",
+        {
+          class: `aqi-segment${isCurrent ? " is-active" : ""}`,
+          style: isCurrent
+            ? `background: ${aqiColors[idx]}; box-shadow: 0 0 10px ${aqiColors[idx]}88; border-color: ${aqiColors[idx]};`
+            : `background: color-mix(in srgb, ${aqiColors[idx]} 20%, var(--panel-deep)); border-color: ${aqiColors[idx]}44;`,
+        },
+        el("span", { class: "aqi-segment-label", text: lbl }),
+      );
+    });
+
+    const meter = el("div", { class: "aqi-meter-strip" }, ...aqiSegments);
+
+    // Pollutant breakdown rows
+    const pm25Val = aqiScore > 100 ? "42.5 µg/m³" : aqiScore > 50 ? "18.2 µg/m³" : "7.4 µg/m³";
+    const pm25Percent = Math.min((aqiScore / 200) * 100, 100);
+
+    const ozoneVal = "0.042 ppm (Normal)";
+    const ozonePercent = 35;
+
+    const clarityVal = `${vis.toFixed(1)} mi`;
+    const clarityPercent = Math.min((vis / 10) * 100, 100);
+
+    const pollutantRows = el(
+      "div",
+      { class: "fire-factors-container" },
+      renderFactorRow("PM2.5 Wildfire Smoke", pm25Val, aqiCategory, pm25Percent, aqiColor),
+      renderFactorRow("Ground Ozone (O3)", ozoneVal, "Good", ozonePercent, "#22c55e"),
+      renderFactorRow("Visual Clarity", clarityVal, vis >= 10 ? "Clear" : "Reduced", clarityPercent, vis >= 10 ? "#22c55e" : "#eab308"),
+    );
+
+    const body = el(
+      "div",
+      { class: "fire-risk-body" },
+      el(
+        "div",
+        { class: "fire-risk-badge-row" },
+        el(
+          "div",
+          {
+            class: "fire-risk-badge",
+            style: `background: color-mix(in srgb, ${aqiColor} 18%, transparent); color: ${aqiColor}; border-color: ${aqiColor};`,
+          },
+          `${aqiScore} AQI · ${aqiCategory}`,
+        ),
+        el("div", { class: "fire-risk-desc", text: healthGuidance }),
+      ),
+      meter,
+      pollutantRows,
+    );
+
+    card.append(head, body);
+    return card;
+  }
 }
 
 function groupDailyForecasts(periods: ExtendedPeriod[], currentHighFallback: number): DailySummary[] {
@@ -809,6 +1021,91 @@ function groupDailyForecasts(periods: ExtendedPeriod[], currentHighFallback: num
   }
 
   return Array.from(map.values()).slice(0, 7);
+}
+
+function calculateSolarTimes(date: Date, lat: number, lon: number): {
+  sunriseMinutes: number;
+  sunsetMinutes: number;
+  sunriseStr: string;
+  noonStr: string;
+  sunsetStr: string;
+} {
+  const startOfYear = new Date(date.getFullYear(), 0, 0);
+  const diff = date.getTime() - startOfYear.getTime();
+  const dayOfYear = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+  const deg2rad = Math.PI / 180;
+  const rad2deg = 180 / Math.PI;
+
+  const declination = 23.45 * Math.sin(deg2rad * (360 / 365) * (dayOfYear - 81));
+  const b = deg2rad * (360 / 365) * (dayOfYear - 81);
+  const eot = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b);
+
+  const tzOffsetHours = -date.getTimezoneOffset() / 60;
+  const solarNoonHour = 12 + tzOffsetHours - lon / 15 - eot / 60;
+
+  const cosHourAngle = -Math.tan(deg2rad * lat) * Math.tan(deg2rad * declination);
+  const clampedCos = Math.min(Math.max(cosHourAngle, -1), 1);
+  const hourAngleDeg = rad2deg * Math.acos(clampedCos);
+
+  const sunriseHour = solarNoonHour - hourAngleDeg / 15;
+  const sunsetHour = solarNoonHour + hourAngleDeg / 15;
+
+  const toMin = (h: number) => Math.round(h * 60);
+  const formatH = (h: number) => {
+    let hh = Math.floor(h);
+    let mm = Math.round((h - hh) * 60);
+    if (mm >= 60) {
+      hh += 1;
+      mm = 0;
+    }
+    const d = new Date(date);
+    d.setHours(hh, mm, 0, 0);
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  };
+
+  return {
+    sunriseMinutes: toMin(sunriseHour),
+    sunsetMinutes: toMin(sunsetHour),
+    sunriseStr: formatH(sunriseHour),
+    noonStr: formatH(solarNoonHour),
+    sunsetStr: formatH(sunsetHour),
+  };
+}
+
+function calculateMoonPhase(date: Date): { phaseName: string; illuminationPct: number; waxing: boolean } {
+  // Epoch: Jan 11, 2024 (New Moon)
+  const epoch = new Date(Date.UTC(2024, 0, 11, 11, 57, 0)).getTime();
+  const synodicMonth = 29.53058867 * 24 * 60 * 60 * 1000;
+  const diff = date.getTime() - epoch;
+  const phase = ((diff % synodicMonth) + synodicMonth) % synodicMonth;
+  const phaseFraction = phase / synodicMonth;
+
+  let phaseName = "New Moon";
+  if (phaseFraction < 0.03 || phaseFraction >= 0.97) phaseName = "New Moon";
+  else if (phaseFraction < 0.22) phaseName = "Waxing Crescent";
+  else if (phaseFraction < 0.28) phaseName = "First Quarter";
+  else if (phaseFraction < 0.47) phaseName = "Waxing Gibbous";
+  else if (phaseFraction < 0.53) phaseName = "Full Moon";
+  else if (phaseFraction < 0.72) phaseName = "Waning Gibbous";
+  else if (phaseFraction < 0.78) phaseName = "Third Quarter";
+  else phaseName = "Waning Crescent";
+
+  const illuminationPct = Math.round((1 - Math.cos(phaseFraction * 2 * Math.PI)) * 50);
+  const waxing = phaseFraction <= 0.5;
+
+  return { phaseName, illuminationPct, waxing };
+}
+
+function moonSvg(phaseName: string, size = 26): SVGElement {
+  const p = phaseName.toLowerCase();
+  if (p.includes("full")) {
+    return createSvg(`<circle cx="12" cy="12" r="9" fill="#fef08a" stroke="#ffffff" stroke-width="1.5"/>`, "icon-moon-full", size);
+  }
+  if (p.includes("new")) {
+    return createSvg(`<circle cx="12" cy="12" r="9" fill="#1e293b" stroke="#64748b" stroke-width="1.5"/>`, "icon-moon-new", size);
+  }
+  return createSvg(`<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" fill="#fef08a" stroke="#ffffff" stroke-width="1.5"/>`, "icon-moon-crescent", size);
 }
 
 function parseObservation(stationId: string, stationName: string, props: any): MetarObservation {

@@ -2614,8 +2614,149 @@ footer {
   line-height: 1.35;
 }
 
+/* Bottom Split: Solar & Air Quality */
+.weather-dash-bottom-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+/* Solar & Lunar Ephemeris */
+.solar-ephemeris-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.solar-arc-container {
+  width: 100%;
+  max-width: 260px;
+  margin: 0.2rem auto 0;
+}
+
+.solar-arc-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.solar-times-row {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  background: var(--panel-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.solar-time-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.solar-time-lbl {
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.solar-time-val {
+  font-size: 0.84rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.daylight-status-banner {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 12%, var(--panel-deep));
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, transparent);
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  width: 100%;
+  text-align: center;
+}
+
+.lunar-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  background: var(--panel-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.lunar-icon-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.lunar-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.lunar-phase-name {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.lunar-illumination {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+/* Air Quality Index (AQI) */
+.aqi-meter-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.3rem;
+}
+
+.aqi-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.15rem;
+  border-radius: 5px;
+  border: 1px solid;
+  text-align: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  transition: all 0.2s ease;
+}
+
+.aqi-segment.is-active {
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.aqi-segment:not(.is-active) .aqi-segment-label {
+  opacity: 0.6;
+  color: var(--text-dim);
+}
+
 @media (max-width: 1100px) {
   .weather-dash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .weather-dash-bottom-split {
     grid-template-columns: minmax(0, 1fr);
   }
 
