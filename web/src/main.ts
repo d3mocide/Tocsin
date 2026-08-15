@@ -26,6 +26,7 @@ import { StationsView } from "./views/stations";
 import { renderStats } from "./views/stats";
 import { renderConnection, renderDispatchSummary, renderModeChip, renderServices } from "./views/status";
 import { StreamsView } from "./views/streams";
+import { renderDashboardLiveTranscripts, renderTranscripts } from "./views/transcripts";
 
 // What still polls, and why. Alerts, health, transcripts, and dispatches
 // arrive over SSE now and are not polled at all. These three have no push
@@ -98,7 +99,11 @@ async function main(): Promise<void> {
     if (touched("stats")) renderDispatchSummary(byId("dispatch"), store);
     if (touched("health", "clock")) renderHealth(byId("rf-health"), store);
     if (touched("streams", "system")) streamsView.render();
-    if (touched("activity", "clock")) renderActivity(byId("activity"), store);
+    if (touched("activity", "clock")) {
+      renderDashboardLiveTranscripts(byId("dashboard-live-transcripts"), store);
+      renderTranscripts(byId("transcripts"), store);
+    }
+    if (touched("activity", "alerts", "system", "clock")) renderActivity(byId("activity"), store);
     if (touched("alerts", "filters", "system", "clock")) alertsView.render();
     if (touched("alerts")) refreshFilterSites();
     if (touched("alerts", "clock")) updateDocumentTitle();

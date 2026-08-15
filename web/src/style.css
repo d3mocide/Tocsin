@@ -1325,6 +1325,18 @@ body {
   padding-left: 0.5rem;
 }
 
+.activity-alert.tier-a,
+.activity-transcript.tier-a {
+  border-left: 2px solid var(--tier-a);
+  padding-left: 0.5rem;
+}
+
+.activity-alert.tier-b,
+.activity-transcript.tier-b {
+  border-left: 2px solid var(--tier-b);
+  padding-left: 0.5rem;
+}
+
 .activity-live .activity-text {
   color: var(--text-dim);
 }
@@ -1346,6 +1358,96 @@ body {
 .activity-live-toggle:hover,
 .activity-live-toggle.on {
   background: color-mix(in srgb, var(--transcript-only) 24%, transparent);
+}
+
+/* ---- dashboard live transcripts ---------------------------------- */
+
+.dashboard-live-transcripts {
+  margin-top: 0.85rem;
+  background: var(--panel-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.85rem;
+}
+
+.dashboard-transcripts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+
+.dashboard-transcripts-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dashboard-transcripts-heading {
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+
+.dashboard-transcripts-count {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.live-pulse-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--transcript-only);
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(163, 113, 247, 0.7);
+  animation: pulse-dot 2s infinite cubic-bezier(0.66, 0, 0, 1);
+}
+
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(163, 113, 247, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(163, 113, 247, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(163, 113, 247, 0);
+  }
+}
+
+.dashboard-transcripts-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+.dashboard-transcript-row {
+  border-left: 3px solid color-mix(in srgb, var(--transcript-only) 65%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 35%, transparent);
+  border-radius: 0 4px 4px 0;
+  padding: 0.45rem 0.65rem;
+  transition: border-color 0.2s ease;
+}
+
+.dashboard-transcript-row.latest {
+  border-left-color: var(--transcript-only);
+  background: color-mix(in srgb, var(--transcript-only) 8%, var(--panel-deep));
+}
+
+.dashboard-transcript-text {
+  margin: 0.25rem 0 0;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.dashboard-transcript-text.empty {
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 /* ---- footer ------------------------------------------------------- */
