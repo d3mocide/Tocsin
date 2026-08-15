@@ -1,4 +1,5 @@
 import { el, replaceChildren } from "../dom";
+import { isActive } from "../format";
 import type { Store } from "../store";
 
 export interface HourlyPeriod {
@@ -29,6 +30,17 @@ export interface ExtendedPeriod {
   detailedForecast: string;
 }
 
+export interface DailySummary {
+  dayName: string;
+  isDaytime: boolean;
+  highTemp: number | null;
+  lowTemp: number | null;
+  tempUnit: string;
+  popMax: number;
+  shortForecast: string;
+  detailedForecast: string;
+}
+
 export interface MetarObservation {
   stationId: string;
   stationName: string;
@@ -47,13 +59,6 @@ export interface MetarObservation {
   textDescription: string | null;
 }
 
-export interface AfdProduct {
-  issuedTime: string;
-  wfo: string;
-  text: string;
-  sections: { title: string; body: string }[];
-}
-
 export interface WeatherDashboardData {
   city?: string;
   state?: string;
@@ -66,7 +71,6 @@ export interface WeatherDashboardData {
   currentObservation?: MetarObservation | null;
   hourly: HourlyPeriod[];
   extended: ExtendedPeriod[];
-  afd?: AfdProduct | null;
 }
 
 const CACHE_KEY = "tocsin_weather_dashboard_cache";
@@ -77,7 +81,6 @@ export class WeatherDashboardView {
   private readonly store: Store;
   private data: WeatherDashboardData | null = null;
   private isLoading = false;
-  private activeAfdSection = 0;
 
   constructor(container: HTMLElement, store: Store) {
     this.container = container;
@@ -131,12 +134,11 @@ export class WeatherDashboardView {
       const hourlyUrl = props.forecastHourly;
       const forecastUrl = props.forecast;
 
-      // 2. Parallel fetch hourly, extended, stations list, and AFD
-      const [hourlyRes, extendedRes, stationsRes, afdRes] = await Promise.allSettled([
+      // 2. Parallel fetch hourly, extended, and stations list
+      const [hourlyRes, extendedRes, stationsRes] = await Promise.allSettled([
         hourlyUrl ? fetch(hourlyUrl, { headers: { Accept: "application/geo+json" } }) : Promise.reject(),
         forecastUrl ? fetch(forecastUrl, { headers: { Accept: "application/geo+json" } }) : Promise.reject(),
         stationsUrl ? fetch(stationsUrl, { headers: { Accept: "application/geo+json" } }) : Promise.reject(),
-        wfo ? fetch(`https://api.weather.gov/products/types/AFD/locations/${wfo}`, { headers: { Accept: "application/json" } }) : Promise.reject(),
       ]);
 
       const hourly: HourlyPeriod[] =
@@ -181,24 +183,6 @@ export class WeatherDashboardView {
         }
       }
 
-      // 4. Parse Area Forecast Discussion (AFD)
-      let afdProduct: AfdProduct | null = null;
-      if (afdRes.status === "fulfilled" && afdRes.value.ok) {
-        const afdListJson = await afdRes.value.json();
-        const latestAfd = afdListJson["@graph"]?.[0];
-        if (latestAfd?.id) {
-          try {
-            const fullAfdRes = await fetch(latestAfd.id, { headers: { Accept: "application/json" } });
-            if (fullAfdRes.ok) {
-              const fullAfdJson = await fullAfdRes.json();
-              afdProduct = parseAfd(wfo, fullAfdJson.issuanceTime, fullAfdJson.productText ?? "");
-            }
-          } catch {
-            // Full AFD fetch failed
-          }
-        }
-      }
-
       this.saveToStorage({
         city,
         state,
@@ -211,7 +195,6 @@ export class WeatherDashboardView {
         currentObservation: observation,
         hourly: hourly.slice(0, 36),
         extended: extended.slice(0, 14),
-        afd: afdProduct,
       });
     } catch {
       // Fetch error handled gracefully
@@ -291,7 +274,7 @@ export class WeatherDashboardView {
       return;
     }
 
-    const { city, state, wfo, currentObservation, hourly, extended, afd, stations, selectedStationId } = this.data;
+    const { city, state, wfo, currentObservation, hourly, extended, stations, selectedStationId } = this.data;
 
     // 1. Header Toolbar
     const refreshBtn = el("button", { class: "btn-secondary", text: "Refresh Data", attrs: { type: "button" } });
@@ -320,16 +303,13 @@ export class WeatherDashboardView {
     // 4. Fire Weather & Atmospheric Danger Risk Card
     const fireRiskCard = this.renderFireRisk(currentObservation, hourly);
 
-    // 5. 7-Day Extended Outlook Matrix
-    const extendedSection = this.renderExtendedMatrix(extended);
-
-    // 6. Area Forecast Discussion (AFD)
-    const afdSection = this.renderAfdSection(afd);
+    // 5. 7-Day Extended Outlook Matrix (Paired Daily Summary)
+    const extendedSection = this.render7DayOutlook(extended);
 
     const mainGrid = el(
       "div",
       { class: "weather-dash-grid" },
-      el("div", { class: "weather-dash-col-left" }, metarHero, fireRiskCard, afdSection),
+      el("div", { class: "weather-dash-col-left" }, metarHero, fireRiskCard),
       el("div", { class: "weather-dash-col-right" }, hourlySection, extendedSection),
     );
 
@@ -342,7 +322,7 @@ export class WeatherDashboardView {
     selectedId?: string,
   ): HTMLElement {
     const card = el("section", { class: "panel weather-metar-card" });
-    const select = el("select", { class: "filter-select", attrs: { "aria-label": "Observation station" } }) as HTMLSelectElement;
+    const select = el("select", { class: "station-select-full", attrs: { "aria-label": "Observation station" } }) as HTMLSelectElement;
 
     for (const s of stations) {
       const opt = el("option", { text: `${s.id} — ${s.name}`, attrs: { value: s.id } }) as HTMLOptionElement;
@@ -356,9 +336,14 @@ export class WeatherDashboardView {
 
     const head = el(
       "div",
-      { class: "panel-head" },
-      el("h3", { text: "Live Surface Observations (METAR)" }),
-      select,
+      { class: "metar-head-stacked" },
+      el(
+        "div",
+        { class: "metar-head-row" },
+        el("h3", { text: "Surface Observations" }),
+        el("span", { class: "badge badge-status-synced", text: "METAR" }),
+      ),
+      el("div", { class: "station-select-container" }, select),
     );
 
     if (!obs) {
@@ -373,6 +358,7 @@ export class WeatherDashboardView {
     const gust = obs.windGustMph ? ` (gusts ${Math.round(obs.windGustMph)} mph)` : "";
     const pressure = obs.barometricPressureInHg !== null ? `${obs.barometricPressureInHg.toFixed(2)} inHg` : "--";
     const vis = obs.visibilityMiles !== null ? `${obs.visibilityMiles.toFixed(1)} mi` : "--";
+    const windDirDeg = obs.windDirectionDeg !== null ? `${Math.round(obs.windDirectionDeg)}° (${obs.windDirectionCard || ""})` : "--";
 
     const body = el(
       "div",
@@ -389,7 +375,8 @@ export class WeatherDashboardView {
         renderMetricDial("Dew Point", dewF, "Comfort / Fog"),
         renderMetricDial("Relative Humidity", rh, "Fire danger indicator"),
         renderMetricDial("Wind Speed", `${wind}${gust}`, "Surface flow"),
-        renderMetricDial("Barometer", pressure, "Altimeter trend"),
+        renderMetricDial("Wind Bearing", windDirDeg, "Compass direction"),
+        renderMetricDial("Barometer", pressure, "Altimeter reading"),
         renderMetricDial("Visibility", vis, "Atmospheric clarity"),
       ),
     );
@@ -440,54 +427,140 @@ export class WeatherDashboardView {
 
   private renderFireRisk(obs: MetarObservation | null | undefined, _hourly: HourlyPeriod[]): HTMLElement {
     const card = el("section", { class: "panel fire-risk-panel" });
-    const head = el("div", { class: "panel-head" }, el("h3", { text: "Fire Weather & Red Flag Risk Index" }));
+    const head = el(
+      "div",
+      { class: "panel-head" },
+      el("h3", { text: "Fire Weather & Red Flag Index" }),
+      el("span", { class: "badge badge-status-synced", text: "NFDRS" }),
+    );
 
-    // Evaluate fire danger: RH < 25% + Temp > 80°F + Wind > 12 mph
+    // Check active fire weather / red flag / air quality alerts in store
+    const alerts = Array.from(this.store.state.alerts.values());
+    const activeFireAlerts = alerts.filter(
+      (a) =>
+        isActive(a) &&
+        (a.event_name.toLowerCase().includes("fire") ||
+          a.event_name.toLowerCase().includes("red flag") ||
+          a.event_name.toLowerCase().includes("smoke") ||
+          a.event_name.toLowerCase().includes("air quality")),
+    );
+
+    // Evaluate fire danger metrics: RH (40% weight), Wind (35% weight), Temp (25% weight)
     const rh = obs?.relativeHumidity ?? 50;
     const tempF = obs?.temperatureF ?? 70;
     const wind = obs?.windSpeedMph ?? 5;
+    const gust = obs?.windGustMph ?? wind;
 
+    let dangerIndex = 0; // 0 (Low) to 4 (Extreme)
     let riskLevel = "LOW";
     let riskColor = "#22c55e";
-    let explanation = "Normal atmospheric humidity and moderate surface winds.";
+    let explanation = "High surface humidity and light winds keep ignition risk minimal.";
 
-    if (rh <= 20 && wind >= 15 && tempF >= 80) {
+    if (activeFireAlerts.length > 0 || (rh <= 18 && wind >= 15 && tempF >= 82)) {
+      dangerIndex = 4;
       riskLevel = "CRITICAL / RED FLAG";
-      riskColor = "#ef4444";
-      explanation = "Extreme fire weather danger: Very low RH combined with strong gusts and high heat.";
-    } else if (rh <= 25 && (wind >= 10 || tempF >= 85)) {
-      riskLevel = "ELEVATED";
+      riskColor = "#e11d48";
+      explanation = "Severe fire weather conditions: Very low humidity, elevated heat, and dangerous spread winds.";
+    } else if (rh <= 22 && (wind >= 12 || tempF >= 88)) {
+      dangerIndex = 3;
+      riskLevel = "VERY HIGH";
       riskColor = "#f97316";
-      explanation = "Heightened fire spread risk: Low afternoon relative humidity with active surface breezes.";
-    } else if (rh <= 30) {
-      riskLevel = "MODERATE";
+      explanation = "Dry vegetation and active surface breezes support rapid fire spread upon ignition.";
+    } else if (rh <= 28 && (wind >= 8 || tempF >= 80)) {
+      dangerIndex = 2;
+      riskLevel = "HIGH";
       riskColor = "#eab308";
-      explanation = "Seasonally dry ground conditions; monitoring for afternoon wind surges.";
+      explanation = "Moderately low humidity; afternoon gusts can dry fine fuels quickly.";
+    } else if (rh <= 38) {
+      dangerIndex = 1;
+      riskLevel = "MODERATE";
+      riskColor = "#38bdf8";
+      explanation = "Seasonal drying with manageable wind speeds and moderate daytime recovery.";
     }
 
-    const gauge = el(
+    // Active Alert Banner if applicable
+    const alertBanner =
+      activeFireAlerts.length > 0
+        ? el(
+            "div",
+            { class: "fire-alert-callout" },
+            el("div", { class: "fire-alert-callout-title", text: "ACTIVE NWS ADVISORY IN EFFECT" }),
+            el("div", {
+              class: "fire-alert-callout-body",
+              text: activeFireAlerts.map((a) => a.event_name).join(" · "),
+            }),
+          )
+        : null;
+
+    // 5-segment NFDRS gauge bar
+    const segmentLabels = ["Low", "Moderate", "High", "Very High", "Extreme"];
+    const segmentColors = ["#22c55e", "#38bdf8", "#eab308", "#f97316", "#e11d48"];
+    const segments = segmentLabels.map((lbl, idx) => {
+      const isCurrent = idx === dangerIndex;
+      return el(
+        "div",
+        {
+          class: `nfdrs-segment${isCurrent ? " is-active" : ""}`,
+          style: isCurrent
+            ? `background: ${segmentColors[idx]}; box-shadow: 0 0 10px ${segmentColors[idx]}88; border-color: ${segmentColors[idx]};`
+            : `background: color-mix(in srgb, ${segmentColors[idx]} 20%, var(--panel-deep)); border-color: ${segmentColors[idx]}44;`,
+        },
+        el("span", { class: "nfdrs-segment-label", text: lbl }),
+      );
+    });
+
+    const meter = el("div", { class: "nfdrs-meter-strip" }, ...segments);
+
+    // Threat Factor Rows with mini progress bars
+    // 1. Relative Humidity Factor (0% to 100%, lower is worse)
+    const rhPercentClamped = Math.min(Math.max(rh, 0), 100);
+    const rhColor = rh <= 20 ? "#e11d48" : rh <= 30 ? "#f97316" : rh <= 40 ? "#eab308" : "#22c55e";
+    const rhStatus = rh <= 20 ? "Critical (<20%)" : rh <= 30 ? "Dry (20-30%)" : "Safe (>30%)";
+
+    // 2. Wind & Gust Factor (0 to 35 mph, higher is worse)
+    const windPercentClamped = Math.min((gust / 35) * 100, 100);
+    const windColor = gust >= 20 ? "#e11d48" : gust >= 12 ? "#f97316" : "#22c55e";
+    const windStatus = gust >= 20 ? "Strong Gusts" : gust >= 12 ? "Moderate" : "Light (<10 mph)";
+
+    // 3. Air Temp Factor (40°F to 105°F, higher is worse)
+    const tempPercentClamped = Math.min(Math.max(((tempF - 40) / 65) * 100, 0), 100);
+    const tempColor = tempF >= 90 ? "#e11d48" : tempF >= 80 ? "#f97316" : "#22c55e";
+    const tempStatus = tempF >= 90 ? "High Evaporation" : tempF >= 80 ? "Warm" : "Moderate";
+
+    const factorRows = el(
       "div",
-      { class: "fire-risk-gauge" },
-      el(
-        "div",
-        { class: "fire-risk-badge", style: `background: color-mix(in srgb, ${riskColor} 18%, transparent); color: ${riskColor}; border-color: ${riskColor};` },
-        riskLevel,
-      ),
-      el("div", { class: "fire-risk-desc", text: explanation }),
-      el(
-        "div",
-        { class: "fire-risk-stats" },
-        el("div", { text: `Surface RH: ${Math.round(rh)}%` }),
-        el("div", { text: `Sustained Wind: ${Math.round(wind)} mph` }),
-        el("div", { text: `Air Temp: ${Math.round(tempF)}°F` }),
-      ),
+      { class: "fire-factors-container" },
+      renderFactorRow("Relative Humidity", `${Math.round(rh)}%`, rhStatus, rhPercentClamped, rhColor),
+      renderFactorRow("Surface Winds", `${Math.round(wind)} mph (gusts ${Math.round(gust)})`, windStatus, windPercentClamped, windColor),
+      renderFactorRow("Air Temperature", `${Math.round(tempF)}°F`, tempStatus, tempPercentClamped, tempColor),
     );
 
-    card.append(head, gauge);
+    const body = el(
+      "div",
+      { class: "fire-risk-body" },
+      alertBanner,
+      el(
+        "div",
+        { class: "fire-risk-badge-row" },
+        el(
+          "div",
+          {
+            class: "fire-risk-badge",
+            style: `background: color-mix(in srgb, ${riskColor} 18%, transparent); color: ${riskColor}; border-color: ${riskColor};`,
+          },
+          riskLevel,
+        ),
+        el("div", { class: "fire-risk-desc", text: explanation }),
+      ),
+      meter,
+      factorRows,
+    );
+
+    card.append(head, body);
     return card;
   }
 
-  private renderExtendedMatrix(extended: ExtendedPeriod[]): HTMLElement {
+  private render7DayOutlook(extended: ExtendedPeriod[]): HTMLElement {
     const card = el("section", { class: "panel weather-extended-panel" });
     const head = el("div", { class: "panel-head" }, el("h3", { text: "7-Day Extended Weather Outlook" }));
 
@@ -496,22 +569,32 @@ export class WeatherDashboardView {
       return card;
     }
 
-    const grid = el("div", { class: "extended-grid" });
+    // Group day and night periods into 7 daily summaries
+    const dailyList: DailySummary[] = groupDailyForecasts(extended);
 
-    for (const p of extended) {
-      const icon = weatherSvg(p.shortForecast, p.isDaytime, 24);
-      const precipVal = p.probabilityOfPrecipitation?.value;
+    const grid = el("div", { class: "seven-day-strip" });
+
+    for (const d of dailyList) {
+      const icon = weatherSvg(d.shortForecast, d.isDaytime, 28);
+      const highStr = d.highTemp !== null ? `${d.highTemp}°` : "--";
+      const lowStr = d.lowTemp !== null ? `${d.lowTemp}°` : "--";
 
       const pCard = el(
         "div",
-        { class: `extended-card${p.isDaytime ? " is-day" : " is-night"}` },
-        el("div", { class: "extended-card-head" }, p.name),
-        el("div", { class: "extended-card-icon" }, icon),
-        el("div", { class: "extended-card-temp", text: `${p.temperature}°${p.temperatureUnit}` }),
-        precipVal !== null && precipVal !== undefined && precipVal > 0
-          ? el("div", { class: "extended-card-precip", text: `${precipVal}% rain` })
-          : el("div", { class: "extended-card-precip", text: " " }),
-        el("div", { class: "extended-card-desc", text: p.shortForecast, title: p.detailedForecast }),
+        { class: "seven-day-card" },
+        el("div", { class: "seven-day-name", text: d.dayName }),
+        el("div", { class: "seven-day-icon" }, icon),
+        el(
+          "div",
+          { class: "seven-day-temps" },
+          el("span", { class: "seven-day-high", text: highStr }),
+          el("span", { class: "seven-day-divider", text: "/" }),
+          el("span", { class: "seven-day-low", text: lowStr }),
+        ),
+        d.popMax > 0
+          ? el("div", { class: "seven-day-precip", text: `${d.popMax}% rain` })
+          : el("div", { class: "seven-day-precip", text: " " }),
+        el("div", { class: "seven-day-desc", text: d.shortForecast, title: d.detailedForecast }),
       );
       grid.appendChild(pCard);
     }
@@ -519,43 +602,45 @@ export class WeatherDashboardView {
     card.append(head, grid);
     return card;
   }
+}
 
-  private renderAfdSection(afd: AfdProduct | null | undefined): HTMLElement {
-    const card = el("section", { class: "panel afd-panel" });
-    const head = el(
-      "div",
-      { class: "panel-head" },
-      el("h3", { text: "Area Forecast Discussion (AFD) — Meteorologist Brief" }),
-      afd ? el("span", { class: "panel-head-summary", text: `WFO ${afd.wfo}` }) : null,
-    );
+function groupDailyForecasts(periods: ExtendedPeriod[]): DailySummary[] {
+  const map: Map<string, DailySummary> = new Map();
 
-    if (!afd || afd.sections.length === 0) {
-      card.append(head, el("p", { class: "empty", text: "NWS Forecaster discussion loading…" }));
-      return card;
+  for (const p of periods) {
+    // Extract base day name (e.g. "This Afternoon" -> "Today", "Saturday Night" -> "Saturday")
+    let baseDay = p.name.replace(/ Night$/, "").trim();
+    if (baseDay.toLowerCase().includes("afternoon") || baseDay.toLowerCase().includes("today")) {
+      baseDay = "Today";
     }
 
-    const nav = el("div", { class: "afd-nav-tabs" });
-    const body = el("div", { class: "afd-content-box" });
-
-    afd.sections.forEach((sec, idx) => {
-      const btn = el("button", {
-        class: `afd-nav-btn${idx === this.activeAfdSection ? " active" : ""}`,
-        text: sec.title,
-        attrs: { type: "button" },
+    if (!map.has(baseDay)) {
+      map.set(baseDay, {
+        dayName: baseDay,
+        isDaytime: p.isDaytime,
+        highTemp: p.isDaytime ? p.temperature : null,
+        lowTemp: !p.isDaytime ? p.temperature : null,
+        tempUnit: p.temperatureUnit,
+        popMax: p.probabilityOfPrecipitation?.value ?? 0,
+        shortForecast: p.shortForecast,
+        detailedForecast: p.detailedForecast,
       });
-      btn.addEventListener("click", () => {
-        this.activeAfdSection = idx;
-        this.render();
-      });
-      nav.appendChild(btn);
-    });
-
-    const activeSec = afd.sections[this.activeAfdSection] || afd.sections[0];
-    body.textContent = activeSec.body;
-
-    card.append(head, nav, body);
-    return card;
+    } else {
+      const entry = map.get(baseDay)!;
+      if (p.isDaytime && entry.highTemp === null) {
+        entry.highTemp = p.temperature;
+        entry.shortForecast = p.shortForecast;
+        entry.detailedForecast = p.detailedForecast;
+        entry.isDaytime = true;
+      } else if (!p.isDaytime && entry.lowTemp === null) {
+        entry.lowTemp = p.temperature;
+      }
+      const pPop = p.probabilityOfPrecipitation?.value ?? 0;
+      if (pPop > entry.popMax) entry.popMax = pPop;
+    }
   }
+
+  return Array.from(map.values()).slice(0, 7);
 }
 
 function parseObservation(stationId: string, stationName: string, props: any): MetarObservation {
@@ -594,47 +679,6 @@ function parseObservation(stationId: string, stationName: string, props: any): M
   };
 }
 
-function parseAfd(wfo: string, issuanceTime: string, rawText: string): AfdProduct {
-  const sections: { title: string; body: string }[] = [];
-  const lines = rawText.split("\n");
-  let currentTitle = "Overview";
-  let currentLines: string[] = [];
-
-  for (const line of lines) {
-    if (line.startsWith(".") && line.includes("...")) {
-      if (currentLines.length > 0) {
-        sections.push({ title: cleanAfdTitle(currentTitle), body: currentLines.join("\n").trim() });
-        currentLines = [];
-      }
-      currentTitle = line.replace(/^\./, "").replace(/\.\.\..*$/, "").trim();
-    } else {
-      currentLines.push(line);
-    }
-  }
-
-  if (currentLines.length > 0) {
-    sections.push({ title: cleanAfdTitle(currentTitle), body: currentLines.join("\n").trim() });
-  }
-
-  return {
-    issuedTime: issuanceTime,
-    wfo,
-    text: rawText,
-    sections: sections.filter((s) => s.body.length > 20).slice(0, 6),
-  };
-}
-
-function cleanAfdTitle(title: string): string {
-  const t = title.toUpperCase();
-  if (t.includes("SYNOPSIS")) return "Synopsis";
-  if (t.includes("SHORT TERM")) return "Short Term";
-  if (t.includes("LONG TERM")) return "Long Term";
-  if (t.includes("FIRE WEATHER")) return "Fire Weather";
-  if (t.includes("AVIATION")) return "Aviation";
-  if (t.includes("MARINE")) return "Marine";
-  return title.slice(0, 16);
-}
-
 function degToCard(deg: number | null): string {
   if (deg === null) return "";
   const directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
@@ -658,6 +702,34 @@ function renderMetricDial(label: string, value: string, sub: string): HTMLElemen
     el("div", { class: "dial-label", text: label }),
     el("div", { class: "dial-value", text: value }),
     el("div", { class: "dial-sub", text: sub }),
+  );
+}
+
+function renderFactorRow(
+  label: string,
+  value: string,
+  status: string,
+  percent: number,
+  barColor: string,
+): HTMLElement {
+  return el(
+    "div",
+    { class: "fire-factor-row" },
+    el(
+      "div",
+      { class: "fire-factor-info" },
+      el("span", { class: "fire-factor-label", text: label }),
+      el("span", { class: "fire-factor-val", text: value }),
+      el("span", { class: "fire-factor-status", text: status, style: `color: ${barColor};` }),
+    ),
+    el(
+      "div",
+      { class: "fire-factor-bar-bg" },
+      el("div", {
+        class: "fire-factor-bar-fill",
+        style: `width: ${percent}%; background-color: ${barColor};`,
+      }),
+    ),
   );
 }
 
