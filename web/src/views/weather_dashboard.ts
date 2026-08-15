@@ -307,7 +307,7 @@ export class WeatherDashboardView {
     const currentHighEstimate = currentObservation?.temperatureF ?? (hourly[0]?.temperature ?? 75);
     const extendedSection = this.render7DayOutlook(extended, currentHighEstimate);
 
-    // 6. Solar & Lunar Ephemeris + Air Quality & Smoke Index (2-column sub-grid)
+    // 6. Solar & Lunar Ephemeris + Air Quality & Smoke Index (2-column subgrid)
     const solarCard = this.renderSolarEphemeris(lat, lon);
     const aqiCard = this.renderAirQualityCard(currentObservation);
     const bottomSplit = el("div", { class: "weather-dash-bottom-split" }, solarCard, aqiCard);
@@ -357,14 +357,17 @@ export class WeatherDashboardView {
       return card;
     }
 
-    const tempF = obs.temperatureF !== null ? `${Math.round(obs.temperatureF)}°F` : "--";
+    const tempF = obs.temperatureF !== null ? `${Math.round(obs.temperatureF)}°` : "--";
     const dewF = obs.dewpointF !== null ? `${Math.round(obs.dewpointF)}°F` : "--";
     const rh = obs.relativeHumidity !== null ? `${Math.round(obs.relativeHumidity)}%` : "--";
     const wind = obs.windSpeedMph !== null ? `${obs.windDirectionCard || ""} ${Math.round(obs.windSpeedMph)} mph` : "--";
-    const gust = obs.windGustMph ? ` (gusts ${Math.round(obs.windGustMph)} mph)` : "";
+    const gust = obs.windGustMph ? ` (gusts ${Math.round(obs.windGustMph)})` : "";
     const pressure = obs.barometricPressureInHg !== null ? `${obs.barometricPressureInHg.toFixed(2)} inHg` : "--";
     const vis = obs.visibilityMiles !== null ? `${obs.visibilityMiles.toFixed(1)} mi` : "--";
     const windDirDeg = obs.windDirectionDeg !== null ? `${Math.round(obs.windDirectionDeg)}° (${obs.windDirectionCard || ""})` : "--";
+
+    const isDaytime = new Date().getHours() >= 6 && new Date().getHours() < 20;
+    const heroIcon = weatherSvg(obs.textDescription || "Clear", isDaytime, 36);
 
     const body = el(
       "div",
@@ -372,8 +375,18 @@ export class WeatherDashboardView {
       el(
         "div",
         { class: "metar-primary" },
-        el("div", { class: "metar-temp-display" }, tempF),
-        el("div", { class: "metar-desc" }, obs.textDescription || "Current Surface Reading"),
+        el(
+          "div",
+          { class: "metar-temp-group" },
+          el("span", { class: "metar-temp-val", text: tempF }),
+          el("span", { class: "metar-temp-unit", text: "F" }),
+        ),
+        el(
+          "div",
+          { class: "metar-condition-group" },
+          heroIcon,
+          el("div", { class: "metar-desc", text: obs.textDescription || "Current Reading" }),
+        ),
       ),
       el(
         "div",
@@ -420,19 +433,22 @@ export class WeatherDashboardView {
     const maxVal = Math.max(...temps, ...dews) + 6;
     const range = Math.max(maxVal - minVal, 10);
 
-    const W = 860;
-    const H = 200;
-    const padTop = 32;
-    const padBottom = 48;
+    const W = 880;
+    const H = 205;
+    const padLeft = 24;
+    const padRight = 24;
+    const padTop = 26;
+    const padBottom = 54;
+    const graphW = W - padLeft - padRight;
     const graphH = H - padTop - padBottom;
 
-    const stepX = W / (slice.length - 1);
-
+    const stepX = graphW / (slice.length - 1);
+    const getX = (i: number) => padLeft + i * stepX;
     const getY = (val: number) => padTop + graphH - ((val - minVal) / range) * graphH;
 
     // SVG Points
-    const tempPoints = slice.map((_, i) => ({ x: i * stepX, y: getY(temps[i]) }));
-    const dewPoints = slice.map((_, i) => ({ x: i * stepX, y: getY(dews[i]) }));
+    const tempPoints = slice.map((_, i) => ({ x: getX(i), y: getY(temps[i]) }));
+    const dewPoints = slice.map((_, i) => ({ x: getX(i), y: getY(dews[i]) }));
 
     // Smooth Bezier Curve generator
     const makeBezierPath = (pts: { x: number; y: number }[]) => {
@@ -453,7 +469,7 @@ export class WeatherDashboardView {
     };
 
     const tempPathD = makeBezierPath(tempPoints);
-    const tempAreaD = `${tempPathD} L ${W} ${H - padBottom} L 0 ${H - padBottom} Z`;
+    const tempAreaD = `${tempPathD} L ${getX(slice.length - 1)} ${H - padBottom} L ${getX(0)} ${H - padBottom} Z`;
     const dewPathD = makeBezierPath(dewPoints);
 
     // Build SVG elements
@@ -462,19 +478,35 @@ export class WeatherDashboardView {
     svg.setAttribute("class", "meteogram-svg");
     svg.setAttribute("preserveAspectRatio", "none");
 
-    // Gradients
+    // Gradients & Filters
     const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
     defs.innerHTML = `
       <linearGradient id="tempAreaGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.32" />
+        <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.35" />
         <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.0" />
       </linearGradient>
       <linearGradient id="precipGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.65" />
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.7" />
         <stop offset="100%" stop-color="#0284c7" stop-opacity="0.25" />
       </linearGradient>
     `;
     svg.appendChild(defs);
+
+    // Nighttime shading bands
+    const bgBands = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    slice.forEach((h, i) => {
+      if (!h.isDaytime) {
+        const x1 = getX(i) - stepX / 2;
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", String(Math.max(x1, 0)));
+        rect.setAttribute("y", "0");
+        rect.setAttribute("width", String(stepX));
+        rect.setAttribute("height", String(H));
+        rect.setAttribute("fill", "rgba(99, 102, 241, 0.04)");
+        bgBands.appendChild(rect);
+      }
+    });
+    svg.appendChild(bgBands);
 
     // Baseline gridlines
     const gridY1 = getY(Math.round(minVal + range * 0.33));
@@ -482,9 +514,9 @@ export class WeatherDashboardView {
     const gridLines = document.createElementNS("http://www.w3.org/2000/svg", "g");
     gridLines.setAttribute("class", "meteogram-grid");
     gridLines.innerHTML = `
-      <line x1="0" y1="${gridY1}" x2="${W}" y2="${gridY1}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4 4" />
-      <line x1="0" y1="${gridY2}" x2="${W}" y2="${gridY2}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4 4" />
-      <line x1="0" y1="${H - padBottom}" x2="${W}" y2="${H - padBottom}" stroke="rgba(255,255,255,0.12)" />
+      <line x1="${padLeft}" y1="${gridY1}" x2="${W - padRight}" y2="${gridY1}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4 4" />
+      <line x1="${padLeft}" y1="${gridY2}" x2="${W - padRight}" y2="${gridY2}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4 4" />
+      <line x1="${padLeft}" y1="${H - padBottom}" x2="${W - padRight}" y2="${H - padBottom}" stroke="rgba(255,255,255,0.14)" />
     `;
     svg.appendChild(gridLines);
 
@@ -493,9 +525,9 @@ export class WeatherDashboardView {
     slice.forEach((_, i) => {
       const pop = pops[i];
       if (pop > 0) {
-        const barH = (pop / 100) * 32;
+        const barH = (pop / 100) * 28;
         const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        rect.setAttribute("x", String(i * stepX - 8));
+        rect.setAttribute("x", String(getX(i) - 8));
         rect.setAttribute("y", String(H - padBottom - barH));
         rect.setAttribute("width", "16");
         rect.setAttribute("height", String(barH));
@@ -504,7 +536,7 @@ export class WeatherDashboardView {
         precipG.appendChild(rect);
 
         const popText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        popText.setAttribute("x", String(i * stepX));
+        popText.setAttribute("x", String(getX(i)));
         popText.setAttribute("y", String(H - padBottom - barH - 3));
         popText.setAttribute("text-anchor", "middle");
         popText.setAttribute("class", "meteogram-pop-text");
@@ -557,29 +589,29 @@ export class WeatherDashboardView {
       // Temperature text
       const tText = document.createElementNS("http://www.w3.org/2000/svg", "text");
       tText.setAttribute("x", String(pt.x));
-      tText.setAttribute("y", String(pt.y - 8));
+      tText.setAttribute("y", String(pt.y - 7));
       tText.setAttribute("text-anchor", "middle");
       tText.setAttribute("class", "meteogram-temp-label");
       tText.textContent = `${h.temperature}°`;
       labelsG.appendChild(tText);
 
-      // Time text on bottom axis
-      const timeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      timeText.setAttribute("x", String(pt.x));
-      timeText.setAttribute("y", String(H - 12));
-      timeText.setAttribute("text-anchor", "middle");
-      timeText.setAttribute("class", "meteogram-time-label");
-      timeText.textContent = timeStr;
-      labelsG.appendChild(timeText);
-
-      // Wind text
+      // Wind text on middle row (cleanly spaced)
       const windText = document.createElementNS("http://www.w3.org/2000/svg", "text");
       windText.setAttribute("x", String(pt.x));
-      windText.setAttribute("y", String(H - 26));
+      windText.setAttribute("y", String(H - 24));
       windText.setAttribute("text-anchor", "middle");
       windText.setAttribute("class", "meteogram-wind-label");
       windText.textContent = `${h.windDirection} ${h.windSpeed.replace(" mph", "")}`;
       labelsG.appendChild(windText);
+
+      // Time text on bottom axis
+      const timeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      timeText.setAttribute("x", String(pt.x));
+      timeText.setAttribute("y", String(H - 8));
+      timeText.setAttribute("text-anchor", "middle");
+      timeText.setAttribute("class", "meteogram-time-label");
+      timeText.textContent = timeStr;
+      labelsG.appendChild(timeText);
     });
     svg.appendChild(labelsG);
 
@@ -608,6 +640,9 @@ export class WeatherDashboardView {
           a.event_name.toLowerCase().includes("air quality")),
     );
 
+    // Deduplicate alert event names
+    const alertNames = Array.from(new Set(activeFireAlerts.map((a) => a.event_name)));
+
     // Evaluate fire danger metrics: RH (40% weight), Wind (35% weight), Temp (25% weight)
     const rh = obs?.relativeHumidity ?? 50;
     const tempF = obs?.temperatureF ?? 70;
@@ -619,7 +654,7 @@ export class WeatherDashboardView {
     let riskColor = "#22c55e";
     let explanation = "High surface humidity and light winds keep ignition risk minimal.";
 
-    if (activeFireAlerts.length > 0 || (rh <= 18 && wind >= 15 && tempF >= 82)) {
+    if (alertNames.length > 0 || (rh <= 18 && wind >= 15 && tempF >= 82)) {
       dangerIndex = 4;
       riskLevel = "CRITICAL / RED FLAG";
       riskColor = "#e11d48";
@@ -641,16 +676,16 @@ export class WeatherDashboardView {
       explanation = "Seasonal drying with manageable wind speeds and moderate daytime recovery.";
     }
 
-    // Active Alert Banner if applicable
+    // Active Alert Banner (Cleanly deduplicated)
     const alertBanner =
-      activeFireAlerts.length > 0
+      alertNames.length > 0
         ? el(
             "div",
             { class: "fire-alert-callout" },
             el("div", { class: "fire-alert-callout-title", text: "ACTIVE NWS ADVISORY IN EFFECT" }),
             el("div", {
               class: "fire-alert-callout-body",
-              text: activeFireAlerts.map((a) => a.event_name).join(" · "),
+              text: alertNames.join(" · "),
             }),
           )
         : null;
@@ -739,17 +774,18 @@ export class WeatherDashboardView {
 
     const grid = el("div", { class: "seven-day-strip" });
 
-    for (const d of dailyList) {
+    for (let idx = 0; idx < dailyList.length; idx++) {
+      const d = dailyList[idx];
+      const isToday = idx === 0;
       const icon = weatherSvg(d.shortForecast, d.isDaytime, 28);
 
-      // Calculate bar offsets for Apple-weather style range bar
       const barLeftPercent = ((d.lowTemp - weekMin) / weekRange) * 100;
       const barWidthPercent = Math.max(((d.highTemp - d.lowTemp) / weekRange) * 100, 6);
 
       const pCard = el(
         "div",
-        { class: "seven-day-card" },
-        el("div", { class: "seven-day-name", text: d.dayName }),
+        { class: `seven-day-card${isToday ? " is-today" : ""}` },
+        el("div", { class: "seven-day-name", text: isToday ? "TODAY" : d.dayName }),
         el("div", { class: "seven-day-icon" }, icon),
         el(
           "div",
@@ -824,7 +860,7 @@ export class WeatherDashboardView {
     sunSvg.innerHTML = `
       <defs>
         <linearGradient id="solarSkyGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.22" />
+          <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.2" />
           <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.0" />
         </linearGradient>
       </defs>
@@ -1115,7 +1151,6 @@ function calculateSolarTimes(date: Date, lat: number, lon: number): {
 }
 
 function calculateMoonPhase(date: Date): { phaseName: string; illuminationPct: number; waxing: boolean } {
-  // Epoch: Jan 11, 2024 (New Moon)
   const epoch = new Date(Date.UTC(2024, 0, 11, 11, 57, 0)).getTime();
   const synodicMonth = 29.53058867 * 24 * 60 * 60 * 1000;
   const diff = date.getTime() - epoch;
