@@ -147,11 +147,12 @@ export class StreamsView {
 function createRow(row: StreamRow, url: string, oggPlayable: boolean): Row {
   const header = el("div", { class: "stream-header" });
   const audio = oggPlayable
-    ? el("audio", { class: "stream-audio", attrs: { controls: "", preload: "none", src: url } })
+    ? (el("audio", { class: "stream-audio", attrs: { controls: "", preload: "none", src: url } }) as HTMLAudioElement)
     : null;
   const link = el("a", { class: "stream-link", text: row.mount, attrs: { href: url, rel: "noreferrer" } });
 
   if (audio) {
+    audio.volume = 0.5;
     audio.addEventListener("play", () => {
       header.querySelector(".stream-equalizer")?.classList.add("eq-active");
     });

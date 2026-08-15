@@ -1,11 +1,16 @@
-import { el, replaceChildren } from "../dom";
+import { byIdOptional, el, replaceChildren } from "../dom";
+import { tierOf } from "../format";
 import type { Store } from "../store";
-import type { Stats } from "../types";
 
-/** The headline metrics card. Displays system health, path divergence rate,
- * visual distribution breakdown bar, and a balanced 4-metric grid. */
+/**
+ * Alert Ingestion Scorecard.
+ *
+ * Displays active life-safety emergency warnings (SAME broadcast sirens)
+ * alongside regional CAP statements (Air Quality, Heat, Watches), with
+ * real-time telemetry for RF SDR reception and NWS API polling.
+ */
 export function renderStats(container: HTMLElement, store: Store): void {
-  const { stats, errors, system } = store.state;
+  const { stats, alerts, health, services, errors, system, reference } = store.state;
   const error = errors.get("stats");
   if (error) {
     replaceChildren(container, el("p", { class: "panel-error", text: `Stats unavailable — ${error}` }));
@@ -17,129 +22,120 @@ export function renderStats(container: HTMLElement, store: Store): void {
   }
 
   const isOffgrid = system?.mode === "offgrid";
-  const confirmed = stats.counts.CONFIRMED ?? 0;
-  const rfOnly = stats.counts.RF_ONLY ?? 0;
-  const apiOnly = stats.counts.API_ONLY ?? 0;
-  // Not part of the RF/API divergence metric below (design doc §5 defines
-  // that as an RF-vs-CAP comparison specifically) -- shown as its own
-  // tile only once the deployment has actually used keyword detection,
-  // so a stack that's never enabled live transcription doesn't carry a
-  // permanently-zero tile.
-  const transcriptOnly = stats.counts.TRANSCRIPT_ONLY ?? 0;
-  const total = stats.total;
+  const alertsList = Array.from(alerts.values());
 
-  const confirmedPct = total > 0 ? Math.round((confirmed / total) * 100) : 0;
-  const rfOnlyPct = total > 0 ? Math.round((rfOnly / total) * 100) : 0;
-  const apiOnlyPct = total > 0 ? Math.round((apiOnly / total) * 100) : 0;
+  let warningCount = 0;
+  let advisoryCount = 0;
 
-  // System status badge classification
-  let statusBadgeText = "SYNCED";
-  let statusBadgeClass = "badge-status-synced";
-  if (isOffgrid) {
-    statusBadgeText = "OFFGRID MODE";
-    statusBadgeClass = "badge-status-offgrid";
-  } else if (total === 0) {
-    statusBadgeText = "IDLE";
-    statusBadgeClass = "badge-status-idle";
-  } else if (confirmed > 0 && stats.divergence_rate < 0.3) {
-    statusBadgeText = "OPTIMAL";
-    statusBadgeClass = "badge-status-synced";
-  } else if (apiOnly > 0 && rfOnly === 0 && confirmed === 0) {
-    statusBadgeText = "API ONLY";
-    statusBadgeClass = "badge-status-apionly";
-  } else if (rfOnly > 0 && apiOnly === 0 && confirmed === 0) {
-    statusBadgeText = "RF ONLY";
-    statusBadgeClass = "badge-status-rfonly";
+  if (alertsList.length > 0) {
+    for (const alert of alertsList) {
+      const isSameWarning = alert.sources.some((s) => s.kind === "RF") || tierOf(alert, reference) === "A";
+      if (isSameWarning) {
+        warningCount++;
+      } else {
+        advisoryCount++;
+      }
+    }
   } else {
-    statusBadgeText = "DIVERGENT";
-    statusBadgeClass = "badge-status-divergent";
+    warningCount = (stats.counts.CONFIRMED ?? 0) + (stats.counts.RF_ONLY ?? 0);
+    advisoryCount = stats.counts.API_ONLY ?? 0;
   }
 
-  // Segmented distribution progress bar
-  const confirmedWidth = total > 0 ? (confirmed / total) * 100 : 0;
-  const rfWidth = total > 0 ? (rfOnly / total) * 100 : 0;
-  const apiWidth = total > 0 ? (apiOnly / total) * 100 : 0;
+  const totalActive = warningCount + advisoryCount;
+
+  // Header Summary Badge
+  const headerSummary = byIdOptional("stats-header-summary");
+  if (headerSummary) {
+    replaceChildren(
+      headerSummary,
+      el("span", {
+        class: `badge ${warningCount > 0 ? "badge-tier-a" : totalActive > 0 ? "badge-api_only" : "badge-status-idle"}`,
+        text: totalActive === 0 ? "QUIET" : `${totalActive} ACTIVE`,
+      }),
+    );
+  }
+
+  // RF Health Pipeline Status
+  const healthSamples = Array.from(health.values());
+  const rfTotal = healthSamples.length || 7;
+  const rfAlive = healthSamples.filter((s) => !s.dead).length;
+  const rfHealthy = rfAlive > 0;
+
+  // NWS Poller API Service Health
+  const pollerService = services.find((s) => s.service === "nws_poller");
+  const apiHealthy = isOffgrid ? false : pollerService ? pollerService.status === "up" : true;
 
   replaceChildren(
     container,
     el(
       "div",
-      { class: "stats-container" },
-      // Main Primary Card
+      { class: "alert-ingestion-card" },
+      // 2-Column Split Metric Scorecard
       el(
         "div",
-        { class: "stat-tile stat-tile-primary" },
+        { class: "ingestion-split-grid" },
+        // Column 1: SAME Broadcast Warnings
         el(
           "div",
-          { class: "stat-header-row" },
-          el("span", { class: "stat-primary-title", text: "Path Divergence" }),
-          el("span", { class: `badge ${statusBadgeClass}`, text: statusBadgeText })
+          { class: `ingestion-col ingestion-col-warnings${warningCount > 0 ? " active-hazard" : ""}` },
+          el(
+            "div",
+            { class: "ingestion-col-header" },
+            el("span", { class: "ingestion-col-label", text: "SAME Broadcasts" }),
+            el("span", { class: `badge ${warningCount > 0 ? "badge-tier-a" : "badge-status-synced"}`, text: warningCount > 0 ? "ACTIVE" : "QUIET" }),
+          ),
+          el(
+            "div",
+            { class: "ingestion-metric-row" },
+            el("span", { class: `ingestion-val ${warningCount > 0 ? "val-hazard" : "val-quiet"}`, text: String(warningCount) }),
+            el("span", { class: "ingestion-val-unit", text: warningCount === 1 ? "Warning" : "Warnings" }),
+          ),
+          el("div", { class: "ingestion-subtext", text: warningCount === 0 ? "No active broadcast sirens" : "Life-safety broadcast alerts" }),
         ),
+        // Column 2: Regional Advisories (CAP)
         el(
           "div",
-          { class: "stat-primary-main" },
-          el("div", { class: "stat-value-large", text: isOffgrid ? "N/A" : `${(stats.divergence_rate * 100).toFixed(1)}%` }),
-          el("p", { class: "stat-note", text: divergenceNote(stats, isOffgrid) })
+          { class: "ingestion-col ingestion-col-advisories" },
+          el(
+            "div",
+            { class: "ingestion-col-header" },
+            el("span", { class: "ingestion-col-label", text: "Regional Advisories" }),
+            el("span", { class: `badge ${advisoryCount > 0 ? "badge-api_only" : "badge-status-idle"}`, text: advisoryCount > 0 ? "ACTIVE" : "CLEAR" }),
+          ),
+          el(
+            "div",
+            { class: "ingestion-metric-row" },
+            el("span", { class: "ingestion-val val-advisory", text: String(advisoryCount) }),
+            el("span", { class: "ingestion-val-unit", text: advisoryCount === 1 ? "Advisory" : "Advisories" }),
+          ),
+          el("div", { class: "ingestion-subtext", text: advisoryCount === 0 ? "No regional statements" : "NWS CAP statements & watches" }),
         ),
-        // Segmented distribution bar
-        el(
-          "div",
-          { class: "divergence-bar-container", title: `Distribution: ${confirmed} Confirmed (${confirmedPct}%), ${rfOnly} RF Only (${rfOnlyPct}%), ${apiOnly} API Only (${apiOnlyPct}%)` },
-          el("div", { class: "divergence-bar-segment segment-confirmed", style: `width: ${confirmedWidth}%` }),
-          el("div", { class: "divergence-bar-segment segment-rf", style: `width: ${rfWidth}%` }),
-          el("div", { class: "divergence-bar-segment segment-api", style: `width: ${apiWidth}%` })
-        )
       ),
-      // Balanced 4-Column Metric Grid
+      // Seamless Pipeline Telemetry Footer
       el(
         "div",
-        { class: "stats-subgrid" },
+        { class: "ingestion-telemetry-footer" },
         el(
           "div",
-          { class: "stat-tile stat-confirmed" },
-          el("div", { class: "stat-value", text: String(confirmed) }),
-          el("div", { class: "stat-label", text: "Confirmed" }),
-          el("div", { class: "stat-subtext", text: total > 0 ? `${confirmedPct}%` : "—" })
+          { class: "telemetry-item" },
+          el("span", { class: `pipeline-dot ${rfHealthy ? "dot-alive" : "dot-dead"}`, attrs: { "aria-hidden": "true" } }),
+          el("span", { class: "telemetry-label", text: "RF SDR:" }),
+          el("span", { class: "telemetry-value", text: `${rfAlive}/${rfTotal} Channels Live` }),
         ),
         el(
           "div",
-          { class: "stat-tile stat-rf_only" },
-          el("div", { class: "stat-value", text: String(rfOnly) }),
-          el("div", { class: "stat-label", text: "RF Only" }),
-          el("div", { class: "stat-subtext", text: total > 0 ? `${rfOnlyPct}%` : "—" })
+          { class: "telemetry-item" },
+          el("span", {
+            class: `pipeline-dot ${isOffgrid ? "dot-offgrid" : apiHealthy ? "dot-alive" : "dot-dead"}`,
+            attrs: { "aria-hidden": "true" },
+          }),
+          el("span", { class: "telemetry-label", text: "NWS API:" }),
+          el("span", {
+            class: "telemetry-value",
+            text: isOffgrid ? "Offgrid Mode" : apiHealthy ? "Polling Active" : "Degraded",
+          }),
         ),
-        el(
-          "div",
-          { class: "stat-tile stat-api_only" },
-          el("div", { class: "stat-value", text: String(apiOnly) }),
-          el("div", { class: "stat-label", text: "API Only" }),
-          el("div", { class: "stat-subtext", text: total > 0 ? `${apiOnlyPct}%` : "—" })
-        ),
-        transcriptOnly > 0
-          ? el(
-              "div",
-              { class: "stat-tile stat-transcript_only" },
-              el("div", { class: "stat-value", text: String(transcriptOnly) }),
-              el("div", { class: "stat-label", text: "Transcript Only" }),
-              el("div", { class: "stat-subtext", text: total > 0 ? `${Math.round((transcriptOnly / total) * 100)}%` : "—" })
-            )
-          : null,
-        el(
-          "div",
-          { class: "stat-tile stat-total" },
-          el("div", { class: "stat-value", text: String(total) }),
-          el("div", { class: "stat-label", text: "Total" }),
-          el("div", { class: "stat-subtext", text: "Alerts" })
-        )
-      )
-
-    )
+      ),
+    ),
   );
-}
-
-function divergenceNote(stats: Stats, isOffgrid: boolean): string {
-  if (isOffgrid) return "Offgrid mode — all RF alerts are primary.";
-  if (stats.total === 0) return "No alerts recorded yet.";
-  const divergent = (stats.counts.RF_ONLY ?? 0) + (stats.counts.API_ONLY ?? 0);
-  return `${divergent} of ${stats.total} alert${stats.total === 1 ? "" : "s"} seen by only one path`;
 }

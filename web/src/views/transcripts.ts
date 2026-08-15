@@ -19,28 +19,65 @@ export function renderTranscripts(container: HTMLElement, store: Store): void {
     return;
   }
 
+  const sameTranscripts = transcripts
+    .filter((t) => !isLiveTranscript(t))
+    .sort((a, b) => b.timestamp_ns - a.timestamp_ns);
+
+  const liveTranscripts = transcripts
+    .filter(isLiveTranscript)
+    .sort((a, b) => b.timestamp_ns - a.timestamp_ns);
+
   const headerSummary = byIdOptional("transcripts-header-summary");
   if (headerSummary) {
-    const liveCount = transcripts.filter(isLiveTranscript).length;
-    const summaryText = liveCount > 0 ? `${transcripts.length} LOGGED (${liveCount} LIVE)` : `${transcripts.length} LOGGED`;
     replaceChildren(
       headerSummary,
-      el("span", { class: "badge badge-status-idle", text: summaryText }),
+      el("span", {
+        class: "badge badge-status-idle",
+        text: `${sameTranscripts.length} ALERT / ${liveTranscripts.length} LIVE`,
+      }),
     );
   }
 
-  if (transcripts.length === 0) {
-    replaceChildren(container, el("p", { class: "empty", text: "No voice transcripts recorded yet." }));
-    return;
-  }
-
-  // Sort newest first
-  const sorted = [...transcripts].sort((a, b) => b.timestamp_ns - a.timestamp_ns);
-
-  replaceChildren(
-    container,
-    el("ul", { class: "activity-list transcripts-feed" }, ...sorted.slice(0, 100).map(transcriptRow)),
+  // --- Top Section: SAME Alert Voice Transcripts (Tier A, B, C) ---
+  const alertSection = el(
+    "section",
+    { class: "transcripts-subpanel alert-transcripts-section" },
+    el(
+      "div",
+      { class: "transcripts-section-head" },
+      el("h3", { class: "transcripts-section-title", text: "SAME Alert Voice Broadcasts (Tier A / B / C)" }),
+      el("span", { class: "badge badge-api_only", text: `${sameTranscripts.length} recorded` }),
+    ),
+    sameTranscripts.length > 0
+      ? el("ul", { class: "activity-list" }, ...sameTranscripts.slice(0, 20).map(transcriptRow))
+      : el("p", { class: "empty", text: "No SAME alert voice broadcasts captured yet." }),
   );
+
+  // --- Bottom Section: Rolling Live Ambient Transcripts (Last 50 chunks) ---
+  const liveSection = el(
+    "section",
+    { class: "transcripts-subpanel live-transcripts-section" },
+    el(
+      "div",
+      { class: "transcripts-section-head" },
+      el(
+        "div",
+        { class: "dashboard-transcripts-title" },
+        el("span", { class: "live-pulse-dot", attrs: { "aria-hidden": "true" } }),
+        el("h3", { class: "transcripts-section-title", text: "Continuous Ambient Narration" }),
+      ),
+      el("span", { class: "badge badge-transcript_only", text: `Last ${Math.min(liveTranscripts.length, 50)} chunks` }),
+    ),
+    liveTranscripts.length > 0
+      ? el(
+          "div",
+          { class: "transcripts-rolling-window" },
+          el("ul", { class: "activity-list transcripts-feed" }, ...liveTranscripts.slice(0, 50).map(transcriptRow)),
+        )
+      : el("p", { class: "empty", text: "No live ambient transcripts recorded yet." }),
+  );
+
+  replaceChildren(container, alertSection, liveSection);
 }
 
 function transcriptRow(transcript: Transcript): HTMLElement {

@@ -485,12 +485,16 @@ function transcriptPanel(transcripts: Transcript[]): HTMLElement {
           ? el("p", { class: "transcript-text", text: transcript.text })
           : // stt_worker drops the text of a transcript that looks
             // hallucinated, so guard_reason is the only record of why --
-            // and this is exactly the case where the audio matters most.
-            el("p", { class: "transcript-text empty", text: `Text withheld: ${transcript.guard_reason ?? "hallucination guard"}` }),
-        name ? el("audio", { class: "capture-audio", attrs: { controls: "", preload: "none", src: captureUrl(name) } }) : null,
+        name ? createCaptureAudio(captureUrl(name)) : null,
       );
     }),
   );
+}
+
+function createCaptureAudio(url: string): HTMLAudioElement {
+  const audio = el("audio", { class: "capture-audio", attrs: { controls: "", preload: "none", src: url } }) as HTMLAudioElement;
+  audio.volume = 0.5;
+  return audio;
 }
 
 function dispatchPanel(dispatches: Dispatch[], now: Date): HTMLElement {
