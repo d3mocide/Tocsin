@@ -2170,12 +2170,11 @@ footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.25rem;
 }
 
 .weather-dash-title {
-  font-size: 1.35rem;
+  font-size: 1.4rem;
   font-weight: 800;
   color: var(--text);
   margin: 0;
@@ -2447,85 +2446,67 @@ footer {
   transition: width 0.4s ease;
 }
 
-/* Hourly Timeline Track */
-.hourly-timeline-track {
+/* Hourly Meteogram Graph */
+.meteogram-legend {
   display: flex;
-  gap: 0.45rem;
-  overflow-x: auto;
-  padding: 0.4rem 0.2rem 0.8rem;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--border) 80%, white 20%) transparent;
-}
-
-.hourly-timeline-track::-webkit-scrollbar {
-  height: 6px;
-}
-
-.hourly-timeline-track::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.hourly-timeline-track::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--border) 80%, white 20%);
-  border-radius: 3px;
-}
-
-.hourly-cell {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  min-width: 72px;
-  flex: none;
-  padding: 0.55rem 0.35rem;
-  border-radius: 6px;
-  background: var(--panel-deep);
-  border: 1px solid var(--border);
-  text-align: center;
+  gap: 0.75rem;
   font-size: 0.72rem;
-  transition: border-color 0.15s ease, transform 0.15s ease;
-}
-
-.hourly-cell:hover {
-  border-color: var(--border-bright);
-  transform: translateY(-2px);
-}
-
-.hourly-time {
-  font-size: 0.68rem;
   font-weight: 700;
-  color: var(--text-dim);
-  text-transform: uppercase;
 }
 
-.hourly-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 28px;
-  margin: 0.25rem 0;
+.temp-legend {
+  color: #f59e0b;
 }
 
-.hourly-temp {
-  font-size: 0.92rem;
-  font-weight: 800;
-  color: var(--text);
-}
-
-.hourly-precip {
-  font-size: 0.65rem;
-  font-weight: 700;
+.dew-legend {
   color: #38bdf8;
-  min-height: 14px;
-  margin-top: 0.1rem;
 }
 
-.hourly-wind {
-  font-size: 0.64rem;
-  color: var(--text-dim);
-  margin-top: 0.2rem;
+.precip-legend {
+  color: #0284c7;
 }
 
-/* 7-Day Daily Strip */
+.meteogram-container {
+  width: 100%;
+  overflow-x: auto;
+  padding: 0.5rem 0.2rem 0;
+  scrollbar-width: thin;
+}
+
+.meteogram-svg {
+  width: 100%;
+  min-width: 600px;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.meteogram-temp-label {
+  font-size: 11px;
+  font-weight: 800;
+  fill: var(--text);
+}
+
+.meteogram-pop-text {
+  font-size: 9px;
+  font-weight: 700;
+  fill: #38bdf8;
+}
+
+.meteogram-time-label {
+  font-size: 10px;
+  font-weight: 700;
+  fill: var(--text-dim);
+}
+
+.meteogram-wind-label {
+  font-size: 9px;
+  font-weight: 500;
+  fill: var(--text-dim);
+}
+
+/* 7-Day Daily Strip & Range Bars */
 .seven-day-strip {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -2572,28 +2553,46 @@ footer {
   margin: 0.3rem 0;
 }
 
-.seven-day-temps {
+.seven-day-range-widget {
   display: flex;
-  align-items: baseline;
-  gap: 0.15rem;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  padding: 0.15rem 0.2rem;
+  box-sizing: border-box;
 }
 
-.seven-day-high {
-  font-size: 0.95rem;
-  font-weight: 800;
-  color: var(--text);
-}
-
-.seven-day-divider {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  opacity: 0.6;
-}
-
-.seven-day-low {
-  font-size: 0.8rem;
+.seven-day-low-val {
+  font-size: 0.74rem;
   font-weight: 600;
   color: var(--text-dim);
+  width: 20px;
+  text-align: right;
+}
+
+.seven-day-range-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--panel-raised) 70%, black 30%);
+  overflow: hidden;
+}
+
+.seven-day-range-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #38bdf8, #f59e0b);
+}
+
+.seven-day-high-val {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--text);
+  width: 20px;
+  text-align: left;
 }
 
 .seven-day-precip {

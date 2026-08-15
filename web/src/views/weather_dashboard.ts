@@ -33,8 +33,8 @@ export interface ExtendedPeriod {
 export interface DailySummary {
   dayName: string;
   isDaytime: boolean;
-  highTemp: number | null;
-  lowTemp: number | null;
+  highTemp: number;
+  lowTemp: number;
   tempUnit: string;
   popMax: number;
   shortForecast: string;
@@ -276,7 +276,7 @@ export class WeatherDashboardView {
 
     const { city, state, wfo, currentObservation, hourly, extended, stations, selectedStationId } = this.data;
 
-    // 1. Header Toolbar
+    // 1. Header Toolbar (clean title without "Weather Center" and without dividing bottom bar)
     const refreshBtn = el("button", { class: "btn-secondary", text: "Refresh Data", attrs: { type: "button" } });
     refreshBtn.addEventListener("click", () => {
       void this.fetchWeatherDashboard(lat, lon, true);
@@ -288,7 +288,7 @@ export class WeatherDashboardView {
       el(
         "div",
         { class: "weather-dash-title-group" },
-        el("h2", { class: "weather-dash-title", text: `${city || "Local"}, ${state || "OR"} Weather Center` }),
+        el("h2", { class: "weather-dash-title", text: `${city || "Local"}, ${state || "OR"}` }),
         el("div", { class: "weather-dash-subtitle", text: `NWS WFO ${wfo || "PQR"} · Updated ${new Date(this.data.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` }),
       ),
       el("div", { class: "weather-dash-actions" }, refreshBtn),
@@ -297,14 +297,15 @@ export class WeatherDashboardView {
     // 2. METAR Surface Observation Hero
     const metarHero = this.renderMetarHero(currentObservation, stations, selectedStationId);
 
-    // 3. Hourly Forecast Horizontal Timeline
-    const hourlySection = this.renderHourlyTimeline(hourly);
+    // 3. Hourly Forecast Meteogram Graph
+    const hourlySection = this.renderHourlyMeteogram(hourly);
 
     // 4. Fire Weather & Atmospheric Danger Risk Card
     const fireRiskCard = this.renderFireRisk(currentObservation, hourly);
 
-    // 5. 7-Day Extended Outlook Matrix (Paired Daily Summary)
-    const extendedSection = this.render7DayOutlook(extended);
+    // 5. 7-Day Extended Outlook Matrix (Enhanced with visual temp range bars)
+    const currentHighEstimate = currentObservation?.temperatureF ?? (hourly[0]?.temperature ?? 75);
+    const extendedSection = this.render7DayOutlook(extended, currentHighEstimate);
 
     const mainGrid = el(
       "div",
@@ -385,12 +386,19 @@ export class WeatherDashboardView {
     return card;
   }
 
-  private renderHourlyTimeline(hourly: HourlyPeriod[]): HTMLElement {
+  private renderHourlyMeteogram(hourly: HourlyPeriod[]): HTMLElement {
     const card = el("section", { class: "panel weather-hourly-panel" });
     const head = el(
       "div",
       { class: "panel-head" },
-      el("h3", { text: "Hourly Forecast Timeline (Next 36 Hours)" }),
+      el("h3", { text: "Hourly Forecast & Meteogram (Next 24 Hours)" }),
+      el(
+        "div",
+        { class: "meteogram-legend" },
+        el("span", { class: "legend-item temp-legend", text: "• Temp (°F)" }),
+        el("span", { class: "legend-item dew-legend", text: "• Dew Point" }),
+        el("span", { class: "legend-item precip-legend", text: "▪ Rain %" }),
+      ),
     );
 
     if (hourly.length === 0) {
@@ -398,30 +406,180 @@ export class WeatherDashboardView {
       return card;
     }
 
-    const timeline = el("div", { class: "hourly-timeline-track" });
+    const slice = hourly.slice(0, 24);
+    const temps = slice.map((h) => h.temperature);
+    const dews = slice.map((h) => (h.dewpoint?.value !== null && h.dewpoint?.value !== undefined ? (h.dewpoint.value * 9) / 5 + 32 : h.temperature - 15));
+    const pops = slice.map((h) => h.probabilityOfPrecipitation?.value ?? 0);
 
-    for (const h of hourly) {
+    const minVal = Math.min(...temps, ...dews) - 4;
+    const maxVal = Math.max(...temps, ...dews) + 6;
+    const range = Math.max(maxVal - minVal, 10);
+
+    const W = 860;
+    const H = 200;
+    const padTop = 32;
+    const padBottom = 48;
+    const graphH = H - padTop - padBottom;
+
+    const stepX = W / (slice.length - 1);
+
+    const getY = (val: number) => padTop + graphH - ((val - minVal) / range) * graphH;
+
+    // SVG Points
+    const tempPoints = slice.map((_, i) => ({ x: i * stepX, y: getY(temps[i]) }));
+    const dewPoints = slice.map((_, i) => ({ x: i * stepX, y: getY(dews[i]) }));
+
+    // Smooth Bezier Curve generator
+    const makeBezierPath = (pts: { x: number; y: number }[]) => {
+      if (pts.length === 0) return "";
+      let d = `M ${pts[0].x} ${pts[0].y}`;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[i === 0 ? 0 : i - 1];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[i + 2 >= pts.length ? pts.length - 1 : i + 2];
+        const cp1x = p1.x + (p2.x - p0.x) / 6;
+        const cp1y = p1.y + (p2.y - p0.y) / 6;
+        const cp2x = p2.x - (p3.x - p1.x) / 6;
+        const cp2y = p2.y - (p3.y - p1.y) / 6;
+        d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+      }
+      return d;
+    };
+
+    const tempPathD = makeBezierPath(tempPoints);
+    const tempAreaD = `${tempPathD} L ${W} ${H - padBottom} L 0 ${H - padBottom} Z`;
+    const dewPathD = makeBezierPath(dewPoints);
+
+    // Build SVG elements
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.setAttribute("class", "meteogram-svg");
+    svg.setAttribute("preserveAspectRatio", "none");
+
+    // Gradients
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    defs.innerHTML = `
+      <linearGradient id="tempAreaGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.32" />
+        <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.0" />
+      </linearGradient>
+      <linearGradient id="precipGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.65" />
+        <stop offset="100%" stop-color="#0284c7" stop-opacity="0.25" />
+      </linearGradient>
+    `;
+    svg.appendChild(defs);
+
+    // Baseline gridlines
+    const gridY1 = getY(Math.round(minVal + range * 0.33));
+    const gridY2 = getY(Math.round(minVal + range * 0.66));
+    const gridLines = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    gridLines.setAttribute("class", "meteogram-grid");
+    gridLines.innerHTML = `
+      <line x1="0" y1="${gridY1}" x2="${W}" y2="${gridY1}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4 4" />
+      <line x1="0" y1="${gridY2}" x2="${W}" y2="${gridY2}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4 4" />
+      <line x1="0" y1="${H - padBottom}" x2="${W}" y2="${H - padBottom}" stroke="rgba(255,255,255,0.12)" />
+    `;
+    svg.appendChild(gridLines);
+
+    // Precipitation Bars along bottom
+    const precipG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    slice.forEach((_, i) => {
+      const pop = pops[i];
+      if (pop > 0) {
+        const barH = (pop / 100) * 32;
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", String(i * stepX - 8));
+        rect.setAttribute("y", String(H - padBottom - barH));
+        rect.setAttribute("width", "16");
+        rect.setAttribute("height", String(barH));
+        rect.setAttribute("rx", "2");
+        rect.setAttribute("fill", "url(#precipGrad)");
+        precipG.appendChild(rect);
+
+        const popText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        popText.setAttribute("x", String(i * stepX));
+        popText.setAttribute("y", String(H - padBottom - barH - 3));
+        popText.setAttribute("text-anchor", "middle");
+        popText.setAttribute("class", "meteogram-pop-text");
+        popText.textContent = `${pop}%`;
+        precipG.appendChild(popText);
+      }
+    });
+    svg.appendChild(precipG);
+
+    // Area Fill
+    const areaPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    areaPath.setAttribute("d", tempAreaD);
+    areaPath.setAttribute("fill", "url(#tempAreaGrad)");
+    svg.appendChild(areaPath);
+
+    // Dew Point Line (Cyan dashed)
+    const dewPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    dewPath.setAttribute("d", dewPathD);
+    dewPath.setAttribute("fill", "none");
+    dewPath.setAttribute("stroke", "#38bdf8");
+    dewPath.setAttribute("stroke-width", "1.5");
+    dewPath.setAttribute("stroke-dasharray", "3 3");
+    dewPath.setAttribute("opacity", "0.75");
+    svg.appendChild(dewPath);
+
+    // Temperature Line (Amber solid)
+    const tempPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    tempPath.setAttribute("d", tempPathD);
+    tempPath.setAttribute("fill", "none");
+    tempPath.setAttribute("stroke", "#f59e0b");
+    tempPath.setAttribute("stroke-width", "2.5");
+    svg.appendChild(tempPath);
+
+    // Data points, text labels, and times
+    const labelsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    slice.forEach((h, i) => {
+      const pt = tempPoints[i];
       const timeStr = formatHourlyTime(h.startTime);
-      const icon = weatherSvg(h.shortForecast, h.isDaytime, 22);
-      const precip = h.probabilityOfPrecipitation?.value;
-      const precipStr = precip !== null && precip !== undefined && precip > 0 ? `${precip}%` : "";
 
-      const col = el(
-        "div",
-        { class: `hourly-cell${h.isDaytime ? " is-day" : " is-night"}` },
-        el("div", { class: "hourly-time", text: timeStr }),
-        el("div", { class: "hourly-icon" }, icon),
-        el("div", { class: "hourly-temp", text: `${h.temperature}°` }),
-        el(
-          "div",
-          { class: "hourly-precip", text: precipStr || " " },
-        ),
-        el("div", { class: "hourly-wind", text: `${h.windDirection} ${h.windSpeed.replace(" mph", "")}` }),
-      );
-      timeline.appendChild(col);
-    }
+      // Dot on temp line
+      const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      dot.setAttribute("cx", String(pt.x));
+      dot.setAttribute("cy", String(pt.y));
+      dot.setAttribute("r", "3.5");
+      dot.setAttribute("fill", h.isDaytime ? "#f59e0b" : "#6366f1");
+      dot.setAttribute("stroke", "#ffffff");
+      dot.setAttribute("stroke-width", "1.5");
+      labelsG.appendChild(dot);
 
-    card.append(head, timeline);
+      // Temperature text
+      const tText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      tText.setAttribute("x", String(pt.x));
+      tText.setAttribute("y", String(pt.y - 8));
+      tText.setAttribute("text-anchor", "middle");
+      tText.setAttribute("class", "meteogram-temp-label");
+      tText.textContent = `${h.temperature}°`;
+      labelsG.appendChild(tText);
+
+      // Time text on bottom axis
+      const timeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      timeText.setAttribute("x", String(pt.x));
+      timeText.setAttribute("y", String(H - 12));
+      timeText.setAttribute("text-anchor", "middle");
+      timeText.setAttribute("class", "meteogram-time-label");
+      timeText.textContent = timeStr;
+      labelsG.appendChild(timeText);
+
+      // Wind text
+      const windText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      windText.setAttribute("x", String(pt.x));
+      windText.setAttribute("y", String(H - 26));
+      windText.setAttribute("text-anchor", "middle");
+      windText.setAttribute("class", "meteogram-wind-label");
+      windText.textContent = `${h.windDirection} ${h.windSpeed.replace(" mph", "")}`;
+      labelsG.appendChild(windText);
+    });
+    svg.appendChild(labelsG);
+
+    const wrapper = el("div", { class: "meteogram-container" }, svg);
+    card.append(head, wrapper);
     return card;
   }
 
@@ -512,17 +670,14 @@ export class WeatherDashboardView {
     const meter = el("div", { class: "nfdrs-meter-strip" }, ...segments);
 
     // Threat Factor Rows with mini progress bars
-    // 1. Relative Humidity Factor (0% to 100%, lower is worse)
     const rhPercentClamped = Math.min(Math.max(rh, 0), 100);
     const rhColor = rh <= 20 ? "#e11d48" : rh <= 30 ? "#f97316" : rh <= 40 ? "#eab308" : "#22c55e";
     const rhStatus = rh <= 20 ? "Critical (<20%)" : rh <= 30 ? "Dry (20-30%)" : "Safe (>30%)";
 
-    // 2. Wind & Gust Factor (0 to 35 mph, higher is worse)
     const windPercentClamped = Math.min((gust / 35) * 100, 100);
     const windColor = gust >= 20 ? "#e11d48" : gust >= 12 ? "#f97316" : "#22c55e";
     const windStatus = gust >= 20 ? "Strong Gusts" : gust >= 12 ? "Moderate" : "Light (<10 mph)";
 
-    // 3. Air Temp Factor (40°F to 105°F, higher is worse)
     const tempPercentClamped = Math.min(Math.max(((tempF - 40) / 65) * 100, 0), 100);
     const tempColor = tempF >= 90 ? "#e11d48" : tempF >= 80 ? "#f97316" : "#22c55e";
     const tempStatus = tempF >= 90 ? "High Evaporation" : tempF >= 80 ? "Warm" : "Moderate";
@@ -560,7 +715,7 @@ export class WeatherDashboardView {
     return card;
   }
 
-  private render7DayOutlook(extended: ExtendedPeriod[]): HTMLElement {
+  private render7DayOutlook(extended: ExtendedPeriod[], currentHighFallback: number): HTMLElement {
     const card = el("section", { class: "panel weather-extended-panel" });
     const head = el("div", { class: "panel-head" }, el("h3", { text: "7-Day Extended Weather Outlook" }));
 
@@ -569,15 +724,22 @@ export class WeatherDashboardView {
       return card;
     }
 
-    // Group day and night periods into 7 daily summaries
-    const dailyList: DailySummary[] = groupDailyForecasts(extended);
+    const dailyList: DailySummary[] = groupDailyForecasts(extended, currentHighFallback);
+
+    const allHighs = dailyList.map((d) => d.highTemp);
+    const allLows = dailyList.map((d) => d.lowTemp);
+    const weekMin = Math.min(...allLows);
+    const weekMax = Math.max(...allHighs);
+    const weekRange = Math.max(weekMax - weekMin, 1);
 
     const grid = el("div", { class: "seven-day-strip" });
 
     for (const d of dailyList) {
       const icon = weatherSvg(d.shortForecast, d.isDaytime, 28);
-      const highStr = d.highTemp !== null ? `${d.highTemp}°` : "--";
-      const lowStr = d.lowTemp !== null ? `${d.lowTemp}°` : "--";
+
+      // Calculate bar offsets for Apple-weather style range bar
+      const barLeftPercent = ((d.lowTemp - weekMin) / weekRange) * 100;
+      const barWidthPercent = Math.max(((d.highTemp - d.lowTemp) / weekRange) * 100, 6);
 
       const pCard = el(
         "div",
@@ -586,10 +748,17 @@ export class WeatherDashboardView {
         el("div", { class: "seven-day-icon" }, icon),
         el(
           "div",
-          { class: "seven-day-temps" },
-          el("span", { class: "seven-day-high", text: highStr }),
-          el("span", { class: "seven-day-divider", text: "/" }),
-          el("span", { class: "seven-day-low", text: lowStr }),
+          { class: "seven-day-range-widget" },
+          el("span", { class: "seven-day-low-val", text: `${d.lowTemp}°` }),
+          el(
+            "div",
+            { class: "seven-day-range-track" },
+            el("div", {
+              class: "seven-day-range-bar",
+              style: `left: ${barLeftPercent}%; width: ${barWidthPercent}%;`,
+            }),
+          ),
+          el("span", { class: "seven-day-high-val", text: `${d.highTemp}°` }),
         ),
         d.popMax > 0
           ? el("div", { class: "seven-day-precip", text: `${d.popMax}% rain` })
@@ -604,13 +773,12 @@ export class WeatherDashboardView {
   }
 }
 
-function groupDailyForecasts(periods: ExtendedPeriod[]): DailySummary[] {
+function groupDailyForecasts(periods: ExtendedPeriod[], currentHighFallback: number): DailySummary[] {
   const map: Map<string, DailySummary> = new Map();
 
   for (const p of periods) {
-    // Extract base day name (e.g. "This Afternoon" -> "Today", "Saturday Night" -> "Saturday")
     let baseDay = p.name.replace(/ Night$/, "").trim();
-    if (baseDay.toLowerCase().includes("afternoon") || baseDay.toLowerCase().includes("today")) {
+    if (baseDay.toLowerCase().includes("afternoon") || baseDay.toLowerCase().includes("today") || baseDay.toLowerCase().includes("tonight")) {
       baseDay = "Today";
     }
 
@@ -618,8 +786,8 @@ function groupDailyForecasts(periods: ExtendedPeriod[]): DailySummary[] {
       map.set(baseDay, {
         dayName: baseDay,
         isDaytime: p.isDaytime,
-        highTemp: p.isDaytime ? p.temperature : null,
-        lowTemp: !p.isDaytime ? p.temperature : null,
+        highTemp: p.isDaytime ? p.temperature : currentHighFallback,
+        lowTemp: !p.isDaytime ? p.temperature : p.temperature - 15,
         tempUnit: p.temperatureUnit,
         popMax: p.probabilityOfPrecipitation?.value ?? 0,
         shortForecast: p.shortForecast,
@@ -627,12 +795,12 @@ function groupDailyForecasts(periods: ExtendedPeriod[]): DailySummary[] {
       });
     } else {
       const entry = map.get(baseDay)!;
-      if (p.isDaytime && entry.highTemp === null) {
+      if (p.isDaytime) {
         entry.highTemp = p.temperature;
         entry.shortForecast = p.shortForecast;
         entry.detailedForecast = p.detailedForecast;
         entry.isDaytime = true;
-      } else if (!p.isDaytime && entry.lowTemp === null) {
+      } else {
         entry.lowTemp = p.temperature;
       }
       const pPop = p.probabilityOfPrecipitation?.value ?? 0;
