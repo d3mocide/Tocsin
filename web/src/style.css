@@ -31,6 +31,10 @@
   box-sizing: border-box;
 }
 
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -261,12 +265,21 @@ body {
   margin-bottom: 0.75rem;
 }
 
-.panel-head h2 {
+.panel-head h2,
+.panel-head h3 {
   margin: 0;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.panel-head h2 {
   font-size: 0.75rem;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  font-weight: 700;
 }
 
 /* Wide content scrolls inside its own panel; the page body never scrolls
@@ -2206,8 +2219,7 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
-  padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.75rem;
 }
 
 .metar-head-row {
@@ -2631,8 +2643,8 @@ footer {
 
 .solar-arc-container {
   width: 100%;
-  max-width: 260px;
-  margin: 0.2rem auto 0;
+  max-width: 320px;
+  margin: 0 auto;
 }
 
 .solar-arc-svg {
@@ -2685,42 +2697,138 @@ footer {
   text-align: center;
 }
 
-.lunar-status-row {
+.celestial-dual-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.celestial-widget-card {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  padding: 0.45rem 0.65rem;
+  gap: 0.65rem;
+  padding: 0.5rem 0.65rem;
   background: var(--panel-deep);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
 
-.lunar-icon-container {
+.celestial-widget-icon {
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
 }
 
-.lunar-details {
+.celestial-widget-content {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.12rem;
+  min-width: 0;
 }
 
-.lunar-phase-name {
+.celestial-widget-title {
   font-size: 0.78rem;
   font-weight: 800;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.lunar-illumination {
-  font-size: 0.68rem;
+.celestial-widget-sub {
+  font-size: 0.66rem;
   color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uv-score-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.82rem;
+  font-weight: 800;
+  flex: none;
+  background: color-mix(in srgb, currentColor 15%, transparent);
 }
 
 /* Air Quality Index (AQI) */
+.air-quality-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.aqi-hero-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--panel-deep);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.aqi-hero-score-group {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.aqi-hero-number {
+  font-size: 2.2rem;
+  font-weight: 900;
+  line-height: 1;
+  font-family: ui-monospace, monospace;
+}
+
+.aqi-hero-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.aqi-hero-tag {
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+
+.aqi-hero-cat-badge {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  border: 1px solid;
+  width: fit-content;
+  letter-spacing: 0.03em;
+}
+
+.aqi-hero-alert-banner {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #f97316;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+  line-height: 1.35;
+}
+
+.aqi-hero-normal-desc {
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
 .aqi-meter-strip {
   display: grid;
   grid-template-columns: repeat(6, 1fr);

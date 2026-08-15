@@ -799,38 +799,55 @@ export class WeatherDashboardView {
     if (isDay) {
       sunProgress = (nowMinutes - solarTimes.sunriseMinutes) / Math.max(solarTimes.sunsetMinutes - solarTimes.sunriseMinutes, 1);
     } else if (nowMinutes < solarTimes.sunriseMinutes) {
-      sunProgress = -0.15; // Below horizon (morning)
+      sunProgress = -0.15;
     } else {
-      sunProgress = 1.15; // Below horizon (night)
+      sunProgress = 1.15;
     }
 
-    // Solar Arc SVG
-    const arcW = 280;
-    const arcH = 90;
-    const r = 110;
+    // Solar Arc SVG dimensions
+    const arcW = 340;
+    const arcH = 115;
+    const r = 135;
     const cx = arcW / 2;
-    const cy = 82;
+    const cy = 100;
 
-    // Calculate sun dot coordinates along semicircle
+    // Calculate sun position & elevation angle
     const angleRad = Math.PI - Math.min(Math.max(sunProgress, 0), 1) * Math.PI;
     const sunX = cx + r * Math.cos(angleRad);
     const sunY = cy - r * Math.sin(angleRad);
+    const elevationDeg = Math.round(Math.sin(angleRad) * (90 - Math.abs(lat - 23.45)));
 
     const sunSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     sunSvg.setAttribute("viewBox", `0 0 ${arcW} ${arcH}`);
     sunSvg.setAttribute("class", "solar-arc-svg");
 
     sunSvg.innerHTML = `
-      <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-dasharray="4 4" stroke-width="2" />
-      <line x1="10" y1="${cy}" x2="${arcW - 10}" y2="${cy}" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" />
+      <defs>
+        <linearGradient id="solarSkyGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.22" />
+          <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.0" />
+        </linearGradient>
+      </defs>
+      <!-- Sun Sky Area Fill -->
+      <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy} Z" fill="url(#solarSkyGrad)" />
+      <!-- Solar Arc -->
+      <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="rgba(245, 158, 11, 0.45)" stroke-dasharray="4 4" stroke-width="2" />
+      <!-- Horizon Line -->
+      <line x1="8" y1="${cy}" x2="${arcW - 8}" y2="${cy}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5" />
+      <!-- Noon Apex Notch -->
+      <line x1="${cx}" y1="${cy - r - 4}" x2="${cx}" y2="${cy - r + 4}" stroke="rgba(245, 158, 11, 0.8)" stroke-width="1.5" />
       ${
         isDay
           ? `
-        <circle cx="${sunX}" cy="${sunY}" r="10" fill="#f59e0b" fill-opacity="0.25" />
-        <circle cx="${sunX}" cy="${sunY}" r="5.5" fill="#fbbf24" stroke="#ffffff" stroke-width="1.5" />
+        <!-- Plumb line down to horizon -->
+        <line x1="${sunX}" y1="${sunY}" x2="${sunX}" y2="${cy}" stroke="rgba(251, 191, 36, 0.3)" stroke-dasharray="2 2" stroke-width="1" />
+        <!-- Glowing Sun -->
+        <circle cx="${sunX}" cy="${sunY}" r="12" fill="#f59e0b" fill-opacity="0.2" />
+        <circle cx="${sunX}" cy="${sunY}" r="6.5" fill="#fbbf24" stroke="#ffffff" stroke-width="2" />
       `
           : `
-        <circle cx="${cx}" cy="${cy + 5}" r="5" fill="#6366f1" fill-opacity="0.5" />
+        <!-- Night Sun under horizon -->
+        <circle cx="${cx}" cy="${cy + 6}" r="6" fill="#6366f1" fill-opacity="0.6" stroke="#a5b4fc" stroke-width="1.5" />
       `
       }
     `;
@@ -841,14 +858,20 @@ export class WeatherDashboardView {
       const remMin = solarTimes.sunsetMinutes - nowMinutes;
       const remH = Math.floor(remMin / 60);
       const remM = remMin % 60;
-      countdownText = `Daylight Remaining: ${remH}h ${remM}m`;
+      countdownText = `☀️ Daylight Remaining: ${remH}h ${remM}m (${elevationDeg}° Sun Elevation)`;
     } else {
       let dawnMin = solarTimes.sunriseMinutes - nowMinutes;
       if (dawnMin < 0) dawnMin += 24 * 60;
       const dH = Math.floor(dawnMin / 60);
       const dM = dawnMin % 60;
-      countdownText = `Dawn in ${dH}h ${dM}m`;
+      countdownText = `🌙 Dawn in ${dH}h ${dM}m (Night Phase)`;
     }
+
+    // Estimated UV Index based on solar elevation
+    const peakUv = 7.5;
+    const currentUv = isDay ? Math.max(Math.round((Math.sin(angleRad) * peakUv) * 10) / 10, 0.5) : 0;
+    const uvRisk = currentUv >= 8 ? "Very High" : currentUv >= 6 ? "High" : currentUv >= 3 ? "Moderate" : "Low";
+    const uvColor = currentUv >= 8 ? "#ef4444" : currentUv >= 6 ? "#f97316" : currentUv >= 3 ? "#eab308" : "#22c55e";
 
     const body = el(
       "div",
@@ -864,13 +887,32 @@ export class WeatherDashboardView {
       el("div", { class: "daylight-status-banner", text: countdownText }),
       el(
         "div",
-        { class: "lunar-status-row" },
-        el("div", { class: "lunar-icon-container" }, moonSvg(moonInfo.phaseName, 26)),
+        { class: "celestial-dual-grid" },
         el(
           "div",
-          { class: "lunar-details" },
-          el("div", { class: "lunar-phase-name", text: moonInfo.phaseName }),
-          el("div", { class: "lunar-illumination", text: `${moonInfo.illuminationPct}% illuminated · ${moonInfo.waxing ? "Waxing" : "Waning"}` }),
+          { class: "celestial-widget-card" },
+          el("div", { class: "celestial-widget-icon" }, moonSvg(moonInfo.phaseName, 28)),
+          el(
+            "div",
+            { class: "celestial-widget-content" },
+            el("div", { class: "celestial-widget-title", text: moonInfo.phaseName }),
+            el("div", { class: "celestial-widget-sub", text: `${moonInfo.illuminationPct}% illuminated · ${moonInfo.waxing ? "Waxing" : "Waning"}` }),
+          ),
+        ),
+        el(
+          "div",
+          { class: "celestial-widget-card" },
+          el(
+            "div",
+            { class: "uv-score-circle", style: `border-color: ${uvColor}; color: ${uvColor};` },
+            String(currentUv),
+          ),
+          el(
+            "div",
+            { class: "celestial-widget-content" },
+            el("div", { class: "celestial-widget-title", text: `UV Index: ${uvRisk}` }),
+            el("div", { class: "celestial-widget-sub", text: `Peak ${peakUv} at Solar Noon` }),
+          ),
         ),
       ),
     );
@@ -903,7 +945,7 @@ export class WeatherDashboardView {
     let aqiCategory = "GOOD";
     let aqiColor = "#22c55e";
     let aqiIndex = 0; // 0 to 5
-    let healthGuidance = "Air quality is satisfactory with negligible smoke or pollution risks.";
+    let healthGuidance = "Air quality is satisfactory with clean atmospheric conditions.";
 
     const vis = obs?.visibilityMiles ?? 10;
     const isSmoky = (obs?.textDescription || "").toLowerCase().includes("smoke") || (obs?.textDescription || "").toLowerCase().includes("haze");
@@ -913,17 +955,32 @@ export class WeatherDashboardView {
       aqiCategory = "UNHEALTHY FOR SENSITIVE GROUPS";
       aqiColor = "#f97316";
       aqiIndex = 2;
-      healthGuidance = "Wildfire Smoke Advisory in effect: Sensitive individuals should reduce prolonged outdoor exertion.";
+      healthGuidance = "Wildfire Smoke Advisory: Sensitive individuals should reduce prolonged outdoor exertion.";
     } else if (isSmoky || vis < 6) {
       aqiScore = 74;
       aqiCategory = "MODERATE";
       aqiColor = "#eab308";
       aqiIndex = 1;
-      healthGuidance = "Acceptable air quality; patchy smoke or dust may affect unusually sensitive persons.";
+      healthGuidance = "Acceptable air quality; patchy wildfire smoke or dust may affect unusually sensitive persons.";
     }
 
+    // Hero Top Banner with Large AQI number
+    const heroRow = el(
+      "div",
+      { class: "aqi-hero-card" },
+      el(
+        "div",
+        { class: "aqi-hero-score-group" },
+        el("div", { class: "aqi-hero-number", style: `color: ${aqiColor};`, text: String(aqiScore) }),
+        el("div", { class: "aqi-hero-label-group" }, el("div", { class: "aqi-hero-tag", text: "AQI SCORE" }), el("div", { class: "aqi-hero-cat-badge", style: `background: color-mix(in srgb, ${aqiColor} 20%, transparent); color: ${aqiColor}; border-color: ${aqiColor};`, text: aqiCategory })),
+      ),
+      activeAqiAlerts.length > 0
+        ? el("div", { class: "aqi-hero-alert-banner" }, el("span", { class: "aqi-alert-icon", text: "⚠️" }), el("span", { text: healthGuidance }))
+        : el("div", { class: "aqi-hero-normal-desc", text: healthGuidance }),
+    );
+
     // 6-segment EPA AQI Meter
-    const aqiLabels = ["Good", "Mod", "USG", "Unhealthy", "V.Unhealthy", "Hazardous"];
+    const aqiLabels = ["Good", "Moderate", "USG", "Unhealthy", "V.Unhealthy", "Hazardous"];
     const aqiColors = ["#22c55e", "#eab308", "#f97316", "#ef4444", "#a855f7", "#881337"];
 
     const aqiSegments = aqiLabels.map((lbl, idx) => {
@@ -946,39 +1003,23 @@ export class WeatherDashboardView {
     const pm25Val = aqiScore > 100 ? "42.5 µg/m³" : aqiScore > 50 ? "18.2 µg/m³" : "7.4 µg/m³";
     const pm25Percent = Math.min((aqiScore / 200) * 100, 100);
 
-    const ozoneVal = "0.042 ppm (Normal)";
+    const ozoneVal = "0.042 ppm";
     const ozonePercent = 35;
 
     const clarityVal = `${vis.toFixed(1)} mi`;
     const clarityPercent = Math.min((vis / 10) * 100, 100);
+    const clarityStatus = vis >= 10 ? "Clear / Unrestricted" : vis >= 5 ? "Hazy / Moderate" : "Dense Smoke";
+    const clarityColor = vis >= 10 ? "#22c55e" : vis >= 5 ? "#eab308" : "#ef4444";
 
     const pollutantRows = el(
       "div",
       { class: "fire-factors-container" },
       renderFactorRow("PM2.5 Wildfire Smoke", pm25Val, aqiCategory, pm25Percent, aqiColor),
-      renderFactorRow("Ground Ozone (O3)", ozoneVal, "Good", ozonePercent, "#22c55e"),
-      renderFactorRow("Visual Clarity", clarityVal, vis >= 10 ? "Clear" : "Reduced", clarityPercent, vis >= 10 ? "#22c55e" : "#eab308"),
+      renderFactorRow("Ground Ozone (O3)", ozoneVal, "Good (0.04 ppm)", ozonePercent, "#22c55e"),
+      renderFactorRow("Visual Clarity", clarityVal, clarityStatus, clarityPercent, clarityColor),
     );
 
-    const body = el(
-      "div",
-      { class: "fire-risk-body" },
-      el(
-        "div",
-        { class: "fire-risk-badge-row" },
-        el(
-          "div",
-          {
-            class: "fire-risk-badge",
-            style: `background: color-mix(in srgb, ${aqiColor} 18%, transparent); color: ${aqiColor}; border-color: ${aqiColor};`,
-          },
-          `${aqiScore} AQI · ${aqiCategory}`,
-        ),
-        el("div", { class: "fire-risk-desc", text: healthGuidance }),
-      ),
-      meter,
-      pollutantRows,
-    );
+    const body = el("div", { class: "air-quality-body" }, heroRow, meter, pollutantRows);
 
     card.append(head, body);
     return card;
