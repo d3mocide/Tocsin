@@ -805,11 +805,11 @@ export class WeatherDashboardView {
     }
 
     // Solar Arc SVG dimensions
-    const arcW = 340;
-    const arcH = 115;
-    const r = 135;
+    const arcW = 320;
+    const arcH = 105;
+    const r = 90;
     const cx = arcW / 2;
-    const cy = 100;
+    const cy = 96;
 
     // Calculate sun position & elevation angle
     const angleRad = Math.PI - Math.min(Math.max(sunProgress, 0), 1) * Math.PI;
