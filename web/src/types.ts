@@ -137,6 +137,8 @@ export interface SystemInfo {
   icecast_public_url: string | null;
   icecast_port: number | null;
   captures_available: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface StreamRow {

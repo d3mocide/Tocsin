@@ -204,6 +204,8 @@ def create_app(
             "icecast_public_url": config.icecast_public_url if config else None,
             "icecast_port": config.icecast_port if config else None,
             "captures_available": captures_dir is not None and captures_dir.is_dir(),
+            "latitude": config.latitude if config else None,
+            "longitude": config.longitude if config else None,
         }
 
     @app.get("/services")

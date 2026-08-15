@@ -1257,6 +1257,145 @@ body {
   flex: 1;
 }
 
+/* ---- local forecast ---------------------------------------------- */
+
+.forecast-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.forecast-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel-deep);
+}
+
+.forecast-hero.is-day {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--panel-deep)), var(--panel-deep));
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+.forecast-hero.is-night {
+  background: linear-gradient(135deg, color-mix(in srgb, #6366f1 12%, var(--panel-deep)), var(--panel-deep));
+  border-color: color-mix(in srgb, #6366f1 30%, var(--border));
+}
+
+.forecast-hero-left {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.forecast-hero-emoji {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.forecast-hero-temps {
+  display: flex;
+  flex-direction: column;
+}
+
+.forecast-hero-val {
+  font-size: 1.55rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.forecast-hero-desc {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-top: 0.2rem;
+}
+
+.forecast-hero-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+.forecast-period-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+}
+
+.forecast-period-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.45rem 0.25rem;
+  border-radius: 6px;
+  background: var(--panel-deep);
+  border: 1px solid var(--border);
+  text-align: center;
+  font-size: 0.72rem;
+  transition: border-color 0.15s ease;
+}
+
+.forecast-period-card:hover {
+  border-color: var(--border-bright);
+}
+
+.forecast-period-name {
+  font-weight: 600;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.forecast-period-emoji {
+  font-size: 1.15rem;
+  margin: 0.15rem 0;
+}
+
+.forecast-period-temp {
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.forecast-period-desc {
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  margin-top: 0.1rem;
+}
+
+.forecast-synopsis {
+  padding: 0.45rem 0.65rem;
+  background: color-mix(in srgb, var(--panel-deep) 70%, black 30%);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.forecast-synopsis-label {
+  font-weight: 700;
+  color: var(--text);
+  margin-right: 0.25rem;
+}
+
 /* ---- dispatch summary --------------------------------------------- */
 
 .dispatch-headline {
@@ -1517,6 +1656,37 @@ body {
   font-weight: 600;
   color: var(--text);
   letter-spacing: 0.02em;
+}
+
+.transcripts-rolling-wrapper {
+  position: relative;
+}
+
+.transcripts-jump-latest {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.85rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.65rem;
+  background: color-mix(in srgb, var(--panel-raised) 90%, var(--transcript-only));
+  border: 1px solid color-mix(in srgb, var(--transcript-only) 50%, var(--border));
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  transition: all 0.15s ease;
+}
+
+.transcripts-jump-latest:hover {
+  background: color-mix(in srgb, var(--panel-raised) 75%, var(--transcript-only));
+  border-color: var(--transcript-only);
+  transform: translateY(-1px);
 }
 
 .transcripts-rolling-window {

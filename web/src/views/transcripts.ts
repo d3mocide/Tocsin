@@ -19,6 +19,12 @@ export function renderTranscripts(container: HTMLElement, store: Store): void {
     return;
   }
 
+  // Preserve scroll state before re-rendering
+  const existingWindow = container.querySelector<HTMLElement>(".transcripts-rolling-window");
+  const prevScrollTop = existingWindow?.scrollTop ?? 0;
+  const prevScrollHeight = existingWindow?.scrollHeight ?? 0;
+  const wasScrolled = prevScrollTop > 10;
+
   const sameTranscripts = transcripts
     .filter((t) => !isLiveTranscript(t))
     .sort((a, b) => b.timestamp_ns - a.timestamp_ns);
@@ -53,6 +59,27 @@ export function renderTranscripts(container: HTMLElement, store: Store): void {
       : el("p", { class: "empty", text: "No SAME alert voice broadcasts captured yet." }),
   );
 
+  // Jump to latest floating button
+  const jumpBtn = el("button", {
+    class: "transcripts-jump-latest",
+    text: "↓ Jump to latest",
+    attrs: { type: "button", style: wasScrolled ? "display: flex;" : "display: none;" },
+  });
+
+  const rollingWindow = el(
+    "div",
+    { class: "transcripts-rolling-window" },
+    el("ul", { class: "activity-list transcripts-feed" }, ...liveTranscripts.slice(0, 50).map(transcriptRow)),
+  );
+
+  rollingWindow.addEventListener("scroll", () => {
+    jumpBtn.style.display = rollingWindow.scrollTop > 40 ? "flex" : "none";
+  });
+
+  jumpBtn.addEventListener("click", () => {
+    rollingWindow.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
   // --- Bottom Section: Rolling Live Ambient Transcripts (Last 50 chunks) ---
   const liveSection = el(
     "section",
@@ -71,13 +98,20 @@ export function renderTranscripts(container: HTMLElement, store: Store): void {
     liveTranscripts.length > 0
       ? el(
           "div",
-          { class: "transcripts-rolling-window" },
-          el("ul", { class: "activity-list transcripts-feed" }, ...liveTranscripts.slice(0, 50).map(transcriptRow)),
+          { class: "transcripts-rolling-wrapper" },
+          jumpBtn,
+          rollingWindow,
         )
       : el("p", { class: "empty", text: "No live ambient transcripts recorded yet." }),
   );
 
   replaceChildren(container, alertSection, liveSection);
+
+  // Restore scroll position so reading isn't interrupted
+  if (wasScrolled) {
+    const heightDiff = rollingWindow.scrollHeight - prevScrollHeight;
+    rollingWindow.scrollTop = prevScrollTop + (heightDiff > 0 ? heightDiff : 0);
+  }
 }
 
 function transcriptRow(transcript: Transcript): HTMLElement {

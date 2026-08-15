@@ -19,6 +19,7 @@ import { ALL_TOPICS, healthKey, Store, type Topic } from "./store";
 import { renderActivity } from "./views/activity";
 import { AlertFeedView } from "./views/alerts";
 import { mountFilters } from "./views/filters";
+import { ForecastView } from "./views/forecast";
 import { renderHealth } from "./views/health";
 import { MapView } from "./views/map";
 import { WaterfallView } from "./views/spectrum";
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
   const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
   const streamsView = new StreamsView(byId("streams"), store);
   const stationsView = new StationsView(byId("nwr-stations"), store);
+  const forecastView = new ForecastView(byId("forecast"), store);
   const mapView = new MapView(byId("map-view-container"), store);
   const refreshFilterSites = mountFilters(byId("filters"), store);
 
@@ -92,6 +94,7 @@ async function main(): Promise<void> {
     const touched = (...topics: Topic[]) => topics.some((topic) => changed.has(topic));
     if (touched("system")) renderModeChip(byId("mode-chip"), store);
     if (touched("system")) stationsView.render();
+    if (touched("system")) forecastView.render();
     if (touched("system", "alerts")) mapView.render();
     if (touched("connection")) renderConnection(byId("connection-status"), store);
     if (touched("stats")) renderStats(byId("stats"), store);
