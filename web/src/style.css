@@ -2093,5 +2093,56 @@ footer {
   }
 }
 
+/* ---- Operator Location Map Marker ----------------------------------- */
+.custom-operator-marker-container {
+  background: transparent !important;
+  border: none !important;
+}
+
+.operator-marker {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.operator-crosshair {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  background-color: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.95);
+  z-index: 2;
+}
+
+.operator-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  margin-top: -9px;
+  margin-left: -9px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(56, 189, 248, 0.9);
+  z-index: 1;
+  pointer-events: none;
+  animation: operatorPulse 2.5s infinite ease-out;
+}
+
+@keyframes operatorPulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
 
 

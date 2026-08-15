@@ -43,6 +43,7 @@ export interface CapAlert {
   same_codes: string[];
   ugc_codes: string[];
   vtec: string | null;
+  geometry?: any;
 }
 
 /** A hazard phrase matched in continuously-transcribed NWR narration --
