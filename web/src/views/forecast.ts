@@ -105,7 +105,6 @@ export class ForecastView {
         periods,
       });
     } catch (err) {
-      // If we don't already have cached data, leave forecastData null
       if (!this.forecastData) {
         this.forecastData = null;
       }
@@ -175,7 +174,7 @@ export class ForecastView {
       );
     }
 
-    const emoji = weatherEmoji(current.shortForecast, current.isDaytime);
+    const heroSvg = weatherSvgIcon(current.shortForecast, current.isDaytime, 36);
     const precipVal = current.probabilityOfPrecipitation?.value;
 
     // Headline Hero Banner
@@ -185,7 +184,7 @@ export class ForecastView {
       el(
         "div",
         { class: "forecast-hero-left" },
-        el("span", { class: "forecast-hero-emoji", text: emoji, attrs: { "aria-hidden": "true" } }),
+        el("div", { class: "forecast-hero-icon" }, heroSvg),
         el(
           "div",
           { class: "forecast-hero-temps" },
@@ -203,15 +202,15 @@ export class ForecastView {
       ),
     );
 
-    // Multi-Period Strip (next 4 upcoming periods)
+    // Multi-Period Strip (next 4 upcoming periods) with equal fixed width columns
     const upcomingPeriods = periods.slice(1, 5);
     const periodCards = upcomingPeriods.map((p) => {
-      const pEmoji = weatherEmoji(p.shortForecast, p.isDaytime);
+      const pSvg = weatherSvgIcon(p.shortForecast, p.isDaytime, 20);
       return el(
         "div",
         { class: `forecast-period-card${p.isDaytime ? " day-card" : " night-card"}` },
-        el("div", { class: "forecast-period-name", text: p.name }),
-        el("div", { class: "forecast-period-emoji", text: pEmoji }),
+        el("div", { class: "forecast-period-name", text: p.name, title: p.name }),
+        el("div", { class: "forecast-period-icon" }, pSvg),
         el("div", { class: "forecast-period-temp", text: `${p.temperature}°${p.temperatureUnit}` }),
         el("div", { class: "forecast-period-desc", text: p.shortForecast, title: p.detailedForecast }),
       );
@@ -234,19 +233,99 @@ export class ForecastView {
   }
 }
 
-function weatherEmoji(shortForecast: string, isDaytime: boolean): string {
+function createSvg(innerSvg: string, className: string, size = 24): SVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("class", `forecast-svg ${className}`);
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = innerSvg;
+  return svg;
+}
+
+function weatherSvgIcon(shortForecast: string, isDaytime: boolean, size = 24): SVGElement {
   const s = shortForecast.toLowerCase();
-  if (s.includes("thunder") || s.includes("storm") || s.includes("severe")) return "⛈️";
-  if (s.includes("snow") || s.includes("blizzard") || s.includes("flurr") || s.includes("sleet") || s.includes("ice"))
-    return "❄️";
-  if (s.includes("heavy rain") || s.includes("downpour")) return "🌧️";
-  if (s.includes("rain") || s.includes("shower") || s.includes("drizzle")) return "🌦️";
-  if (s.includes("fog") || s.includes("haze") || s.includes("smoke") || s.includes("dust")) return "🌫️";
-  if (s.includes("wind") || s.includes("breez") || s.includes("gust")) return "💨";
-  if (s.includes("cloud") || s.includes("overcast")) {
-    if (s.includes("partly") || s.includes("mostly")) return isDaytime ? "🌤️" : "☁️";
-    return "☁️";
+
+  // Thunderstorm / Severe
+  if (s.includes("thunder") || s.includes("storm") || s.includes("severe")) {
+    return createSvg(
+      `<path d="M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973"/><path d="m13 12-3 5h4l-3 5" stroke="#f59e0b" fill="#f59e0b" fill-opacity="0.25"/>`,
+      "icon-thunderstorm",
+      size,
+    );
   }
-  if (s.includes("sun") || s.includes("clear") || s.includes("fair")) return isDaytime ? "☀️" : "🌙";
-  return isDaytime ? "🌤️" : "🌙";
+  // Snow / Ice
+  if (s.includes("snow") || s.includes("blizzard") || s.includes("flurr") || s.includes("sleet") || s.includes("ice")) {
+    return createSvg(
+      `<line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/><path d="m16 4-4 4-4-4"/><path d="m8 20 4-4 4 4"/>`,
+      "icon-snow",
+      size,
+    );
+  }
+  // Rain / Showers
+  if (s.includes("heavy rain") || s.includes("downpour") || s.includes("rain") || s.includes("shower") || s.includes("drizzle")) {
+    return createSvg(
+      `<path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M16 14v6" stroke="#38bdf8"/><path d="M8 14v6" stroke="#38bdf8"/><path d="M12 16v6" stroke="#38bdf8"/>`,
+      "icon-rain",
+      size,
+    );
+  }
+  // Smoke / Fog / Haze / Dust
+  if (s.includes("smoke") || s.includes("fog") || s.includes("haze") || s.includes("dust")) {
+    return createSvg(
+      `<path d="M4 10h16" stroke="#94a3b8"/><path d="M2 14h20" stroke="#94a3b8"/><path d="M6 18h12" stroke="#94a3b8"/><circle cx="12" cy="5" r="2.5" stroke="#f59e0b" stroke-dasharray="2 2"/>`,
+      "icon-smoke",
+      size,
+    );
+  }
+  // Wind / Breeze
+  if (s.includes("wind") || s.includes("breez") || s.includes("gust")) {
+    return createSvg(
+      `<path d="M17.7 7.7A2.5 2.5 0 1 1 20 10H2"/><path d="M19.7 13.7A2.5 2.5 0 1 0 18 18H2"/><path d="M15.7 19.7A2.5 2.5 0 1 0 14 22H2"/>`,
+      "icon-wind",
+      size,
+    );
+  }
+  // Partly Cloudy / Mostly Sunny / Mostly Cloudy
+  if (s.includes("partly") || s.includes("mostly")) {
+    if (isDaytime) {
+      return createSvg(
+        `<path d="M12 2v2" stroke="#e3b341"/><path d="m4.93 4.93 1.41 1.41" stroke="#e3b341"/><path d="M20 12h2" stroke="#e3b341"/><path d="m19.07 4.93-1.41 1.41" stroke="#e3b341"/><path d="M15.5 8.5a4 4 0 0 0-4-3.5 4 4 0 0 0-3.5 2.1" stroke="#e3b341"/><path d="M17.5 19H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.5 2.9A4.5 4.5 0 0 1 17.5 19Z"/>`,
+        "icon-partly-cloudy-day",
+        size,
+      );
+    }
+    return createSvg(
+      `<path d="M10.1 2.18a7 7 0 0 0 9.72 9.72" stroke="#a5b4fc"/><path d="M17.5 19H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.5 2.9A4.5 4.5 0 0 1 17.5 19Z"/>`,
+      "icon-partly-cloudy-night",
+      size,
+    );
+  }
+  // Cloudy / Overcast
+  if (s.includes("cloud") || s.includes("overcast")) {
+    return createSvg(
+      `<path d="M17.5 19H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.5 2.9A4.5 4.5 0 0 1 17.5 19Z"/>`,
+      "icon-cloudy",
+      size,
+    );
+  }
+  // Clear / Sunny
+  if (isDaytime) {
+    return createSvg(
+      `<circle cx="12" cy="12" r="4" stroke="#e3b341" fill="#e3b341" fill-opacity="0.25"/><path d="M12 2v2" stroke="#e3b341"/><path d="M12 20v2" stroke="#e3b341"/><path d="m4.93 4.93 1.41 1.41" stroke="#e3b341"/><path d="m17.66 17.66 1.41 1.41" stroke="#e3b341"/><path d="M2 12h2" stroke="#e3b341"/><path d="M20 12h2" stroke="#e3b341"/><path d="m6.34 17.66-1.41 1.41" stroke="#e3b341"/><path d="m19.07 4.93-1.41 1.41" stroke="#e3b341"/>`,
+      "icon-sun",
+      size,
+    );
+  }
+  return createSvg(
+    `<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" stroke="#a5b4fc" fill="#a5b4fc" fill-opacity="0.2"/>`,
+    "icon-moon",
+    size,
+  );
 }
