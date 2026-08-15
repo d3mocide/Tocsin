@@ -142,6 +142,7 @@ to end here -- see `docs/design/tracking.md`.
 | `STT_WORKER_REMOTE_API_KEY` | *(none)* | Sent as `Authorization: Bearer <key>` if set. |
 | `STT_WORKER_REMOTE_MODEL` | `whisper-1` | Passed as the `model` form field. |
 | `STT_WORKER_REMOTE_BUDGET_SECONDS` | `10` | How long remote gets to win the race, measured from when both providers start. |
+| `LIVE_TRANSCRIPTION_ALLOW_REMOTE` | `false` | When `STT_CHAIN=remote` (no local model staged), setting `true` allows ambient live audio chunks to be transcribed via the remote endpoint. |
 | `TOCSIN_DATA_DIR` | *(unset -- inferred, fails inside a container)* | Directory containing `keyword_triggers.yaml`/`same_event_codes.yaml` for keyword matching. Must be set in Docker (see "Live transcription addendum" above); a missing/unloadable table degrades to no keyword detection rather than refusing to start. |
 
 ## Development

@@ -139,9 +139,11 @@ class TranscriptionWorker:
         remote_budget_seconds: float = DEFAULT_REMOTE_BUDGET_SECONDS,
         keyword_matcher: KeywordMatcher | None = None,
         keyword_sink: KeywordEventSink | None = None,
+        live_allow_remote: bool = False,
     ):
         self._model_path = model_path
         self._local_enabled = local_enabled
+        self._live_allow_remote = live_allow_remote
         self._work_dir = work_dir
         self._sink = sink or LoggingTranscriptSink()
         self._binary = binary
@@ -159,12 +161,7 @@ class TranscriptionWorker:
 
     def handle_capture(self, payload: dict) -> None:
         capture_kind = payload.get("capture_kind", "alert")
-        if capture_kind == "live" and not self._local_enabled:
-            # No local floor to fall back to (`STT_CHAIN=remote` --
-            # see the class docstring). Continuous transcription must
-            # never depend on the network (CLAUDE.md's connectivity
-            # rule), so this drops the chunk rather than spending a
-            # remote call on every few seconds of ambient audio.
+        if capture_kind == "live" and not self._local_enabled and not (self._live_allow_remote and self._remote_run is not None):
             return
 
         wav_path = Path(payload["wav_path"])
@@ -172,11 +169,11 @@ class TranscriptionWorker:
         trim_wav(wav_path, trimmed_path, payload.get("voice_start_sample"))
 
         if capture_kind == "live":
-            # Local-only, never raced against remote: a live chunk is
-            # ambient narration, not a Tier A alert enrichment, so it
-            # never earns the network budget design doc §6 reserves for
-            # Tier A captures.
-            transcript = self._run_local(trimmed_path)
+            if self._local_enabled:
+                transcript = self._run_local(trimmed_path)
+            else:
+                assert self._remote_run is not None
+                transcript = self._remote_run(trimmed_path)
         else:
             transcript = self._transcribe(trimmed_path, payload.get("tier"))
         result = check_transcript(transcript)

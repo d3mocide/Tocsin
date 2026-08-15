@@ -419,7 +419,26 @@ def test_live_capture_dropped_when_no_local_floor(tmp_path):
         remote_run=lambda path: Transcript(text="remote text", segments=()),
     )
     worker.handle_capture(_live_payload(wav_path))
-    assert sink.transcripts == []  # dropped, not sent over the network
+    assert sink.transcripts == []  # dropped by default when no local floor
+
+
+def test_live_capture_transcribes_remotely_when_live_allow_remote_enabled_and_no_local_floor(tmp_path):
+    wav_path = tmp_path / "clip.wav"
+    _write_wav(wav_path, [1, 2, 3])
+    sink = FakeSink()
+    worker = TranscriptionWorker(
+        model_path=None,
+        work_dir=tmp_path / "work",
+        sink=sink,
+        whisper_run=_local_that_must_not_run,
+        local_enabled=False,
+        remote_run=lambda path: Transcript(text="remote text", segments=()),
+        live_allow_remote=True,
+    )
+    worker.handle_capture(_live_payload(wav_path))
+    assert len(sink.transcripts) == 1
+    assert sink.transcripts[0].text == "remote text"
+    assert sink.transcripts[0].capture_kind == "live"
 
 
 def test_live_capture_keyword_match_publishes_keyword_event(tmp_path):

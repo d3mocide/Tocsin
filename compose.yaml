@@ -137,6 +137,7 @@ services:
       STT_WORKER_REMOTE_BASE_URL: ${STT_WORKER_REMOTE_BASE_URL:-}
       STT_WORKER_REMOTE_API_KEY: ${STT_WORKER_REMOTE_API_KEY:-}
       STT_WORKER_REMOTE_MODEL: ${STT_WORKER_REMOTE_MODEL:-whisper-1}
+      LIVE_TRANSCRIPTION_ALLOW_REMOTE: ${LIVE_TRANSCRIPTION_ALLOW_REMOTE:-false}
       # data/keyword_triggers.yaml + data/same_event_codes.yaml, for
       # keyword-matching live transcripts (see LIVE_TRANSCRIPTION_ENABLED
       # on sdr-rx above). Needed regardless of whether live transcription

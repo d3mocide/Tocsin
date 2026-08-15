@@ -210,6 +210,7 @@ def main() -> None:
     remote_budget_seconds = float(
         os.environ.get("STT_WORKER_REMOTE_BUDGET_SECONDS", DEFAULT_REMOTE_BUDGET_SECONDS)
     )
+    live_allow_remote = os.environ.get("LIVE_TRANSCRIPTION_ALLOW_REMOTE", "false").strip().lower() in {"true", "1", "yes", "on"}
 
     subscriber = CaptureSubscriber(connect_addr)
     worker = TranscriptionWorker(
@@ -224,6 +225,7 @@ def main() -> None:
         remote_budget_seconds=remote_budget_seconds,
         keyword_matcher=_build_keyword_matcher(),
         keyword_sink=_build_keyword_sink(redis_client),
+        live_allow_remote=live_allow_remote,
     )
     chain_label = ",".join(sorted(chain))
     model_label = Path(model_path).name if local_enabled and model_path else "none (remote only)"
