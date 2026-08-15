@@ -195,9 +195,19 @@ export class ForecastView {
       el(
         "div",
         { class: "forecast-hero-right" },
-        el("div", { class: "forecast-hero-stat", text: `💨 ${current.windDirection} ${current.windSpeed}` }),
+        el(
+          "div",
+          { class: "forecast-hero-stat" },
+          windStatSvg(),
+          el("span", { text: `${current.windDirection} ${current.windSpeed}` }),
+        ),
         precipVal !== null && precipVal !== undefined && precipVal > 0
-          ? el("div", { class: "forecast-hero-stat", text: `💧 ${precipVal}% precip` })
+          ? el(
+              "div",
+              { class: "forecast-hero-stat" },
+              dropletStatSvg(),
+              el("span", { text: `${precipVal}% precip` }),
+            )
           : null,
       ),
     );
@@ -247,6 +257,22 @@ function createSvg(innerSvg: string, className: string, size = 24): SVGElement {
   svg.setAttribute("aria-hidden", "true");
   svg.innerHTML = innerSvg;
   return svg;
+}
+
+function windStatSvg(): SVGElement {
+  return createSvg(
+    `<path d="M17.7 7.7A2.5 2.5 0 1 1 20 10H2"/><path d="M19.7 13.7A2.5 2.5 0 1 0 18 18H2"/><path d="M15.7 19.7A2.5 2.5 0 1 0 14 22H2"/>`,
+    "forecast-stat-icon",
+    14,
+  );
+}
+
+function dropletStatSvg(): SVGElement {
+  return createSvg(
+    `<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" stroke="#38bdf8" fill="#38bdf8" fill-opacity="0.35"/>`,
+    "forecast-stat-icon",
+    14,
+  );
 }
 
 function weatherSvgIcon(shortForecast: string, isDaytime: boolean, size = 24): SVGElement {

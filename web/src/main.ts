@@ -28,6 +28,7 @@ import { renderStats } from "./views/stats";
 import { renderConnection, renderDispatchSummary, renderModeChip, renderServices } from "./views/status";
 import { StreamsView } from "./views/streams";
 import { renderDashboardLiveTranscripts, renderTranscripts } from "./views/transcripts";
+import { WeatherDashboardView } from "./views/weather_dashboard";
 
 // What still polls, and why. Alerts, health, transcripts, and dispatches
 // arrive over SSE now and are not polled at all. These three have no push
@@ -52,26 +53,31 @@ function poll(fn: () => void, intervalMs: number): void {
   setInterval(fn, intervalMs);
 }
 
-function initNavigationTabs(mapView: MapView): void {
+function initNavigationTabs(mapView: MapView, weatherView: WeatherDashboardView): void {
   const dashBtn = byId("tab-btn-dashboard");
+  const weatherBtn = byId("tab-btn-weather");
   const logsBtn = byId("tab-btn-logs");
+
   const dashView = byId("tab-view-dashboard");
+  const weatherViewEl = byId("tab-view-weather");
   const logsView = byId("tab-view-logs");
 
-  dashBtn.addEventListener("click", () => {
-    dashBtn.classList.add("active");
-    logsBtn.classList.remove("active");
-    dashView.classList.add("active");
-    logsView.classList.remove("active");
-    mapView.invalidateSize();
-  });
+  const switchTab = (activeTab: "dashboard" | "weather" | "logs") => {
+    dashBtn.classList.toggle("active", activeTab === "dashboard");
+    weatherBtn.classList.toggle("active", activeTab === "weather");
+    logsBtn.classList.toggle("active", activeTab === "logs");
 
-  logsBtn.addEventListener("click", () => {
-    logsBtn.classList.add("active");
-    dashBtn.classList.remove("active");
-    logsView.classList.add("active");
-    dashView.classList.remove("active");
-  });
+    dashView.classList.toggle("active", activeTab === "dashboard");
+    weatherViewEl.classList.toggle("active", activeTab === "weather");
+    logsView.classList.toggle("active", activeTab === "logs");
+
+    if (activeTab === "dashboard") mapView.invalidateSize();
+    if (activeTab === "weather") weatherView.render();
+  };
+
+  dashBtn.addEventListener("click", () => switchTab("dashboard"));
+  weatherBtn.addEventListener("click", () => switchTab("weather"));
+  logsBtn.addEventListener("click", () => switchTab("logs"));
 }
 
 async function main(): Promise<void> {
@@ -82,10 +88,11 @@ async function main(): Promise<void> {
   const streamsView = new StreamsView(byId("streams"), store);
   const stationsView = new StationsView(byId("nwr-stations"), store);
   const forecastView = new ForecastView(byId("forecast"), store);
+  const weatherDashboardView = new WeatherDashboardView(byId("weather-dashboard"), store);
   const mapView = new MapView(byId("map-view-container"), store);
   const refreshFilterSites = mountFilters(byId("filters"), store);
 
-  initNavigationTabs(mapView);
+  initNavigationTabs(mapView, weatherDashboardView);
 
   // Each panel repaints only when something it actually reads changed.
   // `clock` is in the list for every panel showing a relative time, and
@@ -95,6 +102,7 @@ async function main(): Promise<void> {
     if (touched("system")) renderModeChip(byId("mode-chip"), store);
     if (touched("system")) stationsView.render();
     if (touched("system")) forecastView.render();
+    if (touched("system")) weatherDashboardView.render();
     if (touched("system", "alerts")) mapView.render();
     if (touched("connection")) renderConnection(byId("connection-status"), store);
     if (touched("stats")) renderStats(byId("stats"), store);
@@ -238,7 +246,7 @@ function updateDocumentTitle(): void {
   const urgent = [...store.state.alerts.values()].filter(
     (alert) => isActive(alert, now) && tierOf(alert, store.state.reference) === "A",
   );
-  document.title = urgent.length > 0 ? `(${urgent.length}) ⚠ Tocsin` : "Tocsin";
+  document.title = urgent.length > 0 ? `(${urgent.length}) [ALERT] Tocsin` : "Tocsin";
 }
 
 function initPanelCollapsing(): void {

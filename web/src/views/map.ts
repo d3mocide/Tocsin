@@ -278,7 +278,7 @@ export class MapView {
 
       const popupHtml = `
         <div class="map-popup">
-          <div class="map-popup-title">⚠️ ${alert.event_name}</div>
+          <div class="map-popup-title">${alert.event_name}</div>
           <div class="map-popup-sub">
             <b>Area:</b> ${cap?.area_desc ?? "Monitored Region"}<br/>
             <b>Severity:</b> <span class="badge badge-tier-${tier.toLowerCase()}">Tier ${tier}</span>
@@ -298,7 +298,7 @@ export class MapView {
           },
         });
         geoLayer.bindPopup(popupHtml);
-        geoLayer.bindTooltip(`⚠️ ${alert.event_name}`, { sticky: true });
+        geoLayer.bindTooltip(alert.event_name, { sticky: true });
         this.zoneGroup.addLayer(geoLayer);
         continue;
       }
@@ -317,7 +317,7 @@ export class MapView {
             },
           });
           geoLayer.bindPopup(popupHtml);
-          geoLayer.bindTooltip(`⚠️ ${alert.event_name} (${ugc})`, { sticky: true });
+          geoLayer.bindTooltip(`${alert.event_name} (${ugc})`, { sticky: true });
           this.zoneGroup.addLayer(geoLayer);
         } else if (NWS_ZONES[ugc]) {
           const geo = NWS_ZONES[ugc];
@@ -328,7 +328,7 @@ export class MapView {
             weight: style.weight,
           });
           polygon.bindPopup(popupHtml);
-          polygon.bindTooltip(`⚠️ ${alert.event_name} (${geo.name})`, { sticky: true });
+          polygon.bindTooltip(`${alert.event_name} (${geo.name})`, { sticky: true });
           this.zoneGroup.addLayer(polygon);
         } else {
           // Fetch real NWS polygon geometry asynchronously for this zone
@@ -337,23 +337,11 @@ export class MapView {
       }
     }
 
-    // 2. Draw Operator Position & Coverage Range Ring (Matches Screenshot 1)
+    // 2. Draw Operator Receiver Location
     const lat = system?.latitude;
     const lon = system?.longitude;
 
     if (lat !== undefined && lon !== undefined && lat !== null && lon !== null) {
-      // 40-mile (64.3 km) Reception Range Ring
-      const rangeRing = L.circle([lat, lon], {
-        radius: 64374,
-        color: "#38bdf8",
-        fillColor: "#0284c7",
-        fillOpacity: 0.08,
-        weight: 1.5,
-        dashArray: "4, 4",
-      });
-      rangeRing.bindTooltip("Receiver RF Coverage Radius (~40 mi)", { sticky: true });
-      this.operatorGroup.addLayer(rangeRing);
-
       // Operator Location Crosshair Marker
       const operatorIcon = L.divIcon({
         className: "custom-operator-marker-container",
@@ -370,14 +358,14 @@ export class MapView {
       const operatorMarker = L.marker([lat, lon], { icon: operatorIcon });
       operatorMarker.bindPopup(`
         <div class="map-popup">
-          <div class="map-popup-title">🎯 Receiver Base Station</div>
+          <div class="map-popup-title">Receiver Base Station</div>
           <div class="map-popup-sub">
             <b>Location:</b> ${lat.toFixed(4)}°, ${lon.toFixed(4)}°<br/>
             <b>RF Receiver:</b> Active SDR Monitoring
           </div>
         </div>
       `);
-      operatorMarker.bindTooltip("🎯 Receiver Location", { direction: "top" });
+      operatorMarker.bindTooltip("Receiver Location", { direction: "top" });
       this.operatorGroup.addLayer(operatorMarker);
     }
 
@@ -426,7 +414,7 @@ export class MapView {
 
       const popupHtml = `
         <div class="map-popup">
-          <div class="map-popup-title">📻 ${station.name} (${callsign}) ${isMonitored ? '<span class="badge badge-tier-a" style="font-size:0.65rem;margin-left:0.3rem;">📡 MONITORED</span>' : ""}</div>
+          <div class="map-popup-title">${station.name} (${callsign}) ${isMonitored ? '<span class="badge badge-tier-a" style="font-size:0.65rem;margin-left:0.3rem;">MONITORED</span>' : ""}</div>
           <div class="map-popup-sub">
             <b>${station.frequency_mhz.toFixed(3)} MHz</b> · WFO ${station.wfo}<br/>
             Power: ${station.power_watts ?? 0}W · Status: <span style="color:${markerColor}">${station.status}</span><br/>
@@ -436,7 +424,7 @@ export class MapView {
       `;
 
       marker.bindPopup(popupHtml);
-      marker.bindTooltip(`📻 NWR ${callsign} (${station.name})${isMonitored ? " [Monitored]" : ""}`, { direction: "top" });
+      marker.bindTooltip(`NWR ${callsign} (${station.name})${isMonitored ? " [Monitored]" : ""}`, { direction: "top" });
       this.stationGroup.addLayer(marker);
     }
 

@@ -62,7 +62,7 @@ export function renderTranscripts(container: HTMLElement, store: Store): void {
   // Jump to latest floating button
   const jumpBtn = el("button", {
     class: "transcripts-jump-latest",
-    text: "↓ Jump to latest",
+    text: "↑ Jump to latest",
     attrs: { type: "button", style: wasScrolled ? "display: flex;" : "display: none;" },
   });
 
