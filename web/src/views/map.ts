@@ -232,21 +232,19 @@ export class MapView {
     pendingZoneFetches.add(code);
 
     try {
-      const isCounty = code.length === 6 && (code.includes("C") || /^[0-9]+$/.test(code));
-      const url = isCounty
-        ? `https://api.weather.gov/zones/county/${code}`
-        : `https://api.weather.gov/zones/forecast/${code}`;
-
+      // Query universal NWS zone endpoint which resolves fire, county, forecast, and public zones
+      const url = `https://api.weather.gov/zones?include_geometry=true&id=${encodeURIComponent(code)}`;
       const res = await fetch(url, { headers: { Accept: "application/geo+json" } });
       if (res.ok) {
         const json = await res.json();
-        if (json.geometry) {
-          saveZoneGeoToStorage(code, json.geometry);
+        const feat = json.features?.[0] || (json.geometry ? json : null);
+        if (feat?.geometry) {
+          saveZoneGeoToStorage(code, feat.geometry);
           this.updateLayers();
         }
       }
     } catch {
-      // Offline or network error
+      // Offline or network error handled gracefully
     } finally {
       pendingZoneFetches.delete(code);
     }
