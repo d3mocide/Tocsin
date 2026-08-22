@@ -47,14 +47,23 @@ export function tierOf(alert: Alert, reference: Reference | null): string | null
   return match?.tier ?? null;
 }
 
+// A keyword hit in continuously-transcribed narration carries no protocol-level
+// duration the way a SAME header's purge_minutes or a CAP alert's expires does
+// -- freeform speech has nothing like it -- so TRANSCRIPT_ONLY alerts get this
+// fixed TTL from their received_at instead of never expiring. Keep in sync with
+// api/db.py's own TRANSCRIPT_ONLY_TTL.
+const TRANSCRIPT_ONLY_TTL_MS = 60 * 60_000;
+
 /**
  * When this alert stops being in effect, or `null` if nothing on it says.
  *
- * Two independent sources of truth, deliberately preferring CAP's own
+ * Three independent sources of truth, deliberately preferring CAP's own
  * `expires` over the SAME purge time: SAME's purge is a duration from the
  * *decode* time (fusion stands `received_at` in for SAME's issue time --
  * see its correlator), so it drifts by however long the message sat
- * before it was decoded, while CAP carries a real absolute timestamp.
+ * before it was decoded, while CAP carries a real absolute timestamp. A
+ * TRANSCRIPT source falls back further still, to a fixed TTL from its own
+ * received_at (repeated keyword hits push this forward).
  */
 export function expiresAt(alert: Alert): Date | null {
   const cap = apiSource(alert);
@@ -68,6 +77,13 @@ export function expiresAt(alert: Alert): Date | null {
     const received = new Date(rf.received_at);
     if (!Number.isNaN(received.getTime())) {
       return new Date(received.getTime() + rf.purge_minutes * 60_000);
+    }
+  }
+  const transcript = transcriptSource(alert);
+  if (transcript?.received_at) {
+    const received = new Date(transcript.received_at);
+    if (!Number.isNaN(received.getTime())) {
+      return new Date(received.getTime() + TRANSCRIPT_ONLY_TTL_MS);
     }
   }
   return null;

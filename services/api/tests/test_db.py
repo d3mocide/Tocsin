@@ -328,6 +328,18 @@ def test_alert_expiry_is_none_with_no_computable_expiry():
     assert db.alert_expiry([]) is None
 
 
+def test_alert_expiry_falls_back_to_fixed_ttl_for_transcript_only():
+    """A keyword hit carries no purge/expires data of its own -- regression
+    test for the bug where TRANSCRIPT_ONLY alerts never expired at all and
+    piled up in the feed forever."""
+    sources = [{"kind": "TRANSCRIPT", "keyword_event": {"received_at": "2026-08-08T20:00:00+00:00"}}]
+    assert db.alert_expiry(sources) == datetime(2026, 8, 8, 20, 0, tzinfo=timezone.utc) + db.TRANSCRIPT_ONLY_TTL
+
+
+def test_alert_expiry_ignores_transcript_source_with_no_received_at():
+    assert db.alert_expiry([{"kind": "TRANSCRIPT", "keyword_event": {}}]) is None
+
+
 async def test_prune_expired_alerts_deletes_only_alerts_past_the_grace_window():
     now = datetime.now(timezone.utc)
     stale = (now - timedelta(days=2)).isoformat()
@@ -338,6 +350,27 @@ async def test_prune_expired_alerts_deletes_only_alerts_past_the_grace_window():
                 {"id": "stale", "sources": json.dumps([{"kind": "API", "alert": {"expires": stale}}])},
                 {"id": "fresh", "sources": json.dumps([{"kind": "API", "alert": {"expires": fresh}}])},
                 {"id": "no-expiry", "sources": json.dumps([{"kind": "RF", "event": {}}])},
+            ]
+        ]
+    )
+
+    pruned = await db.prune_expired_alerts(pool, grace_seconds=86_400)
+
+    assert pruned == 1
+    query, args = pool.executed[0]
+    assert "DELETE FROM alerts" in query
+    assert args == (["stale"],)
+
+
+async def test_prune_expired_alerts_deletes_stale_transcript_only_alerts():
+    now = datetime.now(timezone.utc)
+    stale = (now - db.TRANSCRIPT_ONLY_TTL - timedelta(days=2)).isoformat()
+    fresh = (now - timedelta(minutes=5)).isoformat()
+    pool = FakePool(
+        fetch_results=[
+            [
+                {"id": "stale", "sources": json.dumps([{"kind": "TRANSCRIPT", "keyword_event": {"received_at": stale}}])},
+                {"id": "fresh", "sources": json.dumps([{"kind": "TRANSCRIPT", "keyword_event": {"received_at": fresh}}])},
             ]
         ]
     )
