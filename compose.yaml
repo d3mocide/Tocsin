@@ -8,6 +8,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # "Memory overcommit must be enabled!" warning on start is a host kernel
+    # setting, not fixable here -- see README's "Host prerequisites".
     volumes:
       - redis-data:/data
     profiles: [offgrid, hybrid]

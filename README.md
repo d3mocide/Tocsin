@@ -37,6 +37,23 @@ A Meshtastic node reachable over WiFi/Ethernet works instead of a USB one -- set
 `MESHTASTIC_TRANSPORT=tcp` and `MESHTASTIC_TCP_HOST`, and drop the same overlay since there
 is no device to map. See that README's "Reaching the node over the network".
 
+## Host prerequisites
+
+`redis` logs `WARNING Memory overcommit must be enabled!` on every start unless the Docker
+*host* has it enabled. `vm.overcommit_memory` isn't a namespaced kernel parameter, so it
+can't be set from `compose.yaml` or from inside the container -- it has to be set once on
+the host, in any mode (`offgrid`, `hybrid`, or `make dev-stack`):
+
+```sh
+sudo sysctl vm.overcommit_memory=1
+echo "vm.overcommit_memory = 1" | sudo tee /etc/sysctl.d/60-tocsin-redis.conf
+```
+
+The `sysctl` line takes effect immediately; the file persists it across reboots. Left
+disabled, Redis's background save (`BGSAVE`, which fires on every restart and would fire on
+replication) can fail under memory pressure -- worth doing on any host, but especially a
+memory-constrained Raspberry Pi running the full offgrid stack.
+
 ## Hardware bring-up
 
 This is the sequence to go from a cloned repo to a real RTL-SDR dongle feeding decoded SAME
