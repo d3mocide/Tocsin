@@ -237,17 +237,28 @@ def _parse_iso(value: Any) -> datetime | None:
         return None
 
 
+# A keyword hit in continuously-transcribed narration carries no protocol-level
+# duration the way a SAME header's purge_minutes or a CAP alert's expires does
+# (models.KeywordEventIn's own docstring: freeform speech has nothing like it) --
+# so TRANSCRIPT_ONLY alerts get this fixed TTL from their last-updated received_at
+# instead of never expiring. Keep in sync with web/src/format.ts's own
+# TRANSCRIPT_ONLY_TTL_MS.
+TRANSCRIPT_ONLY_TTL = timedelta(hours=1)
+
+
 def alert_expiry(sources: list[dict]) -> datetime | None:
     """When an alert stops being in effect, mirroring `web/src/format.ts`'s
     `expiresAt` exactly (two independent implementations of the same rule,
     service boundary -- CLAUDE.md): CAP's own `expires`/`ends` wins when
     present (a real absolute timestamp) over the RF source's SAME purge
     window (`received_at` + `purge_minutes`, which drifts by however long
-    the header sat before decode). `None` means no expiry information at
-    all -- callers must treat that as "never prune," not "already
-    expired," same posture as the web UI's `isActive()`."""
+    the header sat before decode), or a TRANSCRIPT source's fixed
+    `TRANSCRIPT_ONLY_TTL` from its own `received_at` (repeated keyword hits
+    push this forward -- see `store.ingest_keyword`). `None` means no
+    expiry information at all -- callers must treat that as "never prune,"
+    not "already expired," same posture as the web UI's `isActive()`."""
     api_expiry: datetime | None = None
-    rf_expiry: datetime | None = None
+    duration_expiry: datetime | None = None
     for source in sources:
         if source.get("kind") == "API":
             cap = source.get("alert") or {}
@@ -257,8 +268,13 @@ def alert_expiry(sources: list[dict]) -> datetime | None:
             received = _parse_iso(event.get("received_at"))
             purge_minutes = event.get("purge_minutes")
             if received is not None and isinstance(purge_minutes, (int, float)):
-                rf_expiry = received + timedelta(minutes=purge_minutes)
-    return api_expiry or rf_expiry
+                duration_expiry = received + timedelta(minutes=purge_minutes)
+        elif source.get("kind") == "TRANSCRIPT":
+            transcript = source.get("keyword_event") or {}
+            received = _parse_iso(transcript.get("received_at"))
+            if received is not None:
+                duration_expiry = received + TRANSCRIPT_ONLY_TTL
+    return api_expiry or duration_expiry
 
 
 async def prune_expired_alerts(pool: PoolLike, grace_seconds: float) -> int:
