@@ -2693,3 +2693,28 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   11 new tests (status-line reporting including the threshold-too-high case, recovery
   logging, option pass-through); segment_capture 82, stt_worker 71, `tsc --noEmit` and
   `vite build` clean.
+- **2026-08-27 (map basemap: CARTO -> MapLibre/OpenFreeMap):** the NWS zone & weather map's
+  basemap (`views/map.ts`) went dark -- CARTO retired anonymous access to the free
+  `basemaps.cartocdn.com` raster tiles it had served for years and now requires a registered
+  API key, watermarking unauthenticated requests instead of erroring them (so the existing
+  `tileerror` fallback never caught it). Rather than add an API-key env var -- an external
+  account dependency for what's a cosmetic enhancement -- switched the whole map from
+  Leaflet to MapLibre GL, basemapped on OpenFreeMap's free, keyless "dark" vector style
+  (`tiles.openfreemap.org/styles/dark`). Kept the connectivity contract this file's own §8
+  cross-reference exists for: the map now boots on a local, inline, zero-network style
+  (flat background only) so it and its own zone-polygon/marker overlays render instantly
+  with no route to the internet, then upgrades to the real vector basemap in the background
+  via a plain `fetch` + `setStyle` -- mirroring the `fetchMissingZoneGeo` pattern already in
+  this file -- and silently stays on the local style if that fetch fails. Status pill
+  behavior preserved ("Vector Mode" -> now literally a flat vector style with no tiles).
+  Rewrote zone polygons/tower markers/operator marker/popups/hover tooltips/NEXRAD radar
+  toggle onto MapLibre's GeoJSON-source-plus-data-driven-paint-expression and `Marker`/
+  `Popup` APIs (Leaflet's lat/lng ordering swapped to GeoJSON's lon/lat at the few sites that
+  needed it, `zone_data.ts`'s hand-maintained polygons left untouched). One dev-only wrinkle:
+  Vite's dependency pre-bundling doesn't carry over the sibling `maplibre-gl-worker.mjs` file
+  its main module loads via `new URL(...)` at runtime, 404ing the worker in `npm run dev`
+  only -- fixed with `optimizeDeps: { exclude: ["maplibre-gl"] }` in `vite.config.ts`;
+  production builds were never affected. Verified interactively (not just `tsc`/`vite build`)
+  against a real browser: online basemap rendering, the offline fallback, zone-polygon
+  fill/line colors and click/hover popups, tower-marker popups, and the radar zoom-swap
+  toggle all exercised end to end.

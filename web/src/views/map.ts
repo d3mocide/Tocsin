@@ -1,10 +1,11 @@
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import type { Feature, FeatureCollection, Polygon } from "geojson";
+import { Map as MapLibreMap, Marker, Popup, type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import { el } from "../dom";
 import { apiSource, isActive, tierOf } from "../format";
 import type { Store } from "../store";
 import type { Alert } from "../types";
-import { NWS_ZONES } from "./zone_data";
+import { NWS_ZONES, type ZoneGeo } from "./zone_data";
 
 const RADAR_LOCAL_LAYER = "ridge::RTX-N0B-0";
 const RADAR_WIDE_LAYER = "ridge::USCOMP-N0Q-0";
@@ -13,6 +14,26 @@ const RADAR_WIDE_MAX_ZOOM = 6;
 function radarTileUrl(layer: string): string {
   return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/${layer}/{z}/{x}/{y}.png`;
 }
+
+// Free, keyless vector basemap. CARTO's raster tiles (the previous basemap)
+// now require a registered API key -- see carto.com/basemaps/apikey -- which
+// would turn a cosmetic enhancement into an account-management dependency.
+const DARK_STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
+
+// Zero-network style so the map -- and our own zone/station overlays, which
+// don't depend on the basemap at all -- render instantly even with no route
+// to tiles.openfreemap.org. See CLAUDE.md's "no hard network dependency" rule.
+const OFFLINE_STYLE: StyleSpecification = {
+  version: 8,
+  sources: {},
+  layers: [{ id: "background", type: "background", paint: { "background-color": "#090c10" } }],
+};
+
+const ZONES_SOURCE_ID = "tocsin-zones";
+const ZONES_FILL_LAYER_ID = "tocsin-zones-fill";
+const ZONES_LINE_LAYER_ID = "tocsin-zones-line";
+const RADAR_LOCAL_ID = "tocsin-radar-local";
+const RADAR_WIDE_ID = "tocsin-radar-wide";
 
 // In-memory + persistent localStorage cache for NWS Zone GeoJSON geometry
 const ZONE_GEO_CACHE: Record<string, any> = {};
@@ -40,6 +61,15 @@ function saveZoneGeoToStorage(code: string, geometry: any): void {
   } catch {
     // Storage write failed
   }
+}
+
+// NWS_ZONES polygons are stored as [lat, lon] pairs (built for a
+// lat/lon-first mapping library); GeoJSON -- and MapLibre -- expect [lon, lat].
+function zonePolygonGeometry(geo: ZoneGeo): Polygon {
+  return {
+    type: "Polygon",
+    coordinates: [geo.polygon.map(([lat, lon]): [number, number] => [lon, lat])],
+  };
 }
 
 export function alertHazardStyle(
@@ -95,15 +125,13 @@ export function alertHazardStyle(
 export class MapView {
   private readonly container: HTMLElement;
   private readonly store: Store;
-  private map: L.Map | null = null;
-  private zoneGroup: L.LayerGroup | null = null;
-  private stationGroup: L.LayerGroup | null = null;
-  private operatorGroup: L.LayerGroup | null = null;
-  private radarLocalLayer: L.TileLayer | null = null;
-  private radarWideLayer: L.TileLayer | null = null;
-  private radarZoomListenerAttached = false;
+  private map: MapLibreMap | null = null;
+  private stationMarkers: Marker[] = [];
+  private operatorMarker: Marker | null = null;
+  private hoverPopup: Popup | null = null;
   private showRadar = false;
   private tileStatus = "Live";
+  private activeAdvisoryCount = 0;
 
   constructor(container: HTMLElement, store: Store) {
     this.container = container;
@@ -119,8 +147,19 @@ export class MapView {
 
   invalidateSize(): void {
     if (this.map) {
-      setTimeout(() => this.map?.invalidateSize(), 100);
+      setTimeout(() => this.map?.resize(), 100);
     }
+  }
+
+  private statusPillText(): string {
+    return `Active Advisories: ${this.activeAdvisoryCount} | Tiles: ${this.tileStatus}`;
+  }
+
+  private setTileStatus(status: string): void {
+    if (this.tileStatus === status) return;
+    this.tileStatus = status;
+    const statusEl = this.container.querySelector(".map-status-pill");
+    if (statusEl) statusEl.textContent = this.statusPillText();
   }
 
   private initMap(): void {
@@ -133,7 +172,7 @@ export class MapView {
 
     checkbox.addEventListener("change", () => {
       this.showRadar = checkbox.checked;
-      this.toggleRadar();
+      this.applyRadarVisibility();
     });
 
     const controls = el(
@@ -145,86 +184,121 @@ export class MapView {
         checkbox,
         el("span", { text: " NEXRAD Radar Overlay" }),
       ),
-      el("div", { class: "map-status-pill", text: `Tiles: ${this.tileStatus}` }),
+      el("div", { class: "map-status-pill", text: this.statusPillText() }),
     );
 
-    const mapDiv = el("div", { class: "map-canvas", attrs: { id: "leaflet-map-canvas" } });
+    const mapDiv = el("div", { class: "map-canvas", attrs: { id: "map-canvas" } });
     this.container.appendChild(controls);
     this.container.appendChild(mapDiv);
 
     // Initial center on Pacific Northwest (Portland / Seattle regional view)
-    this.map = L.map(mapDiv, {
-      center: [45.52, -122.67],
+    this.map = new MapLibreMap({
+      container: mapDiv,
+      style: OFFLINE_STYLE,
+      center: [-122.67, 45.52],
       zoom: 7,
-      zoomControl: true,
-      attributionControl: false,
     });
 
-    // Dark Carto tiles
-    const tileUrl = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-    const tiles = L.tileLayer(tileUrl, {
-      maxZoom: 18,
-      subdomains: "abcd",
+    // Fires after the initial (offline) style loads and again after every
+    // setStyle() below -- both wipe any sources/layers we added, so this is
+    // the one place overlays get (re)built.
+    this.map.on("style.load", () => {
+      this.ensureOverlayLayers();
+      this.applyRadarVisibility();
+      this.updateLayers();
     });
 
-    tiles.on("tileerror", () => {
-      this.tileStatus = "Offline (Vector Mode)";
-      const statusEl = this.container.querySelector(".map-status-pill");
-      if (statusEl) statusEl.textContent = `Tiles: ${this.tileStatus}`;
+    this.map.on("error", () => this.setTileStatus("Offline (Vector Mode)"));
+    this.map.on("zoomend", () => this.applyRadarVisibility());
+
+    this.map.on("click", ZONES_FILL_LAYER_ID, (e) => {
+      const feature = e.features?.[0];
+      if (!feature || !this.map) return;
+      new Popup().setLngLat(e.lngLat).setHTML(String(feature.properties?.popupHtml ?? "")).addTo(this.map);
+    });
+    this.map.on("mouseenter", ZONES_FILL_LAYER_ID, () => {
+      if (this.map) this.map.getCanvas().style.cursor = "pointer";
+    });
+    this.map.on("mouseleave", ZONES_FILL_LAYER_ID, () => {
+      if (this.map) this.map.getCanvas().style.cursor = "";
+      this.hoverPopup?.remove();
+    });
+    this.map.on("mousemove", ZONES_FILL_LAYER_ID, (e) => {
+      const feature = e.features?.[0];
+      if (!feature || !this.map) return;
+      this.hoverPopup ??= new Popup({ closeButton: false, closeOnClick: false, className: "map-hover-tooltip" });
+      this.hoverPopup.setLngLat(e.lngLat).setText(String(feature.properties?.tooltipText ?? "")).addTo(this.map);
     });
 
-    tiles.addTo(this.map);
-
-    this.zoneGroup = L.layerGroup().addTo(this.map);
-    this.operatorGroup = L.layerGroup().addTo(this.map);
-    this.stationGroup = L.layerGroup().addTo(this.map);
+    void this.loadRemoteBasemap();
   }
 
-  private toggleRadar(): void {
+  private async loadRemoteBasemap(): Promise<void> {
+    try {
+      const res = await fetch(DARK_STYLE_URL);
+      if (!res.ok) throw new Error(`basemap fetch failed: ${res.status}`);
+      const style = (await res.json()) as StyleSpecification;
+      this.map?.setStyle(style);
+    } catch {
+      // Offline or network error -- stay on the local OFFLINE_STYLE.
+      this.setTileStatus("Offline (Vector Mode)");
+    }
+  }
+
+  private ensureOverlayLayers(): void {
     if (!this.map) return;
 
-    if (this.showRadar) {
-      if (!this.radarLocalLayer) {
-        this.radarLocalLayer = L.tileLayer(radarTileUrl(RADAR_LOCAL_LAYER), {
-          opacity: 0.55,
-          maxZoom: 18,
-          maxNativeZoom: 11,
-        });
-      }
-      if (!this.radarWideLayer) {
-        this.radarWideLayer = L.tileLayer(radarTileUrl(RADAR_WIDE_LAYER), {
-          opacity: 0.50,
-          maxZoom: 18,
-          maxNativeZoom: 11,
-        });
-      }
+    if (!this.map.getSource(RADAR_WIDE_ID)) {
+      this.map.addSource(RADAR_WIDE_ID, { type: "raster", tiles: [radarTileUrl(RADAR_WIDE_LAYER)], tileSize: 256, maxzoom: 11 });
+      this.map.addLayer({
+        id: RADAR_WIDE_ID,
+        type: "raster",
+        source: RADAR_WIDE_ID,
+        paint: { "raster-opacity": 0.50 },
+        layout: { visibility: "none" },
+      });
+    }
 
-      if (!this.radarZoomListenerAttached) {
-        this.map.on("zoomend", this.updateRadarForZoom, this);
-        this.radarZoomListenerAttached = true;
-      }
-      this.updateRadarForZoom();
-    } else {
-      if (this.radarZoomListenerAttached) {
-        this.map.off("zoomend", this.updateRadarForZoom, this);
-        this.radarZoomListenerAttached = false;
-      }
-      if (this.radarLocalLayer) this.map.removeLayer(this.radarLocalLayer);
-      if (this.radarWideLayer) this.map.removeLayer(this.radarWideLayer);
+    if (!this.map.getSource(RADAR_LOCAL_ID)) {
+      this.map.addSource(RADAR_LOCAL_ID, { type: "raster", tiles: [radarTileUrl(RADAR_LOCAL_LAYER)], tileSize: 256, maxzoom: 11 });
+      this.map.addLayer({
+        id: RADAR_LOCAL_ID,
+        type: "raster",
+        source: RADAR_LOCAL_ID,
+        paint: { "raster-opacity": 0.55 },
+        layout: { visibility: "none" },
+      });
+    }
+
+    if (!this.map.getSource(ZONES_SOURCE_ID)) {
+      this.map.addSource(ZONES_SOURCE_ID, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      this.map.addLayer({
+        id: ZONES_FILL_LAYER_ID,
+        type: "fill",
+        source: ZONES_SOURCE_ID,
+        paint: { "fill-color": ["get", "fillColor"], "fill-opacity": ["get", "fillOpacity"] },
+      });
+      this.map.addLayer({
+        id: ZONES_LINE_LAYER_ID,
+        type: "line",
+        source: ZONES_SOURCE_ID,
+        paint: { "line-color": ["get", "color"], "line-width": ["get", "weight"] },
+      });
     }
   }
 
-  private updateRadarForZoom(): void {
-    if (!this.map || !this.showRadar || !this.radarLocalLayer || !this.radarWideLayer) return;
+  private applyRadarVisibility(): void {
+    if (!this.map || !this.map.getLayer(RADAR_LOCAL_ID) || !this.map.getLayer(RADAR_WIDE_ID)) return;
+
+    if (!this.showRadar) {
+      this.map.setLayoutProperty(RADAR_LOCAL_ID, "visibility", "none");
+      this.map.setLayoutProperty(RADAR_WIDE_ID, "visibility", "none");
+      return;
+    }
 
     const useWide = this.map.getZoom() <= RADAR_WIDE_MAX_ZOOM;
-    if (useWide) {
-      if (this.map.hasLayer(this.radarLocalLayer)) this.map.removeLayer(this.radarLocalLayer);
-      if (!this.map.hasLayer(this.radarWideLayer)) this.radarWideLayer.addTo(this.map);
-    } else {
-      if (this.map.hasLayer(this.radarWideLayer)) this.map.removeLayer(this.radarWideLayer);
-      if (!this.map.hasLayer(this.radarLocalLayer)) this.radarLocalLayer.addTo(this.map);
-    }
+    this.map.setLayoutProperty(RADAR_LOCAL_ID, "visibility", useWide ? "none" : "visible");
+    this.map.setLayoutProperty(RADAR_WIDE_ID, "visibility", useWide ? "visible" : "none");
   }
 
   private async fetchMissingZoneGeo(code: string): Promise<void> {
@@ -251,11 +325,14 @@ export class MapView {
   }
 
   private updateLayers(): void {
-    if (!this.map || !this.zoneGroup || !this.stationGroup || !this.operatorGroup) return;
+    if (!this.map) return;
+    const zoneSource = this.map.getSource(ZONES_SOURCE_ID) as GeoJSONSource | undefined;
+    if (!zoneSource) return;
 
-    this.zoneGroup.clearLayers();
-    this.operatorGroup.clearLayers();
-    this.stationGroup.clearLayers();
+    this.stationMarkers.forEach((marker) => marker.remove());
+    this.stationMarkers = [];
+    this.operatorMarker?.remove();
+    this.operatorMarker = null;
 
     const alertsMap = this.store.state.alerts;
     const alerts: Alert[] = alertsMap ? Array.from(alertsMap.values()) : [];
@@ -263,12 +340,13 @@ export class MapView {
     const stations = reference?.stations ?? {};
     const system = this.store.state.system;
 
-    let activeAdvisoryCount = 0;
+    const zoneFeatures: Feature[] = [];
+    this.activeAdvisoryCount = 0;
 
     // 1. Draw Real NWS Alert Polygons with Authentic Color Palette
     for (const alert of alerts) {
       if (!isActive(alert)) continue;
-      activeAdvisoryCount++;
+      this.activeAdvisoryCount++;
 
       const tier = tierOf(alert, reference) ?? "C";
       const cap = apiSource(alert);
@@ -285,19 +363,21 @@ export class MapView {
         </div>
       `;
 
+      const properties = {
+        color: style.color,
+        fillColor: style.fillColor,
+        fillOpacity: style.fillOpacity,
+        weight: style.weight,
+        popupHtml,
+      };
+
       // Case A: Alert contains exact GeoJSON geometry from NWS
       if (cap?.geometry && cap.geometry.coordinates) {
-        const geoLayer = L.geoJSON(cap.geometry, {
-          style: {
-            color: style.color,
-            fillColor: style.fillColor,
-            fillOpacity: style.fillOpacity,
-            weight: style.weight,
-          },
+        zoneFeatures.push({
+          type: "Feature",
+          geometry: cap.geometry,
+          properties: { ...properties, tooltipText: alert.event_name },
         });
-        geoLayer.bindPopup(popupHtml);
-        geoLayer.bindTooltip(alert.event_name, { sticky: true });
-        this.zoneGroup.addLayer(geoLayer);
         continue;
       }
 
@@ -306,28 +386,18 @@ export class MapView {
       for (const ugc of ugcCodes) {
         const cachedGeo = loadZoneGeoFromStorage(ugc);
         if (cachedGeo) {
-          const geoLayer = L.geoJSON(cachedGeo, {
-            style: {
-              color: style.color,
-              fillColor: style.fillColor,
-              fillOpacity: style.fillOpacity,
-              weight: style.weight,
-            },
+          zoneFeatures.push({
+            type: "Feature",
+            geometry: cachedGeo,
+            properties: { ...properties, tooltipText: `${alert.event_name} (${ugc})` },
           });
-          geoLayer.bindPopup(popupHtml);
-          geoLayer.bindTooltip(`${alert.event_name} (${ugc})`, { sticky: true });
-          this.zoneGroup.addLayer(geoLayer);
         } else if (NWS_ZONES[ugc]) {
           const geo = NWS_ZONES[ugc];
-          const polygon = L.polygon(geo.polygon as [number, number][], {
-            color: style.color,
-            fillColor: style.fillColor,
-            fillOpacity: style.fillOpacity,
-            weight: style.weight,
+          zoneFeatures.push({
+            type: "Feature",
+            geometry: zonePolygonGeometry(geo),
+            properties: { ...properties, tooltipText: `${alert.event_name} (${geo.name})` },
           });
-          polygon.bindPopup(popupHtml);
-          polygon.bindTooltip(`${alert.event_name} (${geo.name})`, { sticky: true });
-          this.zoneGroup.addLayer(polygon);
         } else {
           // Fetch real NWS polygon geometry asynchronously for this zone
           void this.fetchMissingZoneGeo(ugc);
@@ -335,26 +405,25 @@ export class MapView {
       }
     }
 
+    const zoneCollection: FeatureCollection = { type: "FeatureCollection", features: zoneFeatures };
+    zoneSource.setData(zoneCollection);
+
     // 2. Draw Operator Receiver Location
     const lat = system?.latitude;
     const lon = system?.longitude;
 
     if (lat !== undefined && lon !== undefined && lat !== null && lon !== null) {
-      // Operator Location Crosshair Marker
-      const operatorIcon = L.divIcon({
-        className: "custom-operator-marker-container",
-        html: `
-          <div class="operator-marker">
-            <div class="operator-pulse"></div>
-            <div class="operator-crosshair"></div>
-          </div>
-        `,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
-      });
+      const operatorEl = document.createElement("div");
+      operatorEl.className = "custom-operator-marker-container";
+      operatorEl.innerHTML = `
+        <div class="operator-marker">
+          <div class="operator-pulse"></div>
+          <div class="operator-crosshair"></div>
+        </div>
+      `;
+      this.bindHoverLabel(operatorEl, [lon, lat], "Receiver Location");
 
-      const operatorMarker = L.marker([lat, lon], { icon: operatorIcon });
-      operatorMarker.bindPopup(`
+      const popup = new Popup().setHTML(`
         <div class="map-popup">
           <div class="map-popup-title">Receiver Base Station</div>
           <div class="map-popup-sub">
@@ -363,8 +432,11 @@ export class MapView {
           </div>
         </div>
       `);
-      operatorMarker.bindTooltip("Receiver Location", { direction: "top" });
-      this.operatorGroup.addLayer(operatorMarker);
+
+      this.operatorMarker = new Marker({ element: operatorEl })
+        .setLngLat([lon, lat])
+        .setPopup(popup)
+        .addTo(this.map);
     }
 
     // 3. Draw NWR Radio Transmitters
@@ -395,21 +467,17 @@ export class MapView {
         : "tower-icon-abnormal";
       const markerColor = isNormal ? (isMonitored ? "#22c55e" : "#16a34a") : "#ef4444";
 
-      const towerIcon = L.divIcon({
-        className: "custom-tower-marker-container",
-        html: `
-          <div class="tower-marker ${statusClass}">
-            ${isMonitored ? '<div class="tower-pulse"></div>' : ""}
-            <div class="tower-dot"></div>
-          </div>
-        `,
-        iconSize: [16, 16],
-        iconAnchor: [8, 8],
-      });
+      const towerEl = document.createElement("div");
+      towerEl.className = "custom-tower-marker-container";
+      towerEl.innerHTML = `
+        <div class="tower-marker ${statusClass}">
+          ${isMonitored ? '<div class="tower-pulse"></div>' : ""}
+          <div class="tower-dot"></div>
+        </div>
+      `;
+      this.bindHoverLabel(towerEl, [station.lon, station.lat], `NWR ${callsign} (${station.name})${isMonitored ? " [Monitored]" : ""}`);
 
-      const marker = L.marker([station.lat, station.lon], { icon: towerIcon });
       const distStr = station.distance_km !== null ? `${station.distance_km.toFixed(1)} km away` : "";
-
       const popupHtml = `
         <div class="map-popup">
           <div class="map-popup-title">${station.name} (${callsign}) ${isMonitored ? '<span class="badge badge-tier-a" style="font-size:0.65rem;margin-left:0.3rem;">MONITORED</span>' : ""}</div>
@@ -421,15 +489,24 @@ export class MapView {
         </div>
       `;
 
-      marker.bindPopup(popupHtml);
-      marker.bindTooltip(`NWR ${callsign} (${station.name})${isMonitored ? " [Monitored]" : ""}`, { direction: "top" });
-      this.stationGroup.addLayer(marker);
+      const marker = new Marker({ element: towerEl })
+        .setLngLat([station.lon, station.lat])
+        .setPopup(new Popup().setHTML(popupHtml))
+        .addTo(this.map);
+      this.stationMarkers.push(marker);
     }
 
     // Update map status pill
     const statusEl = this.container.querySelector(".map-status-pill");
-    if (statusEl) {
-      statusEl.textContent = `Active Advisories: ${activeAdvisoryCount} | Tiles: ${this.tileStatus}`;
-    }
+    if (statusEl) statusEl.textContent = this.statusPillText();
+  }
+
+  private bindHoverLabel(element: HTMLElement, lngLat: [number, number], text: string): void {
+    element.addEventListener("mouseenter", () => {
+      if (!this.map) return;
+      this.hoverPopup ??= new Popup({ closeButton: false, closeOnClick: false, className: "map-hover-tooltip" });
+      this.hoverPopup.setLngLat(lngLat).setText(text).addTo(this.map);
+    });
+    element.addEventListener("mouseleave", () => this.hoverPopup?.remove());
   }
 }
