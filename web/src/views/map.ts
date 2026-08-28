@@ -1,11 +1,30 @@
 import type { Feature, FeatureCollection, Polygon } from "geojson";
-import { Map as MapLibreMap, Marker, Popup, type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
+import {
+  Map as MapLibreMap,
+  Marker,
+  Popup,
+  setWorkerUrl,
+  type GeoJSONSource,
+  type StyleSpecification,
+} from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import { el } from "../dom";
 import { apiSource, isActive, tierOf } from "../format";
 import type { Store } from "../store";
 import type { Alert } from "../types";
 import { NWS_ZONES, type ZoneGeo } from "./zone_data";
+
+// maplibre-gl derives its worker script URL at runtime from its own bundled
+// chunk's import.meta.url + a hardcoded filename -- a pattern Vite's static
+// asset scanner can't see, so `vite build` never copies maplibre-gl-worker.mjs
+// into dist/assets. The result 404s in production (served by FastAPI's SPA
+// fallback as a JSON 404, which the browser then refuses to run as a worker
+// for MIME-type mismatch), silently disabling all vector tile rendering.
+// Importing the worker file with `?url` makes Vite bundle it as a real,
+// correctly-hashed asset; setWorkerUrl() points maplibre at it directly,
+// bypassing the broken runtime derivation.
+setWorkerUrl(maplibreWorkerUrl);
 
 const RADAR_LOCAL_LAYER = "ridge::RTX-N0B-0";
 const RADAR_WIDE_LAYER = "ridge::USCOMP-N0Q-0";
