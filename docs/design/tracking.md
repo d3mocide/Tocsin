@@ -419,6 +419,11 @@ build-order note pointed back to.
   in `live_audio/feeder.py` so a stalled ffmpeg-to-Icecast write can no longer block the ZMQ
   receive loop and cause silent frame drops upstream.
 
+- **2026-08-28:** Fixed a dead Icecast mount never recovering short of a full `live_audio`
+  restart (`Streamer.feed()` previously abandoned a channel forever the first time its ffmpeg
+  exited); it now retries a dead feeder after a backoff window instead. See the Session Log
+  entry this date for the full writeup.
+
 ---
 
 ## Phase 4 — Segment capture + local STT
@@ -2718,3 +2723,27 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   against a real browser: online basemap rendering, the offline fallback, zone-polygon
   fill/line colors and click/hover popups, tower-marker popups, and the radar zoom-swap
   toggle all exercised end to end.
+- **2026-08-28 (live_audio: Icecast feeder never recovered from a dead ffmpeg):** reported
+  symptom -- an Icecast mount goes "OFF AIR" / "FEEDER DEAD" in the streams panel after a day
+  or two, while live transcription for the same channel keeps working. Root cause in
+  `live_audio/service.py`'s `Streamer.feed()`: once a channel's `FFmpegFeeder` process exited
+  for any reason (Icecast restart, a dropped TCP connection, ffmpeg getting OOM-killed under
+  long-running load), the key was added to `self._dead` and `feed()` returned immediately on
+  every subsequent call for that key, forever -- the only way back was restarting the whole
+  `live_audio` process. `stt_worker` is unaffected because it subscribes to the same sdr-rx
+  ZMQ audio independently of `Streamer`, which is exactly why transcription kept running
+  while the stream stayed dead. The existing test named
+  `test_dead_feeder_key_can_recover_by_starting_a_new_feeder` actually asserted the opposite
+  (its own docstring: "this implementation intentionally stops retrying that key") -- so the
+  never-recovers behavior was tested and named as if it were the fix, not the bug.
+  `Streamer` now retries a dead mount instead of abandoning it: on death the feeder is closed
+  and removed, and a new one isn't attempted again until `retry_interval_seconds` (default
+  30s, matching the heartbeat TTL) has passed, so a broken mount doesn't spawn ffmpeg on every
+  ~55ms audio chunk but a transient death heals within about one heartbeat cycle. Clock is
+  injectable (`now_fn=time.monotonic`, matching `segment_capture`/`spectrum.py`'s pattern) for
+  deterministic tests. `mounts()`/`close()` needed no changes -- `_feeders`/`_dead` stayed
+  complementary sets under the new logic. Renamed the misleading test to
+  `test_dead_feeder_does_not_respawn_before_the_retry_interval` (same assertion, accurate
+  docstring) and added `test_dead_feeder_key_recovers_by_starting_a_new_feeder_after_the_retry_interval`
+  with a fake clock covering: still-backing-off (no respawn), interval elapsed (respawns,
+  writes resume, `mounts()` reports `alive: True` again). live_audio 38 tests passing.

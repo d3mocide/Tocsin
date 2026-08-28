@@ -63,16 +63,39 @@ def test_dead_feeder_stops_receiving_writes_without_crashing():
     assert FakeFeeder.instances[0].writes == [b"\x00\x00"]  # second write never happened
 
 
-def test_dead_feeder_key_can_recover_by_starting_a_new_feeder():
+def test_dead_feeder_does_not_respawn_before_the_retry_interval():
     streamer = Streamer(ICECAST, feeder_factory=FakeFeeder)
     streamer.feed("home", "WX5", 16000, b"\x00\x00")
-    # simulate a permanently-dead mountpoint -- once marked dead, this
-    # implementation intentionally stops retrying that key (a bad
-    # mountpoint shouldn't spin up an ffmpeg process forever)
+    # a bad mountpoint shouldn't spin up a new ffmpeg process on every
+    # ~55ms audio chunk -- respawning is throttled to the retry interval
     FakeFeeder.instances[0].alive = False
     streamer.feed("home", "WX5", 16000, b"\x01\x01")
     streamer.feed("home", "WX5", 16000, b"\x02\x02")
     assert len(FakeFeeder.instances) == 1
+
+
+def test_dead_feeder_key_recovers_by_starting_a_new_feeder_after_the_retry_interval():
+    """A feeder can die for reasons that clear up on their own (an Icecast
+    restart, a dropped TCP connection, ffmpeg getting OOM-killed) and
+    live_audio runs for days between restarts -- so a dead mount must not
+    stay "FEEDER DEAD" forever once the backoff window has passed."""
+    clock = [0.0]
+    streamer = Streamer(ICECAST, feeder_factory=FakeFeeder, retry_interval_seconds=30.0, now_fn=lambda: clock[0])
+    streamer.feed("home", "WX5", 16000, b"\x00\x00")
+    FakeFeeder.instances[0].alive = False
+
+    streamer.feed("home", "WX5", 16000, b"\x01\x01")  # notices the death, starts backing off
+    clock[0] += 10.0
+    streamer.feed("home", "WX5", 16000, b"\x02\x02")  # still within the backoff window
+    assert len(FakeFeeder.instances) == 1
+
+    clock[0] += 30.0
+    streamer.feed("home", "WX5", 16000, b"\x03\x03")  # backoff window has elapsed -- retries
+    assert len(FakeFeeder.instances) == 2
+    assert FakeFeeder.instances[1].writes == [b"\x03\x03"]
+    assert streamer.mounts() == [
+        {"site": "home", "channel": "WX5", "mount": "/home-WX5.ogg", "alive": True}
+    ]
 
 
 def test_mount_urls_reflects_active_feeders():

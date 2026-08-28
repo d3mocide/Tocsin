@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from .feeder import FFmpegFeeder, build_ffmpeg_command, icecast_source_url, mount_name
 from .metadata import MetadataConfig
+
+# How long to back off after a feeder dies before spawning a replacement
+# ffmpeg for that mount. Long enough that a genuinely broken mount (bad
+# source password, unreachable Icecast) doesn't spin up an ffmpeg process
+# on every ~55ms audio chunk; short enough that a transient death (Icecast
+# restart, a dropped TCP connection, ffmpeg getting OOM-killed under load)
+# heals within about one heartbeat cycle instead of leaving the mount
+# "FEEDER DEAD" for the rest of the process's uptime (see
+# `docs/design/tracking.md`: this is what previously made a mountpoint
+# permanently dead after a single ffmpeg crash, days into a run, with no
+# way to recover short of restarting live_audio).
+DEFAULT_RETRY_INTERVAL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -20,7 +33,11 @@ class Streamer:
     """Creates one FFmpegFeeder per (site, channel) lazily, the first time
     audio for that key arrives, and stops feeding (rather than crashing the
     whole process) if that channel's ffmpeg dies -- one bad mountpoint
-    shouldn't take every other channel's stream down.
+    shouldn't take every other channel's stream down. A dead feeder is
+    retried periodically (`retry_interval_seconds`) rather than abandoned
+    forever, since ffmpeg/Icecast can die for reasons that later clear up
+    on their own (a network blip, an Icecast restart, an OOM kill) and
+    live_audio itself is meant to run for days between restarts.
 
     `allowed_channels`, when given, gates which channels ever get a feeder
     at all -- `None` (the default) streams every channel sdr-rx publishes,
@@ -39,22 +56,28 @@ class Streamer:
         metadata: MetadataConfig | None = None,
         feeder_factory=FFmpegFeeder,
         allowed_channels: frozenset[str] | None = None,
+        retry_interval_seconds: float = DEFAULT_RETRY_INTERVAL_SECONDS,
+        now_fn=time.monotonic,
     ):
         self._icecast = icecast
         self._metadata = metadata or MetadataConfig()
         self._feeder_factory = feeder_factory
         self._allowed_channels = allowed_channels
+        self._retry_interval_seconds = retry_interval_seconds
+        self._now = now_fn
         self._feeders: dict[tuple[str, str], FFmpegFeeder] = {}
         self._dead: set[tuple[str, str]] = set()
+        self._retry_at: dict[tuple[str, str], float] = {}
 
     def feed(self, site: str, channel: str, sample_rate_hz: int, pcm_bytes: bytes) -> None:
         if self._allowed_channels is not None and channel not in self._allowed_channels:
             return
         key = (site, channel)
-        if key in self._dead:
-            return
         feeder = self._feeders.get(key)
         if feeder is None:
+            retry_at = self._retry_at.get(key)
+            if retry_at is not None and self._now() < retry_at:
+                return  # still backing off from the last death -- don't spawn ffmpeg on every chunk
             url = icecast_source_url(
                 self._icecast.host, self._icecast.port, self._icecast.user, self._icecast.password, mount_name(site, channel)
             )
@@ -70,9 +93,12 @@ class Streamer:
             )
             self._feeders[key] = feeder
         if not feeder.is_alive():
-            self._dead.add(key)
+            feeder.close()
             del self._feeders[key]
+            self._dead.add(key)
+            self._retry_at[key] = self._now() + self._retry_interval_seconds
             return
+        self._dead.discard(key)
         feeder.write(pcm_bytes)
 
     def mount_urls(self, icecast_public_url: str) -> dict[tuple[str, str], str]:
