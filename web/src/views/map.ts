@@ -20,6 +20,11 @@ function radarTileUrl(layer: string): string {
 // would turn a cosmetic enhancement into an account-management dependency.
 const DARK_STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
 
+// A blocked/blackholed route (common on a firewalled or offgrid network) lets
+// fetch() hang far longer than a plain refusal -- without a deadline the map
+// sits on OFFLINE_STYLE indefinitely while the status pill still claims "Live".
+const BASEMAP_FETCH_TIMEOUT_MS = 6000;
+
 // Zero-network style so the map -- and our own zone/station overlays, which
 // don't depend on the basemap at all -- render instantly even with no route
 // to tiles.openfreemap.org. See CLAUDE.md's "no hard network dependency" rule.
@@ -130,7 +135,7 @@ export class MapView {
   private operatorMarker: Marker | null = null;
   private hoverPopup: Popup | null = null;
   private showRadar = false;
-  private tileStatus = "Live";
+  private tileStatus = "Loading…";
   private activeAdvisoryCount = 0;
 
   constructor(container: HTMLElement, store: Store) {
@@ -235,12 +240,13 @@ export class MapView {
 
   private async loadRemoteBasemap(): Promise<void> {
     try {
-      const res = await fetch(DARK_STYLE_URL);
+      const res = await fetch(DARK_STYLE_URL, { signal: AbortSignal.timeout(BASEMAP_FETCH_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`basemap fetch failed: ${res.status}`);
       const style = (await res.json()) as StyleSpecification;
       this.map?.setStyle(style);
+      this.setTileStatus("Live");
     } catch {
-      // Offline or network error -- stay on the local OFFLINE_STYLE.
+      // Offline, blocked, or timed-out -- stay on the local OFFLINE_STYLE.
       this.setTileStatus("Offline (Vector Mode)");
     }
   }
