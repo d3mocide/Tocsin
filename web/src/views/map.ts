@@ -221,6 +221,8 @@ export class MapView {
       style: OFFLINE_STYLE,
       center: [-122.67, 45.52],
       zoom: 7,
+      // Collapse to just the info icon by default; the full text is one click away.
+      attributionControl: { compact: true },
     });
 
     // Fires after the initial (offline) style loads and again after every
@@ -234,6 +236,18 @@ export class MapView {
 
     this.map.on("error", () => this.setTileStatus("Offline (Vector Mode)"));
     this.map.on("zoomend", () => this.applyRadarVisibility());
+
+    // OpenFreeMap's "dark" style references city/town dot icons as
+    // "circle-11", but its sprite sheet only defines them as "circle_11" --
+    // an upstream naming mismatch (verified against the live sprite JSON),
+    // not anything in our own style config. Alias it rather than let every
+    // affected label silently drop its dot and spam styleimagemissing.
+    this.map.setMissingStyleImageResolver((id) => {
+      const fallback = id === "circle-11" ? "circle_11" : null;
+      if (!fallback || !this.map || this.map.hasImage(id) || !this.map.hasImage(fallback)) return;
+      const source = this.map.getImage(fallback);
+      this.map.addImage(id, source.data, { pixelRatio: source.pixelRatio, sdf: source.sdf });
+    });
 
     this.map.on("click", ZONES_FILL_LAYER_ID, (e) => {
       const feature = e.features?.[0];
@@ -262,7 +276,11 @@ export class MapView {
       const res = await fetch(DARK_STYLE_URL, { signal: AbortSignal.timeout(BASEMAP_FETCH_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`basemap fetch failed: ${res.status}`);
       const style = (await res.json()) as StyleSpecification;
-      this.map?.setStyle(style);
+      // The trivial OFFLINE_STYLE it's replacing can still be mid-load internally
+      // even though it looks instant, racing setStyle()'s default diff attempt and
+      // triggering a harmless but noisy "Style is not done loading" warning -- skip
+      // diffing outright since we're always doing a full swap, never a partial update.
+      this.map?.setStyle(style, { diff: false });
       this.setTileStatus("Live");
     } catch {
       // Offline, blocked, or timed-out -- stay on the local OFFLINE_STYLE.
