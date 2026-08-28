@@ -47,8 +47,8 @@ is used horizontally and three mounts don't push the alert feed down the page.
 
 Below 900px each tab's two columns collapse to one and the app header itself wraps (brand
 drops to its own row, then nav tabs and the connection badge wrap together as a pair) rather
-than overflowing horizontally -- the map's internal Leaflet stacking context (z-index up to
-1000) is isolated so it can't climb above the sticky header on scroll at that width either.
+than overflowing horizontally -- the map's internal MapLibre stacking context is isolated so
+it can't climb above the sticky header on scroll at that width either.
 
 ## What's on the page
 
@@ -103,10 +103,12 @@ than overflowing horizontally -- the map's internal Leaflet stacking context (z-
   the panel -- `StationsView` keeps the current page across repaints
   (`reference` reloading, e.g.) so paging through doesn't get reset out
   from under you.
-- **NWS zone & weather map** (`views/map.ts`) -- a Leaflet map (dark CartoDB
-  basemap, falls back to a "Vector Mode" status pill rather than a blank canvas
-  if tiles fail to load) showing only the NWS forecast zones with an active
-  alert, filled and outlined by that zone's highest active tier, plus every
+- **NWS zone & weather map** (`views/map.ts`) -- a MapLibre GL map (dark
+  OpenFreeMap vector basemap, keyless -- CARTO's raster tiles now require a
+  registered API key; falls back to a local flat-background style rather
+  than a blank canvas if the basemap can't be fetched) showing only the NWS
+  forecast zones with an active alert, filled and outlined by that zone's
+  highest active tier, plus every
   nearby NWR transmitter as a tower marker (color by `status`, a pulsing ring on
   whichever station is nearest the operator, matches `KIG98`, or is otherwise
   inferred to be the one actually feeding a live channel/health sample). An

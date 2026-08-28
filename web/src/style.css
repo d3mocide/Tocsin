@@ -1980,11 +1980,11 @@ footer {
   border: 1px solid var(--border);
   overflow: hidden;
   background: #090c10;
-  /* Leaflet's own panes/controls use z-index up to 1000 internally, and
-     without a stacking context to contain them that climbs straight past
-     the sticky header's z-index: 10, rendering the zoom control on top of
-     the header on scroll. `isolation: isolate` traps Leaflet's internal
-     stacking inside this element instead of fighting each value by hand. */
+  /* MapLibre's own controls/overlays use z-index values (up to 99999 for
+     its fullscreen/gesture-hint overlays) that would otherwise climb
+     straight past the sticky header's z-index: 10 on scroll.
+     `isolation: isolate` traps MapLibre's internal stacking inside this
+     element instead of fighting each value by hand. */
   isolation: isolate;
 }
 

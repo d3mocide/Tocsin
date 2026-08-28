@@ -14,5 +14,12 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  // maplibre-gl loads its worker via a same-directory `new URL(...)` relative
+  // to its own module URL; Vite's dep pre-bundling copies the entry chunk but
+  // not that sibling file, so pre-bundling must be skipped for it or the
+  // worker 404s in dev (production builds are unaffected).
+  optimizeDeps: {
+    exclude: ["maplibre-gl"],
+  },
 });
 
