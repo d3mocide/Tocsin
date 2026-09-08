@@ -8,6 +8,7 @@ with `soapysdr-module-rtlsdr` installed; see the README for bring-up.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -17,6 +18,22 @@ from .channels import LO_HZ
 SAMPLE_RATE_HZ = 1_200_000.0
 DEFAULT_GAIN_DB = 30.0  # manual gain: AGC oscillates on a constant carrier (§3)
 DEFAULT_CHUNK_SIZE = 65536
+# IQ samples flow continuously at SAMPLE_RATE_HZ regardless of what's on
+# air -- unlike audio, a silent channel never stops producing samples. A
+# stall this long only happens when the USB transfer itself has died (e.g.
+# librtlsdr's "cb transfer status: N, canceling..." after a bus hiccup),
+# not when the channel goes quiet. See docs/design/tracking.md's
+# 2026-09-08 entry: `readStream()` returning ret<=0 forever after a dead
+# transfer used to be swallowed as an ordinary empty read, so the capture
+# thread spun forever without ever exiting -- invisible to both the
+# heartbeat (thread stayed "alive") and HealthTracker's flat-carrier
+# watchdog (never called at all once reads went empty).
+STALL_TIMEOUT_S = 5.0
+
+
+class StreamDead(RuntimeError):
+    """Raised by `read_chunk()` once the stream has produced no samples for
+    longer than `STALL_TIMEOUT_S`. Callers should `reopen()` the device."""
 
 
 @dataclass(frozen=True)
@@ -92,8 +109,7 @@ class SoapySDRDevice:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
     ):
         try:
-            import SoapySDR
-            from SoapySDR import SOAPY_SDR_CF32, SOAPY_SDR_RX
+            import SoapySDR  # noqa: F401
         except ImportError as exc:
             raise RuntimeError(
                 "SoapySDR python bindings are not installed. SoapySDRDevice only runs on "
@@ -103,12 +119,22 @@ class SoapySDRDevice:
 
         self.serial = serial
         self.chunk_size = chunk_size
-        self._device = SoapySDR.Device({"driver": "rtlsdr", "serial": serial})
-        self._device.setSampleRate(SOAPY_SDR_RX, 0, sample_rate_hz)
-        self._device.setFrequency(SOAPY_SDR_RX, 0, frequency_hz)
+        self._frequency_hz = frequency_hz
+        self._sample_rate_hz = sample_rate_hz
+        self._gain_db = gain_db
+        self._open()
+
+    def _open(self) -> None:
+        import SoapySDR
+        from SoapySDR import SOAPY_SDR_CF32, SOAPY_SDR_RX
+
+        self._device = SoapySDR.Device({"driver": "rtlsdr", "serial": self.serial})
+        self._device.setSampleRate(SOAPY_SDR_RX, 0, self._sample_rate_hz)
+        self._device.setFrequency(SOAPY_SDR_RX, 0, self._frequency_hz)
         self._device.setGainMode(SOAPY_SDR_RX, 0, False)
-        self._device.setGain(SOAPY_SDR_RX, 0, gain_db)
+        self._device.setGain(SOAPY_SDR_RX, 0, self._gain_db)
         self._stream = self._device.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32)
+        self._last_data_at = time.monotonic()
 
     def start(self) -> None:
         self._device.activateStream(self._stream)
@@ -117,9 +143,27 @@ class SoapySDRDevice:
         self._device.deactivateStream(self._stream)
         self._device.closeStream(self._stream)
 
+    def reopen(self) -> None:
+        """Recover from a dead USB transfer (`StreamDead`) by closing and
+        reopening the device and stream in place, then restarting it --
+        cheaper and faster than exiting the process and paying entrypoint.sh's
+        full `uv run` + SoapySDR re-init on every USB hiccup."""
+        try:
+            self.stop()
+        except Exception:
+            pass  # already broken -- nothing clean to release
+        self._open()
+        self.start()
+
     def read_chunk(self) -> np.ndarray:
         buf = np.empty(self.chunk_size, dtype=np.complex64)
         result = self._device.readStream(self._stream, [buf], self.chunk_size)
         if result.ret <= 0:
+            if time.monotonic() - self._last_data_at >= STALL_TIMEOUT_S:
+                raise StreamDead(
+                    f"{self.serial}: no samples for >{STALL_TIMEOUT_S}s "
+                    f"(last readStream ret={result.ret})"
+                )
             return np.zeros(0, dtype=np.complex64)
+        self._last_data_at = time.monotonic()
         return buf[: result.ret]

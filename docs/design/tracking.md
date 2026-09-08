@@ -2747,3 +2747,20 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   docstring) and added `test_dead_feeder_key_recovers_by_starting_a_new_feeder_after_the_retry_interval`
   with a fake clock covering: still-backing-off (no respawn), interval elapsed (respawns,
   writes resume, `mounts()` reports `alive: True` again). live_audio 38 tests passing.
+- **2026-09-08 (sdr_rx: dead USB transfer left the capture thread spinning forever):** a
+  `readStream()` returning `ret<=0` forever after a dead libusb transfer (e.g. librtlsdr's
+  "cb transfer status: N, canceling..." after a bus hiccup) was indistinguishable from an
+  ordinary empty read — IQ samples flow continuously at `SAMPLE_RATE_HZ` regardless of
+  what's on air, unlike audio, so a genuinely silent channel never stops producing samples
+  and only a dead transfer stalls `readStream()`. The old code swallowed both cases the same
+  way, so the capture thread spun on empty reads forever: invisible to the heartbeat (thread
+  stayed "alive") and to `HealthTracker`'s flat-carrier watchdog, which never got called once
+  reads went empty. `SoapySDRDevice.read_chunk()` (`capture.py`) now tracks time since the
+  last non-empty read and raises `StreamDead` past `STALL_TIMEOUT_S` (5s); `reopen()` closes
+  and recreates the device and stream in place and restarts it — cheaper than exiting the
+  process and paying entrypoint.sh's full `uv run` + SoapySDR re-init on every USB hiccup.
+  `DevicePipeline.run_forever()` (`pipeline.py`) catches `StreamDead`, logs it, calls
+  `reopen()`, and continues instead of crashing the capture thread. 7 new tests (stall
+  detection, stall-clock reset on a good read, reopen behavior, pipeline recovery via a fake
+  `StreamDead`-raising source); sdr_rx 138 (2 pre-existing `test_channelizer.py` complex64
+  chunk-boundary failures, unrelated to this change — see that phase's notes).

@@ -8,12 +8,14 @@ except device I/O itself is exercisable without RTL-SDR hardware.
 
 from __future__ import annotations
 
+import sys
 from typing import Callable, Protocol
 
 import numpy as np
 
 from .audio_conditioning import SQUELCH_OPEN_DB, Squelch, VoiceBandFilter
 from .bus import TOPIC_SAME, TOPIC_STT
+from .capture import StreamDead
 from .channelizer import PolyphaseChannelizer
 from .channels import nwr_bins
 from .dc_block import DCBlocker
@@ -26,6 +28,7 @@ from .spectrum import SpectrumTracker
 
 class SampleSource(Protocol):
     def read_chunk(self) -> np.ndarray: ...
+    def reopen(self) -> None: ...
 
 
 class ChannelPublisher(Protocol):
@@ -106,6 +109,11 @@ class DevicePipeline:
 
     def run_forever(self, source: SampleSource, stop: Callable[[], bool] | None = None) -> None:
         while stop is None or not stop():
-            chunk = source.read_chunk()
+            try:
+                chunk = source.read_chunk()
+            except StreamDead as exc:
+                print(f"sdr-rx: {self.site}: {exc}; reopening stream", file=sys.stderr)
+                source.reopen()
+                continue
             if chunk.size:
                 self.process(chunk)

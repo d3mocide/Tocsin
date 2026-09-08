@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from sdr_rx.capture import StreamDead
 from sdr_rx.channels import nwr_bins
 from sdr_rx.pipeline import DevicePipeline
 from sdr_rx.ring_buffer import ChannelRingBuffer
@@ -150,3 +151,26 @@ def test_run_forever_stops_on_predicate(tmp_path):
 
     pipeline.run_forever(CountingSource(), stop=lambda: calls["n"] >= 3)
     assert calls["n"] == 3
+
+
+def test_run_forever_reopens_the_source_on_stream_dead_instead_of_crashing(tmp_path):
+    publisher = FakePublisher()
+    ring_buffers = _ring_buffers(tmp_path)
+    pipeline = DevicePipeline("site-a", publisher, ring_buffers)
+
+    calls = {"n": 0, "reopens": 0}
+
+    class FlakySource:
+        def read_chunk(self):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise StreamDead("USB transfer died")
+            return np.zeros(0, dtype=complex)
+
+        def reopen(self):
+            calls["reopens"] += 1
+
+    # 4 read_chunk calls total: healthy, StreamDead+reopen, healthy, healthy
+    pipeline.run_forever(FlakySource(), stop=lambda: calls["n"] >= 4)
+    assert calls["n"] == 4
+    assert calls["reopens"] == 1
