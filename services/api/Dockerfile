@@ -4,8 +4,8 @@
 # web/README.md and this file's `web` stage for why.
 FROM node:22-slim AS web
 WORKDIR /web
-COPY web/package.json ./
-RUN npm install
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
 COPY web/ .
 RUN npm run build
 
