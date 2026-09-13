@@ -88,13 +88,24 @@ multi-service sequence. The `sdr-rx`-specific prerequisites it walks through:
    `rtlsdr_get_index_by_serial - -3`, which looks like a bad serial instead.
    `make up-offgrid`/`make up-hybrid`/`make sdr-devices` add the overlay for
    you; `make dev-stack` is the deliberate no-hardware path.
-2. **Install the udev rule** so the dongle is group-readable without a
-   privileged container:
+2. **Install the udev rules** so the dongle is group-readable without a
+   privileged container, and so the container is bounced automatically
+   whenever this dongle's bus/device number changes (replug, reboot, or a
+   bus reset caused by something else sharing the hub) -- selection is
+   already by serial (`SDR_RX_DEVICES`, `capture.py`), but that whole-bus
+   mount above still goes stale across a renumbering while the container
+   keeps running; see `deploy/udev/61-rtlsdr-tocsin-hotplug.rules` for why
+   that matters:
    ```sh
    sudo cp ../../deploy/udev/60-rtlsdr.rules /etc/udev/rules.d/
+   sudo cp ../../deploy/udev/61-rtlsdr-tocsin-hotplug.rules /etc/udev/rules.d/
+   sudo install -m 755 ../../deploy/udev/rtlsdr-hotplug.sh /usr/local/bin/
    sudo udevadm control --reload-rules && sudo udevadm trigger
    sudo usermod -aG plugdev "$USER"   # log out/in or reboot
    ```
+   `61-rtlsdr-tocsin-hotplug.rules` has one line per `site:serial` pair in
+   `SDR_RX_DEVICES` -- add a matching line (new serial and unit name) if you
+   add a second site.
 3. **Plug in the dongle**, then find its serial: `make sdr-devices` (from the
    repo root) builds the image and runs `SDR_RX_LIST_DEVICES=1` inside it.
 4. **Set `SDR_RX_DEVICES`** (see Configuration below) to `site:serial`, e.g.

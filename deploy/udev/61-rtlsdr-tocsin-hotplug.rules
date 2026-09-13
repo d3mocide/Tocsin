@@ -1,0 +1,24 @@
+# Keeps Tocsin's sdr-rx container working across USB renumbering by acting
+# purely on SERIAL, not the bus/device number Docker's whole-tree
+# `/dev/bus/usb` mount happens to reflect at any given moment. That mount
+# goes stale -- missing a dongle that just got a new node, still listing
+# one that's gone -- across a bus renumbering (replug, reboot, or a bus
+# reset caused by anything else sharing the hub; a shared-hub ADS-B feeder
+# stack on this host was observed doing exactly that) while the container
+# keeps running, and sdr-rx's own `rtlsdr_get_index_by_serial()` selection
+# (capture.py) can't fix a stale mount from inside it.
+#
+# Install alongside 60-rtlsdr.rules:
+#   sudo cp deploy/udev/61-rtlsdr-tocsin-hotplug.rules /etc/udev/rules.d/
+#   sudo install -m 755 deploy/udev/rtlsdr-hotplug.sh /usr/local/bin/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# RUN+= (detached via `systemd-run --no-block` so a slow
+# `docker compose restart` never blocks the udev worker) bounces the
+# container on every enumeration of this serial -- initial boot, replug,
+# or any other bus reset -- so its bind mount is always freshly re-read
+# rather than needing an operator to notice and restart it by hand.
+#
+# One line per site:serial pair in SDR_RX_DEVICES (.env). Add a matching
+# line, new serial and unit name, if a second site is added.
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", ATTRS{serial}=="49435794", RUN+="/usr/bin/systemd-run --no-block --unit=rtlsdr-hotplug-pdx /usr/local/bin/rtlsdr-hotplug.sh sdr-rx"

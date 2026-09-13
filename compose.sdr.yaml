@@ -10,6 +10,20 @@
 # Drop it from a bare `docker compose` invocation only when no dongle is
 # attached; sdr-rx fails loudly at startup if SDR_RX_DEVICES is set and the bus
 # isn't mapped (services/sdr_rx/src/sdr_rx/prerequisites.py).
+#
+# The whole tree, not a specific device path: sdr-rx's own libusb resolves
+# each dongle's real bus/device node via host sysfs (/sys/bus/usb/devices,
+# shared read-only into the container -- not confined by `devices:`), so a
+# fabricated container-side path never matches what it actually opens.
+# Selection is already by SERIAL, not index (SDR_RX_DEVICES, capture.py) --
+# the remaining hazard is this bind mount going stale across a USB bus
+# renumbering (replug, reboot, a bus reset caused by something else sharing
+# the hub) while the container keeps running, which reads exactly like a
+# bad serial: `rtlsdr_get_device_usb_strings failed` plus
+# `rtlsdr_get_index_by_serial - -3`. deploy/udev/61-rtlsdr-tocsin-hotplug.rules
+# fixes that by restarting this container -- refreshing the mount -- every
+# time SDR_RX_DEVICES' configured serial(s) enumerate, regardless of what
+# bus/device number they land on.
 
 services:
   sdr-rx:

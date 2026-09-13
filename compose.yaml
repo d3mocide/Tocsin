@@ -99,7 +99,7 @@ services:
       - segment-captures:/var/lib/segment_capture/captures
     # devices: lives in compose.sdr.yaml (make up-offgrid/up-hybrid add it,
     # dev-stack omits it) -- Docker refuses to start a container whose
-    # devices: path is missing. Needs the udev rule in deploy/udev/ too;
+    # devices: path is missing. Needs the udev rules in deploy/udev/ too;
     # see this service's README for the full bring-up sequence.
     profiles: [offgrid, hybrid]
 
