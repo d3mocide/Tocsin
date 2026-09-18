@@ -2764,3 +2764,29 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   detection, stall-clock reset on a good read, reopen behavior, pipeline recovery via a fake
   `StreamDead`-raising source); sdr_rx 138 (2 pre-existing `test_channelizer.py` complex64
   chunk-boundary failures, unrelated to this change — see that phase's notes).
+- **2026-09-18 (segment_capture: captures volume had no retention, filled to 62GB):**
+  `segment-captures` (the shared volume `recorder.py`/`live_segmenter.py` write WAVs into) had
+  no retention policy at all -- same class of gap as the 2026-08-13 alert pruning, except this
+  one is a live-transcription channel (`LIVE_TRANSCRIPTION_ENABLED=true`) cutting a new WAV
+  every few seconds off NWR's own looping narration, forever, with nothing ever deleting one.
+  Surfaced by the operator finding the volume at 62GB and wiping it by hand. Added
+  `retention.py`'s `prune_captures` (age-based, by file mtime) and wired it into
+  `SegmentCaptureService.tick()` via a new `_poll_prune`, run every
+  `SEGMENT_CAPTURE_PRUNE_INTERVAL_SECONDS` (default 900s) -- same "runs immediately on
+  startup, then on an interval" shape as `api`'s `_prune_alerts_forever`. Live chunks
+  (filename contains `-live-`, `live_segmenter.LiveSegmenter._finalize`'s own naming) default
+  to `SEGMENT_CAPTURE_LIVE_RETENTION_SECONDS=86400` (1 day) since most are transcribed and
+  never looked at again; SAME-triggered alert captures default to
+  `SEGMENT_CAPTURE_ALERT_RETENTION_SECONDS=2592000` (30 days) since those are the rare, real
+  thing worth keeping. Distinguishing by filename rather than by a DB lookup keeps this
+  filesystem-side and independent of `api`'s Postgres `transcripts.wav_path` column -- a
+  pruned file 404s from `GET /captures/{name}` same as any other missing file, the transcript
+  text itself is untouched. A pruning failure (permission error, directory vanishing) is
+  logged and swallowed rather than raised, so a full disk or bad mount can't take down the
+  ZCZC/EOM alert-capture path sharing this process. 8 new tests (`test_retention.py`'s
+  kind-specific retention/non-wav/missing-dir cases, `test_service.py`'s interval gating,
+  both-dirs pruning, failure handling, deleted-count logging), segment_capture 90 passing (up
+  from 82). Not yet done: `api`'s `transcripts` table has the same unbounded-growth shape
+  (`insert_transcript` gets one row per live chunk too) but Postgres disk wasn't the reported
+  symptom here, so it's untouched -- worth revisiting if `timescale-data` ever shows the same
+  growth.

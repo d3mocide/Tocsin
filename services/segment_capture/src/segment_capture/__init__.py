@@ -22,7 +22,12 @@ from pathlib import Path
 
 from . import heartbeat as heartbeat_module
 from .bus import CapturePublisher
-from .service import DEFAULT_LIVE_STATUS_INTERVAL_SECONDS, SegmentCaptureService
+from .retention import DEFAULT_ALERT_RETENTION_SECONDS, DEFAULT_LIVE_RETENTION_SECONDS
+from .service import (
+    DEFAULT_LIVE_STATUS_INTERVAL_SECONDS,
+    DEFAULT_PRUNE_INTERVAL_SECONDS,
+    SegmentCaptureService,
+)
 from .subscriber import SameAudioSubscriber
 from .tiers import TierTable
 
@@ -122,6 +127,15 @@ def main() -> None:
     output_dir = Path(os.environ.get("SEGMENT_CAPTURE_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)))
     preroll_seconds = float(os.environ.get("SEGMENT_CAPTURE_PREROLL_SECONDS", DEFAULT_PREROLL_SECONDS))
     hard_timeout_seconds = float(os.environ.get("SEGMENT_CAPTURE_HARD_TIMEOUT_SECONDS", DEFAULT_HARD_TIMEOUT_SECONDS))
+    live_retention_seconds = float(
+        os.environ.get("SEGMENT_CAPTURE_LIVE_RETENTION_SECONDS", DEFAULT_LIVE_RETENTION_SECONDS)
+    )
+    alert_retention_seconds = float(
+        os.environ.get("SEGMENT_CAPTURE_ALERT_RETENTION_SECONDS", DEFAULT_ALERT_RETENTION_SECONDS)
+    )
+    prune_interval_seconds = float(
+        os.environ.get("SEGMENT_CAPTURE_PRUNE_INTERVAL_SECONDS", DEFAULT_PRUNE_INTERVAL_SECONDS)
+    )
     data_dir = os.environ.get("TOCSIN_DATA_DIR")
 
     if not ring_buffer_dir.exists():
@@ -154,12 +168,16 @@ def main() -> None:
         live_status_interval_seconds=float(
             os.environ.get("LIVE_TRANSCRIPTION_STATUS_INTERVAL_SECONDS", DEFAULT_LIVE_STATUS_INTERVAL_SECONDS)
         ),
+        live_retention_seconds=live_retention_seconds,
+        alert_retention_seconds=alert_retention_seconds,
+        prune_interval_seconds=prune_interval_seconds,
     )
     heartbeat = heartbeat_module.build(_build_redis_client())
     live_label = f"{live_channel[0]}/{live_channel[1]}" if live_channel else "disabled"
     print(
         f"segment-capture: subscribed to {connect_addr}, publishing captures on {bind_addr}, "
-        f"live transcription: {live_label}",
+        f"live transcription: {live_label}, capture retention: "
+        f"{alert_retention_seconds / 86400:.1f}d alert / {live_retention_seconds / 86400:.1f}d live",
         flush=True,
     )
     try:

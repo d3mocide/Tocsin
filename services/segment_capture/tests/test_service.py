@@ -522,3 +522,85 @@ def test_live_segmenter_options_are_passed_through(tmp_path):
     service.tick()
     assert service._live_segmenter.kwargs == {"rms_threshold": 0.005, "min_chunk_seconds": 2.0}
     service.close()
+
+
+def test_tick_prunes_captures_on_the_configured_interval(tmp_path):
+    calls = []
+
+    def fake_prune(directory, live_retention, alert_retention, now_fn):
+        calls.append((directory, live_retention, alert_retention))
+        return []
+
+    clock = [0.0]
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        prune_fn=fake_prune,
+        prune_interval_seconds=100.0,
+        live_retention_seconds=11.0,
+        alert_retention_seconds=22.0,
+        now_fn=lambda: clock[0],
+    )
+
+    service.tick()
+    assert len(calls) == 1
+    assert calls[0] == (tmp_path / "captures", 11.0, 22.0)
+
+    clock[0] += 10.0
+    service.tick()
+    assert len(calls) == 1
+
+    clock[0] += 100.0
+    service.tick()
+    assert len(calls) == 2
+    service.close()
+
+
+def test_tick_prunes_both_output_and_live_output_dirs_when_different(tmp_path):
+    seen_dirs = []
+
+    def fake_prune(directory, live_retention, alert_retention, now_fn):
+        seen_dirs.append(directory)
+        return []
+
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        live_output_dir=tmp_path / "live-captures",
+        publisher=FakePublisher(),
+        prune_fn=fake_prune,
+    )
+    service.tick()
+    assert set(seen_dirs) == {tmp_path / "captures", tmp_path / "live-captures"}
+    service.close()
+
+
+def test_prune_failure_is_logged_and_does_not_raise(tmp_path, capsys):
+    def failing_prune(*args, **kwargs):
+        raise OSError("disk unhappy")
+
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        prune_fn=failing_prune,
+    )
+    service.tick()
+    assert "capture pruning" in capsys.readouterr().err
+    service.close()
+
+
+def test_prune_reports_deleted_count(tmp_path, capsys):
+    def fake_prune(directory, live_retention, alert_retention, now_fn):
+        return [tmp_path / "a.wav"]
+
+    service = SegmentCaptureService(
+        ring_buffer_dir=tmp_path,
+        output_dir=tmp_path / "captures",
+        publisher=FakePublisher(),
+        prune_fn=fake_prune,
+    )
+    service.tick()
+    assert "pruned 1 expired capture(s)" in capsys.readouterr().out
+    service.close()

@@ -13,10 +13,14 @@ from .bus import CapturePublisher
 from .live_segmenter import LiveSegmenter
 from .multimon import MultimonProcess
 from .recorder import DEFAULT_HARD_TIMEOUT_SECONDS, DEFAULT_PREROLL_SECONDS, SegmentRecorder
+from .retention import DEFAULT_ALERT_RETENTION_SECONDS, DEFAULT_LIVE_RETENTION_SECONDS, prune_captures
 from .ring_reader import RingBufferReader
 from .tiers import TierTable
 
 DEFAULT_LIVE_STATUS_INTERVAL_SECONDS = 300.0
+# Every 15 minutes, not every tick -- tick() runs on every ~1s main-loop
+# iteration (`__init__.py`), and this walks the whole captures directory.
+DEFAULT_PRUNE_INTERVAL_SECONDS = 900.0
 
 
 class SegmentCaptureService:
@@ -48,7 +52,12 @@ class SegmentCaptureService:
         live_output_dir: Path | None = None,
         live_segmenter_options: dict | None = None,
         live_status_interval_seconds: float = DEFAULT_LIVE_STATUS_INTERVAL_SECONDS,
+        live_retention_seconds: float = DEFAULT_LIVE_RETENTION_SECONDS,
+        alert_retention_seconds: float = DEFAULT_ALERT_RETENTION_SECONDS,
+        prune_interval_seconds: float = DEFAULT_PRUNE_INTERVAL_SECONDS,
+        prune_fn=prune_captures,
         now_fn=time.monotonic,
+        prune_now_fn=time.time,
     ):
         self._ring_buffer_dir = ring_buffer_dir
         self._output_dir = output_dir
@@ -77,6 +86,12 @@ class SegmentCaptureService:
         self._now = now_fn
         self._live_last_status_at: float | None = None
         self._live_total_chunks = 0
+        self._live_retention_seconds = live_retention_seconds
+        self._alert_retention_seconds = alert_retention_seconds
+        self._prune_interval = prune_interval_seconds
+        self._prune_fn = prune_fn
+        self._prune_now = prune_now_fn
+        self._last_prune_at: float | None = None
 
     def feed(self, site: str, channel: str, pcm_bytes: bytes) -> None:
         key = (site, channel)
@@ -100,6 +115,36 @@ class SegmentCaptureService:
             if recorder is not None and recorder.timed_out():
                 self._finalize(key, timed_out=True)
         self._poll_live()
+        self._poll_prune()
+
+    def _poll_prune(self) -> None:
+        """Runs `prune_fn` (default `retention.prune_captures`) on
+        `output_dir`/`live_output_dir` every `prune_interval_seconds` --
+        see `retention.py` for why this exists at all. Every failure mode
+        here (a stat race, a permission error, the directory vanishing) is
+        swallowed inside `prune_fn` itself; nothing about a full disk
+        should be allowed to take down the ZCZC/EOM alert-capture path
+        that shares this process."""
+        now = self._now()
+        if self._last_prune_at is not None and now - self._last_prune_at < self._prune_interval:
+            return
+        self._last_prune_at = now
+        dirs = {self._output_dir, self._live_output_dir}
+        deleted = []
+        for directory in dirs:
+            try:
+                deleted.extend(
+                    self._prune_fn(
+                        directory,
+                        self._live_retention_seconds,
+                        self._alert_retention_seconds,
+                        now_fn=self._prune_now,
+                    )
+                )
+            except Exception as exc:
+                print(f"segment-capture: capture pruning of {directory} failed: {exc!r}", file=sys.stderr)
+        if deleted:
+            print(f"segment-capture: pruned {len(deleted)} expired capture(s)", flush=True)
 
     def _poll_live(self) -> None:
         if self._live_channel is None:
