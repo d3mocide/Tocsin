@@ -13,6 +13,22 @@
 # for all four is simpler than mixing base images in a single Dockerfile,
 # and multimon-ng/ffmpeg are just as happy as Debian packages here as they
 # were on python:3.11-slim.
+# RTL-SDR Blog V4 support. bookworm's librtlsdr0 (0.6.0) predates the V4:
+# with it the V4's R828D front end hears nothing at 162.55 MHz (NWR bins
+# measured identical to empty spectrum), while the same dongle through the
+# Blog driver has ~20 dB SNR there. The Blog fork keeps soname
+# librtlsdr.so.0 and still supports R820T dongles, so it is swapped in for
+# Debian's copy below and SoapySDR's rtlsdr module uses it unchanged.
+FROM debian:bookworm-slim AS rtlsdr-blog
+ARG RTLSDR_BLOG_REF=v1.3.6
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ca-certificates build-essential cmake pkg-config libusb-1.0-0-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "$RTLSDR_BLOG_REF" https://github.com/rtlsdrblog/rtl-sdr-blog /src \
+    && cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release -DINSTALL_UDEV_RULES=OFF -DDETACH_KERNEL_DRIVER=ON \
+    && cmake --build /build -j"$(nproc)" \
+    && cmake --install /build --prefix /opt/rtlsdr-blog
+
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,6 +42,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Replace Debian's librtlsdr with the Blog build (see the rtlsdr-blog stage).
+COPY --from=rtlsdr-blog /opt/rtlsdr-blog/lib/ /opt/rtlsdr-blog/lib/
+RUN target="$(readlink -f "$(dpkg -L librtlsdr0 | grep 'librtlsdr\.so\.0$')")" \
+    && cp "$(readlink -f /opt/rtlsdr-blog/lib/librtlsdr.so.0)" "$target" \
+    && ldconfig \
+    && rm -rf /opt/rtlsdr-blog
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
