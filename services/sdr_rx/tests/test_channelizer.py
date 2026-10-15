@@ -76,7 +76,10 @@ def test_result_independent_of_chunk_boundaries(k, dtype):
     chunked = _run_tone(freq, n_samples=48_000, chunk=777, dtype=dtype)
     n = min(len(whole), len(chunked))
     assert n > 0
-    np.testing.assert_allclose(whole[:n], chunked[:n], atol=1e-8)
+    # Chunking changes the FFT batch shape, so float32 rounding differs in the near-empty bins (about 3e-8 against
+    # a 6e-5 tone). A history/parity bookkeeping bug moves samples of tone size, three orders of magnitude above this.
+    atol = 1e-8 if dtype == np.complex128 else 1e-7
+    np.testing.assert_allclose(whole[:n], chunked[:n], atol=atol)
 
 
 @pytest.mark.parametrize("dtype", DTYPES)
