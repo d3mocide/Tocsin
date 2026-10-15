@@ -2796,3 +2796,25 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
 
 - `api`: optional `API_KEY` (X-API-Key / Bearer; `?api_key=` only for `/events`, `/stream/*`, `/captures/*`), pure-ASGI so SSE and audio are not buffered; the web page asks for the key once. `GET /alerts?since=`. SSE messages carry `id:` and a reconnect with `Last-Event-ID` replays missed alerts/transcripts/dispatches (history of 200, never health). 145 api tests pass (131 + 14).
 - `sdr-rx`: `SDR_RX_NUM_BINS` (default 48 in code, 12 in compose). 12 bins runs the dongle at 300 kS/s for the seven weather channels at ~1/5 the channelizer CPU with identical per-channel output; `test_narrow_plan.py` compares a full pipeline at 12 vs 48 on the same FM signal. 149 sdr_rx tests pass; the 2 `test_result_independent_of_chunk_boundaries[complex64-*]` precision failures predate this change.
+
+### 2026-10-15 -- Web UI makeover (ghost-style glass theme), bundled basemap
+
+- `web`: new dark glass palette (same CSS variable names, so every view re-themes) and bundled
+  JetBrains Mono / Share Tech Mono / Space Grotesk via `@fontsource` -- no CDN, offgrid-safe.
+  `backdrop.ts` + `scene.ts` draw an ASCII weather canvas (stars, fog, rain, snow, wind, storm
+  lightning): sky comes from the NWS forecast (hybrid only), tint from the highest active alert
+  tier (works offgrid). 15fps, pauses on a hidden tab, still frame under reduced-motion,
+  header toggle persisted in localStorage, default off on <=2-core devices. `views/hero.ts`
+  adds a status band (conditions, ALL CLEAR or the top alert, RF/alerts/dispatch chips).
+  Severity-first alert cards, compact expired rows, restyled controls/NWR cards, glowing
+  spectrum ramp, bell logo (SVG + regenerated PNG icons, cache `?v=3`).
+- On phones the alert feed leads only while an alert is active (`body.alerts-active`);
+  fixed a 24px Weather-tab overflow (ephemeris cards) and a wider-font ingestion overflow.
+- Map: the OpenFreeMap fetch is gone. Census 1:5M state and county boundaries (public domain,
+  mapshaper-simplified) ship under `web/public/geo/` (~1MB raw), so the basemap needs no network;
+  only the NEXRAD radar overlay still does. No labels/roads by design.
+- Verified in headless Chromium against the mock API and the live hybrid stack at 1440 and 390px:
+  no console errors, no horizontal scroll, `tsc --noEmit` + `vite build` pass. The backdrop's
+  animation was only reviewed as still frames. Deployed by rebuilding the `api` image (the
+  previous one is tagged `tocsin-api:pre-makeover`). Branch `ui/ghost-makeover`, not yet merged.
+

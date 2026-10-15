@@ -61,15 +61,28 @@ function percentile(sorted: number[], fraction: number): number {
   return sorted[index];
 }
 
-/** Blue -> cyan -> yellow -> red, the conventional SDR waterfall ramp.
- * NWR channel bins get a warmer floor so the seven channels stay findable
- * against the 41 spectrum-only bins even when everything is quiet. */
+// [position, hue, saturation%, lightness%]; interpolated so signals glow
+// from deep navy through violet and cyan to near-white at the peak.
+const RAMP: ReadonlyArray<readonly [number, number, number, number]> = [
+  [0, 235, 60, 6],
+  [0.45, 268, 65, 30],
+  [0.75, 188, 85, 52],
+  [1, 170, 90, 88],
+];
+
+/** NWR channel bins start from a teal floor so the seven channels stay
+ * findable against the 41 spectrum-only bins even when everything is quiet. */
 function color(normalized: number, channelBin: boolean): string {
   const value = Math.max(0, Math.min(1, normalized));
-  const hue = channelBin ? 20 + (1 - value) * 20 : 240 - value * 240;
-  const lightness = 8 + value * 52;
-  const saturation = channelBin ? 85 : 70;
-  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  let i = 1;
+  while (i < RAMP.length - 1 && value > RAMP[i][0]) i++;
+  const [p0, h0, s0, l0] = RAMP[i - 1];
+  const [p1, h1, s1, l1] = RAMP[i];
+  const t = (value - p0) / (p1 - p0);
+  const lerp = (a: number, b: number) => a + (b - a) * t;
+  const lightness = lerp(l0, l1) + (channelBin ? 6 * (1 - value) : 0);
+  const hue = channelBin && value < 0.45 ? 176 : lerp(h0, h1);
+  return `hsl(${hue}, ${lerp(s0, s1)}%, ${lightness}%)`;
 }
 
 export class WaterfallView {
@@ -163,7 +176,7 @@ export class WaterfallView {
 
     if (this.rows.length === 0) {
       ctx.fillStyle = styles.getPropertyValue("--text-dim").trim() || "#8b949e";
-      ctx.font = "13px system-ui, sans-serif";
+      ctx.font = '12px "JetBrains Mono", ui-monospace, monospace';
       ctx.textAlign = "center";
       ctx.fillText("Waiting for spectrum data…", width / 2, height / 2);
       return;
@@ -213,7 +226,7 @@ export class WaterfallView {
       const name = NWR_CHANNEL_NAMES.get(Math.round(frequency));
       if (!name) return;
       const x = index * binWidth + binWidth / 2;
-      ctx.strokeStyle = "rgba(255, 112, 67, 0.35)";
+      ctx.strokeStyle = "rgba(167, 139, 250, 0.4)";
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, plotHeight);
