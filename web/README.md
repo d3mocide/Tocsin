@@ -103,10 +103,9 @@ it can't climb above the sticky header on scroll at that width either.
   the panel -- `StationsView` keeps the current page across repaints
   (`reference` reloading, e.g.) so paging through doesn't get reset out
   from under you.
-- **NWS zone & weather map** (`views/map.ts`) -- a MapLibre GL map (dark
-  OpenFreeMap vector basemap, keyless -- CARTO's raster tiles now require a
-  registered API key; falls back to a local flat-background style rather
-  than a blank canvas if the basemap can't be fetched) showing only the NWS
+- **NWS zone & weather map** (`views/map.ts`) -- a MapLibre GL map on a bundled
+  US state/county outline basemap (`public/geo/`, rebuilt by `scripts/build-geo.sh`;
+  no tile server, so it renders the same offgrid) showing only the NWS
   forecast zones with an active alert, filled and outlined by that zone's
   highest active tier, plus every
   nearby NWR transmitter as a tower marker (color by `status`, a pulsing ring on
