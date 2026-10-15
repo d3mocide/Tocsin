@@ -1,4 +1,5 @@
 import { byIdOptional, el, replaceChildren } from "../dom";
+import { setScene, setWeatherNow, skyFromForecast } from "../scene";
 import type { Store } from "../store";
 
 export interface ForecastPeriod {
@@ -116,6 +117,18 @@ export class ForecastView {
 
   render(): void {
     const { system } = this.store.state;
+    const now = this.forecastData?.periods[0];
+    if (now) {
+      setScene({ sky: skyFromForecast(now.shortForecast) });
+      const { city, state } = this.forecastData!;
+      setWeatherNow({
+        temp: now.temperature,
+        unit: now.temperatureUnit,
+        short: now.shortForecast,
+        wind: `${now.windDirection} ${now.windSpeed}`.trim(),
+        place: city && state ? `${city}, ${state}` : null,
+      });
+    }
     const isOffgrid = system?.mode === "offgrid";
     const lat = system?.latitude;
     const lon = system?.longitude;

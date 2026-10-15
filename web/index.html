@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#0b0e13" />
+    <meta name="theme-color" content="#04050b" />
     <title>Tocsin</title>
     <!-- ?v= bumps on every logo change: the icon filenames are stable, and
          browsers cache favicons far more aggressively than page assets -->
@@ -20,6 +20,7 @@
 
   </head>
   <body>
+    <canvas id="backdrop" class="backdrop" aria-hidden="true"></canvas>
     <header class="app-header">
       <div class="brand">
         <img src="/favicon.svg?v=2" alt="Tocsin emblem" class="brand-logo" />
@@ -34,8 +35,13 @@
         <button id="tab-btn-logs" class="nav-tab" type="button">Activity</button>
       </nav>
 
-      <div id="connection-status"></div>
+      <div class="header-end">
+        <div id="connection-status"></div>
+        <button id="backdrop-toggle" class="icon-toggle" type="button" aria-pressed="true" title="Toggle animated weather backdrop"><span class="sr-only">Animated backdrop</span><span class="glyph" aria-hidden="true">((·))</span></button>
+      </div>
     </header>
+
+    <section id="hero" class="hero" aria-label="Current conditions and alert status"></section>
 
     <div id="tab-view-dashboard" class="tab-view active">
       <main class="layout">

@@ -1,3 +1,8 @@
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/600.css";
+import "@fontsource/space-grotesk/400.css";
+import "@fontsource/space-grotesk/600.css";
+import "@fontsource/share-tech-mono/400.css";
 import {
   fetchAlerts,
   fetchDispatches,
@@ -13,7 +18,9 @@ import {
   fetchTranscripts,
   subscribeToEvents,
 } from "./api";
+import { Backdrop } from "./backdrop";
 import { byId, el, replaceChildren } from "./dom";
+import { setScene, type Alarm } from "./scene";
 import { isActive, tierOf } from "./format";
 import { ALL_TOPICS, healthKey, Store, type Topic } from "./store";
 import { renderActivity } from "./views/activity";
@@ -21,6 +28,7 @@ import { AlertFeedView } from "./views/alerts";
 import { mountFilters } from "./views/filters";
 import { ForecastView } from "./views/forecast";
 import { renderHealth } from "./views/health";
+import { renderHero } from "./views/hero";
 import { MapView } from "./views/map";
 import { WaterfallView } from "./views/spectrum";
 import { StationsView } from "./views/stations";
@@ -80,8 +88,36 @@ function initNavigationTabs(mapView: MapView, weatherView: WeatherDashboardView)
   logsBtn.addEventListener("click", () => switchTab("logs"));
 }
 
+function alarmLevel(): Alarm {
+  const { alerts, reference } = store.state;
+  let level: Alarm = "calm";
+  for (const alert of alerts.values()) {
+    if (!isActive(alert)) continue;
+    const tier = tierOf(alert, reference)?.trim().toUpperCase().slice(-1);
+    if (tier === "A") return "warning";
+    if (tier === "B") level = "watch";
+  }
+  return level;
+}
+
+function initBackdrop(): void {
+  if (import.meta.env.DEV) (window as unknown as { __setScene: typeof setScene }).__setScene = setScene;
+  const backdrop = new Backdrop(byId<HTMLCanvasElement>("backdrop"));
+  const button = byId("backdrop-toggle");
+  const paint = () => {
+    button.setAttribute("aria-pressed", String(backdrop.isOn));
+    button.classList.toggle("on", backdrop.isOn);
+  };
+  button.addEventListener("click", () => {
+    backdrop.toggle();
+    paint();
+  });
+  paint();
+}
+
 async function main(): Promise<void> {
   initPanelCollapsing();
+  initBackdrop();
 
   const alertsView = new AlertFeedView(byId("alerts"), store);
   const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
@@ -117,6 +153,8 @@ async function main(): Promise<void> {
     if (touched("activity", "alerts", "system", "clock")) renderActivity(byId("activity"), store);
     if (touched("alerts", "filters", "system", "clock")) alertsView.render();
     if (touched("alerts")) refreshFilterSites();
+    if (touched("system", "alerts", "health", "stats", "clock")) renderHero(byId("hero"), store);
+    if (touched("alerts", "clock", "system")) setScene({ alarm: alarmLevel() });
     if (touched("alerts", "clock")) updateDocumentTitle();
   };
   const renderAll = () => render(new Set(ALL_TOPICS));
