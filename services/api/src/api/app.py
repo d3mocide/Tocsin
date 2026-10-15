@@ -135,7 +135,7 @@ def create_app(
     # don't care about this, so falling back to `*` keeps them unchanged.
     # Added before CORS so CORS stays outermost: a 401 still carries the CORS headers the browser needs to read it.
     if config and config.api_keys:
-        app.add_middleware(ApiKeyMiddleware, keys=config.api_keys)
+        app.add_middleware(ApiKeyMiddleware, keys=config.api_keys, ui_open=config.api_key_ui_open)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(config.cors_allowed_origins) if config else ["*"],

@@ -103,6 +103,8 @@ class ApiConfig:
     alerts_prune_interval_seconds: float
     # `API_KEY` (comma-separated for rotation). Empty = no key required; see auth.py.
     api_keys: tuple[str, ...] = ()
+    # Let the bundled web page through without the key (see auth.py for what that does and does not protect).
+    api_key_ui_open: bool = True
 
     @classmethod
     def from_env(cls) -> "ApiConfig":
@@ -135,4 +137,5 @@ class ApiConfig:
                 os.environ.get("ALERTS_PRUNE_INTERVAL_SECONDS", DEFAULT_ALERTS_PRUNE_INTERVAL_SECONDS)
             ),
             api_keys=tuple(k.strip() for k in os.environ.get("API_KEY", "").split(",") if k.strip()),
+            api_key_ui_open=os.environ.get("API_KEY_UI_OPEN", "true").strip().lower() not in ("0", "false", "no", "off"),
         )

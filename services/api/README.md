@@ -129,6 +129,6 @@ uv run pytest
 
 Set `API_KEY` (comma-separated to rotate) and the data routes -- everything above, including `/events`, `/stream/*` and
 `/captures/*` -- require it as `X-API-Key: <key>` or `Authorization: Bearer <key>`. Unset (the default), nothing changes.
-The built web page is always served so it can load; it asks for the key once and remembers it in the browser.
+The bundled web page needs no key: requests it makes to its own server carry `Sec-Fetch-Site: same-origin`, which a page cannot forge, and are let through (`API_KEY_UI_OPEN=false` makes the page ask for the key too, once, remembered in the browser). That keeps other websites and ordinary clients out, but anyone on the network who deliberately sets that header is let in as well: the key is a gate for programs, not a login.
 `EventSource` and `<audio>` cannot send headers, so only `/events`, `/stream/*` and `/captures/*` also accept
 `?api_key=` -- that puts the key in the URL, so keep it off shared logs. CORS preflights are not gated.
