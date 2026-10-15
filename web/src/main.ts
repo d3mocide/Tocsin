@@ -154,7 +154,10 @@ async function main(): Promise<void> {
     if (touched("alerts", "filters", "system", "clock")) alertsView.render();
     if (touched("alerts")) refreshFilterSites();
     if (touched("system", "alerts", "health", "stats", "clock")) renderHero(byId("hero"), store);
-    if (touched("alerts", "clock", "system")) setScene({ alarm: alarmLevel() });
+    if (touched("alerts", "clock", "system")) {
+      setScene({ alarm: alarmLevel() });
+      document.body.classList.toggle("alerts-active", Array.from(store.state.alerts.values()).some((alert) => isActive(alert)));
+    }
     if (touched("alerts", "clock")) updateDocumentTitle();
   };
   const renderAll = () => render(new Set(ALL_TOPICS));

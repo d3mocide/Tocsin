@@ -1926,10 +1926,9 @@ footer {
     padding: 0.75rem;
   }
 
-  /* Alerts lead on a phone. Audio sits above the feed on desktop to
-     balance the two columns, but on one narrow column that would push
-     the thing you opened the page for below the fold. */
-  .panel-feed {
+  /* Alerts lead on a phone only while one is active; otherwise the hero
+     already says ALL CLEAR and a feed of expired alerts would bury live audio. */
+  .alerts-active .panel-feed {
     order: -1;
   }
 
