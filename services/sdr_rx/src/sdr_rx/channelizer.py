@@ -76,6 +76,10 @@ spare); anything else is promoted to `complex128`. Halving the width
 halves the traffic through the bandwidth-bound fold above, which is most
 of what this stage costs. `np.fft` would silently undo that -- it promotes
 complex64 to complex128 -- so the FFT here is `scipy.fft`, which doesn't.
+
+Accuracy: against a complex128 run, complex64 output is within about one
+float32 ulp at full scale. The fold is bit-identical however the stream is
+chunked; only the float32 FFT varies (~half an ulp) with batch shape.
 """
 
 from __future__ import annotations

@@ -18,10 +18,9 @@ SWEEP_KS = [-4, -3, -2, -1, 0, 1, 2, 5, -10, 23, -24]
 
 # The pipeline runs in complex64 end to end -- SoapySDR hands over CF32
 # (capture.py) and nothing widens it (channelizer.py's "Sample precision").
-# Every hazard assertion below is parametrized over both precisions at the
-# *same* tolerance rather than granting float32 a looser one: an 8-bit ADC's
-# samples do not need float64 to channelize correctly, and if the float32
-# path could not hold this bar it would not be the right default.
+# Every hazard assertion below runs at both precisions; the one place float32
+# gets a looser bar is the chunk-boundary check, whose tolerance is explained
+# there. An 8-bit ADC's samples do not need float64 to channelize correctly.
 DTYPES = [np.complex128, np.complex64]
 
 
@@ -76,9 +75,11 @@ def test_result_independent_of_chunk_boundaries(k, dtype):
     chunked = _run_tone(freq, n_samples=48_000, chunk=777, dtype=dtype)
     n = min(len(whole), len(chunked))
     assert n > 0
-    # Chunking changes the FFT batch shape, so float32 rounding differs in the near-empty bins (about 3e-8 against
-    # a 6e-5 tone). A history/parity bookkeeping bug moves samples of tone size, three orders of magnitude above this.
-    atol = 1e-8 if dtype == np.complex128 else 1e-7
+    # The fold is bit-identical across chunk sizes; scipy.fft's float32 path
+    # rounds differently by batch shape (measured up to ~0.5 ulp at full scale).
+    # Two ulps leaves headroom for other CPUs/SIMD paths yet sits ~6 orders below
+    # the O(1) error a history/parity bookkeeping bug produces.
+    atol = 1e-8 if dtype == np.complex128 else 2 * np.finfo(np.float32).eps
     np.testing.assert_allclose(whole[:n], chunked[:n], atol=atol)
 
 
