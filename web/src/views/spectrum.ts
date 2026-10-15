@@ -226,7 +226,7 @@ export class WaterfallView {
       const name = NWR_CHANNEL_NAMES.get(Math.round(frequency));
       if (!name) return;
       const x = index * binWidth + binWidth / 2;
-      ctx.strokeStyle = "rgba(255, 112, 67, 0.35)";
+      ctx.strokeStyle = "rgba(167, 139, 250, 0.4)";
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, plotHeight);
