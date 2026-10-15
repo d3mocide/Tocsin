@@ -2066,7 +2066,7 @@ footer {
   border-radius: 8px;
   border: 1px solid var(--border);
   overflow: hidden;
-  background: #090c10;
+  background: #070916;
   /* MapLibre's own controls/overlays use z-index values (up to 99999 for
      its fullscreen/gesture-hint overlays) that would otherwise climb
      straight past the sticky header's z-index: 10 on scroll.
@@ -2655,7 +2655,7 @@ footer {
 .seven-day-card.is-today {
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, var(--panel-deep));
-  box-shadow: 0 0 12px rgba(74, 158, 255, 0.12);
+  box-shadow: 0 0 12px rgba(103, 232, 249, 0.12);
 }
 
 .seven-day-card.is-today .seven-day-name {

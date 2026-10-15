@@ -50,7 +50,7 @@ const BASEMAP_FETCH_TIMEOUT_MS = 6000;
 const OFFLINE_STYLE: StyleSpecification = {
   version: 8,
   sources: {},
-  layers: [{ id: "background", type: "background", paint: { "background-color": "#090c10" } }],
+  layers: [{ id: "background", type: "background", paint: { "background-color": "#070916" } }],
 };
 
 const ZONES_SOURCE_ID = "tocsin-zones";
@@ -508,7 +508,7 @@ export class MapView {
           ? "tower-icon-active"
           : "tower-icon-normal"
         : "tower-icon-abnormal";
-      const markerColor = isNormal ? (isMonitored ? "#22c55e" : "#16a34a") : "#ef4444";
+      const markerColor = isNormal ? (isMonitored ? "#5eead4" : "#2dd4bf") : "#ef4444";
 
       const towerEl = document.createElement("div");
       towerEl.className = "custom-tower-marker-container";
