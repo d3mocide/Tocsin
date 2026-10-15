@@ -34,23 +34,46 @@ function radarTileUrl(layer: string): string {
   return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/${layer}/{z}/{x}/{y}.png`;
 }
 
-// Free, keyless vector basemap. CARTO's raster tiles (the previous basemap)
-// now require a registered API key -- see carto.com/basemaps/apikey -- which
-// would turn a cosmetic enhancement into an account-management dependency.
-const DARK_STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
+// Bundled US state and county outlines (public/geo, built by scripts/build-geo.sh):
+// no tile server, so the map renders identically with or without a network.
+// Absolute because MapLibre resolves source URLs inside its worker.
+const geoUrl = (name: string) => new URL(`/geo/${name}.json`, window.location.href).href;
 
-// A blocked/blackholed route (common on a firewalled or offgrid network) lets
-// fetch() hang far longer than a plain refusal -- without a deadline the map
-// sits on OFFLINE_STYLE indefinitely while the status pill still claims "Live".
-const BASEMAP_FETCH_TIMEOUT_MS = 6000;
-
-// Zero-network style so the map -- and our own zone/station overlays, which
-// don't depend on the basemap at all -- render instantly even with no route
-// to tiles.openfreemap.org. See CLAUDE.md's "no hard network dependency" rule.
-const OFFLINE_STYLE: StyleSpecification = {
+const BASEMAP_STYLE: StyleSpecification = {
   version: 8,
-  sources: {},
-  layers: [{ id: "background", type: "background", paint: { "background-color": "#070916" } }],
+  sources: {
+    counties: { type: "geojson", data: geoUrl("us-counties") },
+    states: { type: "geojson", data: geoUrl("us-states") },
+  },
+  layers: [
+    { id: "background", type: "background", paint: { "background-color": "#070916" } },
+    {
+      id: "county-lines",
+      type: "line",
+      source: "counties",
+      paint: {
+        "line-color": "#67e8f9",
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.16, 8, 0.34],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.4, 9, 1],
+      },
+    },
+    {
+      id: "state-glow",
+      type: "line",
+      source: "states",
+      paint: { "line-color": "#a78bfa", "line-opacity": 0.28, "line-width": 6, "line-blur": 5 },
+    },
+    {
+      id: "state-lines",
+      type: "line",
+      source: "states",
+      paint: {
+        "line-color": "#c4b5fd",
+        "line-opacity": 0.75,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 0.8, 9, 1.8],
+      },
+    },
+  ],
 };
 
 const ZONES_SOURCE_ID = "tocsin-zones";
@@ -154,7 +177,7 @@ export class MapView {
   private operatorMarker: Marker | null = null;
   private hoverPopup: Popup | null = null;
   private showRadar = false;
-  private tileStatus = "Loading…";
+  private tileStatus = "Bundled";
   private activeAdvisoryCount = 0;
 
   constructor(container: HTMLElement, store: Store) {
@@ -218,36 +241,23 @@ export class MapView {
     // Initial center on Pacific Northwest (Portland / Seattle regional view)
     this.map = new MapLibreMap({
       container: mapDiv,
-      style: OFFLINE_STYLE,
+      style: BASEMAP_STYLE,
       center: [-122.67, 45.52],
       zoom: 7,
       // Collapse to just the info icon by default; the full text is one click away.
       attributionControl: { compact: true },
     });
 
-    // Fires after the initial (offline) style loads and again after every
-    // setStyle() below -- both wipe any sources/layers we added, so this is
-    // the one place overlays get (re)built.
+    // Overlays are (re)built here whenever a style finishes loading.
     this.map.on("style.load", () => {
       this.ensureOverlayLayers();
       this.applyRadarVisibility();
       this.updateLayers();
     });
 
-    this.map.on("error", () => this.setTileStatus("Offline (Vector Mode)"));
+    // The basemap is local, so a map error is a radar tile failing.
+    this.map.on("error", () => this.setTileStatus("Bundled (radar offline)"));
     this.map.on("zoomend", () => this.applyRadarVisibility());
-
-    // OpenFreeMap's "dark" style references city/town dot icons as
-    // "circle-11", but its sprite sheet only defines them as "circle_11" --
-    // an upstream naming mismatch (verified against the live sprite JSON),
-    // not anything in our own style config. Alias it rather than let every
-    // affected label silently drop its dot and spam styleimagemissing.
-    this.map.setMissingStyleImageResolver((id) => {
-      const fallback = id === "circle-11" ? "circle_11" : null;
-      if (!fallback || !this.map || this.map.hasImage(id) || !this.map.hasImage(fallback)) return;
-      const source = this.map.getImage(fallback);
-      this.map.addImage(id, source.data, { pixelRatio: source.pixelRatio, sdf: source.sdf });
-    });
 
     this.map.on("click", ZONES_FILL_LAYER_ID, (e) => {
       const feature = e.features?.[0];
@@ -268,24 +278,6 @@ export class MapView {
       this.hoverPopup.setLngLat(e.lngLat).setText(String(feature.properties?.tooltipText ?? "")).addTo(this.map);
     });
 
-    void this.loadRemoteBasemap();
-  }
-
-  private async loadRemoteBasemap(): Promise<void> {
-    try {
-      const res = await fetch(DARK_STYLE_URL, { signal: AbortSignal.timeout(BASEMAP_FETCH_TIMEOUT_MS) });
-      if (!res.ok) throw new Error(`basemap fetch failed: ${res.status}`);
-      const style = (await res.json()) as StyleSpecification;
-      // The trivial OFFLINE_STYLE it's replacing can still be mid-load internally
-      // even though it looks instant, racing setStyle()'s default diff attempt and
-      // triggering a harmless but noisy "Style is not done loading" warning -- skip
-      // diffing outright since we're always doing a full swap, never a partial update.
-      this.map?.setStyle(style, { diff: false });
-      this.setTileStatus("Live");
-    } catch {
-      // Offline, blocked, or timed-out -- stay on the local OFFLINE_STYLE.
-      this.setTileStatus("Offline (Vector Mode)");
-    }
   }
 
   private ensureOverlayLayers(): void {
