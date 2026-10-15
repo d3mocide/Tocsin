@@ -2790,3 +2790,9 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   (`insert_transcript` gets one row per live chunk too) but Postgres disk wasn't the reported
   symptom here, so it's untouched -- worth revisiting if `timescale-data` ever shows the same
   growth.
+
+
+### 2026-10-14 -- API key, alert catch-up, SSE replay; weather-only channelizer
+
+- `api`: optional `API_KEY` (X-API-Key / Bearer; `?api_key=` only for `/events`, `/stream/*`, `/captures/*`), pure-ASGI so SSE and audio are not buffered; the web page asks for the key once. `GET /alerts?since=`. SSE messages carry `id:` and a reconnect with `Last-Event-ID` replays missed alerts/transcripts/dispatches (history of 200, never health). 145 api tests pass (131 + 14).
+- `sdr-rx`: `SDR_RX_NUM_BINS` (default 48 in code, 12 in compose). 12 bins runs the dongle at 300 kS/s for the seven weather channels at ~1/5 the channelizer CPU with identical per-channel output; `test_narrow_plan.py` compares a full pipeline at 12 vs 48 on the same FM signal. 149 sdr_rx tests pass; the 2 `test_result_independent_of_chunk_boundaries[complex64-*]` precision failures predate this change.

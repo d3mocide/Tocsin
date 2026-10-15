@@ -18,8 +18,44 @@ import type {
 // via a .env.local with VITE_API_BASE_URL=http://localhost:8000.
 const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? "";
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+// Only used when the server has `API_KEY` set (services/api/src/api/auth.py). Stored in this browser so the
+// page asks once; cleared again when the server rejects it.
+const KEY_STORAGE = "tocsin_api_key";
+
+function storedKey(): string | null {
+  try {
+    return localStorage.getItem(KEY_STORAGE);
+  } catch {
+    return null;
+  }
+}
+
+function rememberKey(key: string | null): void {
+  try {
+    if (key) localStorage.setItem(KEY_STORAGE, key);
+    else localStorage.removeItem(KEY_STORAGE);
+  } catch {
+    /* private mode: the key just won't persist */
+  }
+}
+
+/** `?api_key=` for the two things a browser cannot send a header on (EventSource, <audio>). */
+export function withKey(url: string): string {
+  const key = storedKey();
+  return key ? `${url}${url.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(key)}` : url;
+}
+
+async function getJson<T>(path: string, retried = false): Promise<T> {
+  const key = storedKey();
+  const response = await fetch(`${API_BASE_URL}${path}`, key ? { headers: { "X-API-Key": key } } : undefined);
+  if (response.status === 401 && !retried) {
+    rememberKey(null);
+    const entered = window.prompt("This Tocsin requires an API key:");
+    if (entered) {
+      rememberKey(entered.trim());
+      return getJson<T>(path, true);
+    }
+  }
   if (!response.ok) {
     throw new Error(`${path} -> HTTP ${response.status}`);
   }
@@ -77,7 +113,7 @@ export function fetchDispatches(limit = 100, rawHeader?: string): Promise<Dispat
 }
 
 export function captureUrl(name: string): string {
-  return `${API_BASE_URL}/captures/${encodeURIComponent(name)}`;
+  return withKey(`${API_BASE_URL}/captures/${encodeURIComponent(name)}`);
 }
 
 export interface EventHandlers {
@@ -101,7 +137,7 @@ export interface EventHandlers {
  * just surfaces that it's happening.
  */
 export function subscribeToEvents(handlers: EventHandlers): () => void {
-  const source = new EventSource(`${API_BASE_URL}/events`);
+  const source = new EventSource(withKey(`${API_BASE_URL}/events`));
 
   source.onopen = () => handlers.onStatusChange?.(true);
   source.onerror = () => handlers.onStatusChange?.(false);

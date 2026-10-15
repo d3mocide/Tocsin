@@ -101,6 +101,8 @@ class ApiConfig:
     # a background sweep deletes it, and how often that sweep runs.
     alerts_prune_grace_seconds: float
     alerts_prune_interval_seconds: float
+    # `API_KEY` (comma-separated for rotation). Empty = no key required; see auth.py.
+    api_keys: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "ApiConfig":
@@ -132,4 +134,5 @@ class ApiConfig:
             alerts_prune_interval_seconds=float(
                 os.environ.get("ALERTS_PRUNE_INTERVAL_SECONDS", DEFAULT_ALERTS_PRUNE_INTERVAL_SECONDS)
             ),
+            api_keys=tuple(k.strip() for k in os.environ.get("API_KEY", "").split(",") if k.strip()),
         )

@@ -86,10 +86,10 @@ import numpy as np
 import scipy.fft
 from scipy.signal import firwin
 
-NUM_BINS = 48
+from .channels import NUM_BINS  # 48 by default; SDR_RX_NUM_BINS=12 for the weather-only plan
 TAPS_PER_BIN = 12
-NUM_TAPS = NUM_BINS * TAPS_PER_BIN  # 576
-DECIMATION = NUM_BINS // 2  # 24; 2x oversampled
+NUM_TAPS = NUM_BINS * TAPS_PER_BIN  # 576 at 48 bins
+DECIMATION = NUM_BINS // 2  # 24 at 48 bins; 2x oversampled, so 50 kHz per channel at any size
 
 
 @dataclass

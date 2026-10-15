@@ -64,13 +64,15 @@ class SpectrumTracker:
         sink: SpectrumSink | None = None,
         publish_interval_seconds: float = DEFAULT_PUBLISH_INTERVAL_SECONDS,
         now_fn=time.monotonic,
+        num_bins: int = NUM_BINS,
     ):
         self._site = site
         self._sink = sink or LoggingSpectrumSink()
         self._publish_interval_seconds = publish_interval_seconds
         self._now = now_fn
         self._last_published: float | None = None
-        self._bins = all_bins()
+        self._num_bins = num_bins
+        self._bins = all_bins(num_bins)
 
     def sample(self, spectrum: np.ndarray) -> None:
         """`spectrum`: `(n_frames, 48)` complex array straight from
@@ -86,7 +88,7 @@ class SpectrumTracker:
 
         magnitude_by_column = np.mean(np.abs(spectrum), axis=0)  # (48,), raw FFT column order
         power_db_by_column = 20.0 * np.log10(np.maximum(magnitude_by_column, _MIN_MAGNITUDE))
-        power_db = [float(power_db_by_column[b.k % NUM_BINS]) for b in self._bins]
+        power_db = [float(power_db_by_column[b.k % self._num_bins]) for b in self._bins]
 
         self._sink.record(
             SpectrumSnapshot(

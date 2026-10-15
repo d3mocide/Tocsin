@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import deque
 
 EVENT_ALERT = "alert"
 EVENT_HEALTH = "health"
@@ -35,28 +36,55 @@ EVENT_DISPATCH = "dispatch"
 # current state, not a backlog it will render and immediately replace.
 DEFAULT_MAX_QUEUE = 256
 
+# Events worth replaying to a client that reconnects with `Last-Event-ID`: the rare ones a consumer must not
+# miss. Health samples arrive many times a second and are only ever useful live.
+REPLAYED_EVENTS = frozenset({EVENT_ALERT, EVENT_TRANSCRIPT, EVENT_DISPATCH})
+DEFAULT_HISTORY = 200
+
+
+class Message(tuple):
+    """`(event, item)`, equal to that plain tuple, that also carries its SSE `id` for `Last-Event-ID` replay."""
+
+    id: int
+
+    def __new__(cls, event: str, item: dict, id: int) -> "Message":
+        message = super().__new__(cls, (event, item))
+        message.id = id
+        return message
+
 
 class Broadcaster:
-    def __init__(self, max_queue: int = DEFAULT_MAX_QUEUE):
+    def __init__(self, max_queue: int = DEFAULT_MAX_QUEUE, history: int = DEFAULT_HISTORY):
         self._subscribers: set[asyncio.Queue] = set()
         self._max_queue = max_queue
+        self._seq = 0
+        self._history: "deque[tuple[int, str, dict]]" = deque(maxlen=history)
 
-    def subscribe(self) -> "asyncio.Queue[tuple[str, dict]]":
-        queue: "asyncio.Queue[tuple[str, dict]]" = asyncio.Queue(maxsize=self._max_queue)
+    def subscribe(self, last_event_id: int | None = None) -> "asyncio.Queue[Message]":
+        """Queue of `Message`s (`(event, item)` tuples with an `.id`). With `last_event_id`, the replayable events published after that id
+        are queued first (those still in the history; older ones are gone)."""
+        queue: "asyncio.Queue[Message]" = asyncio.Queue(maxsize=self._max_queue)
+        if last_event_id is not None:
+            for seq, event, item in self._history:
+                if seq > last_event_id:
+                    queue.put_nowait(Message(event, item, seq))
         self._subscribers.add(queue)
         return queue
 
-    def unsubscribe(self, queue: "asyncio.Queue[tuple[str, dict]]") -> None:
+    def unsubscribe(self, queue: "asyncio.Queue[Message]") -> None:
         self._subscribers.discard(queue)
 
     async def publish(self, event: str, item: dict) -> None:
+        self._seq += 1
+        if event in REPLAYED_EVENTS:
+            self._history.append((self._seq, event, item))
         for queue in list(self._subscribers):
             try:
-                queue.put_nowait((event, item))
+                queue.put_nowait(Message(event, item, self._seq))
             except asyncio.QueueFull:
                 try:
                     queue.get_nowait()
-                    queue.put_nowait((event, item))
+                    queue.put_nowait(Message(event, item, self._seq))
                 except (asyncio.QueueEmpty, asyncio.QueueFull):
                     # Raced with the client's own consumer; it is keeping
                     # up after all, so dropping this one message is fine.
@@ -67,5 +95,6 @@ class Broadcaster:
         return len(self._subscribers)
 
 
-def format_sse(event: str, item: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(item, default=str)}\n\n"
+def format_sse(event: str, item: dict, event_id: int | None = None) -> str:
+    prefix = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{prefix}event: {event}\ndata: {json.dumps(item, default=str)}\n\n"

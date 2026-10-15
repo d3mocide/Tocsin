@@ -32,8 +32,8 @@ directory that's actually there).
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /alerts?limit=&state=` | Recent alerts from Postgres, newest first, optionally filtered by state. |
-| `GET /events` | SSE feed carrying named `alert`, `health`, `transcript`, and `dispatch` events. Clients use `addEventListener(name, ...)`; `onmessage` only fires for unnamed events. |
+| `GET /alerts?limit=&state=&since=` | Recent alerts from Postgres, newest first, optionally filtered by state and by `since` (ISO time: only alerts created or updated after it, for catching up after downtime). |
+| `GET /events` | SSE feed (every message has an `id:`; reconnect with `Last-Event-ID` to replay the alerts, transcripts and dispatches you missed, up to the last 200 -- health samples are never replayed) carrying named `alert`, `health`, `transcript`, and `dispatch` events. Clients use `addEventListener(name, ...)`; `onmessage` only fires for unnamed events. |
 | `GET /health` | Latest RF health sample per `(site, channel)`. |
 | `GET /health/history?since_seconds=&buckets=` | Down-sampled RF health per `(site, channel)` for sparklines. Bucketed in Postgres via `time_bucket`; `dead` is `BOOL_OR`'d, never averaged. |
 | `GET /transcripts?limit=&raw_header=` | Stored transcripts. `raw_header` is the only identifier shared between an alert's RF source and a transcript, so it's how the UI attaches one to the other. |
@@ -123,3 +123,12 @@ README's Troubleshooting section for the fix.
 uv sync
 uv run pytest
 ```
+
+
+## API key (optional)
+
+Set `API_KEY` (comma-separated to rotate) and the data routes -- everything above, including `/events`, `/stream/*` and
+`/captures/*` -- require it as `X-API-Key: <key>` or `Authorization: Bearer <key>`. Unset (the default), nothing changes.
+The built web page is always served so it can load; it asks for the key once and remembers it in the browser.
+`EventSource` and `<audio>` cannot send headers, so only `/events`, `/stream/*` and `/captures/*` also accept
+`?api_key=` -- that puts the key in the URL, so keep it off shared logs. CORS preflights are not gated.

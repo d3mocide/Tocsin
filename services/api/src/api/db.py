@@ -210,13 +210,21 @@ async def insert_dispatch(pool: PoolLike, dispatch: dict) -> None:
     )
 
 
-async def list_alerts(pool: PoolLike, limit: int = 100, state: str | None = None) -> list[dict]:
+async def list_alerts(
+    pool: PoolLike, limit: int = 100, state: str | None = None, since: datetime | None = None
+) -> list[dict]:
+    """Newest first. `since` keeps only alerts created or updated after that instant, so a consumer can
+    catch up after downtime without re-reading everything."""
+    where, args = [], []
     if state:
-        rows = await pool.fetch(
-            "SELECT * FROM alerts WHERE state = $1 ORDER BY last_updated DESC LIMIT $2", state, limit
-        )
-    else:
-        rows = await pool.fetch("SELECT * FROM alerts ORDER BY last_updated DESC LIMIT $1", limit)
+        args.append(state)
+        where.append(f"state = ${len(args)}")
+    if since is not None:
+        args.append(since)
+        where.append(f"last_updated > ${len(args)}")
+    args.append(limit)
+    clause = f"WHERE {' AND '.join(where)} " if where else ""
+    rows = await pool.fetch(f"SELECT * FROM alerts {clause}ORDER BY last_updated DESC LIMIT ${len(args)}", *args)
     return [_alert_row_to_dict(row) for row in rows]
 
 

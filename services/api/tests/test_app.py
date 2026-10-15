@@ -384,3 +384,20 @@ def test_capture_download_rejects_a_path_traversal(tmp_path):
 
 def test_captures_are_404_when_not_configured():
     assert _configured_client().get("/captures/anything.wav").status_code == 404
+
+
+def test_get_alerts_passes_since_through_and_combines_with_state():
+    pool = FakePool(fetch_results=[[]])
+    _client(pool=pool).get("/alerts?state=CONFIRMED&since=2026-10-14T18:00:00Z&limit=7")
+
+    query, args = pool.fetch_calls[0]
+    assert "WHERE state = $1 AND last_updated > $2" in query and query.endswith("LIMIT $3")
+    assert args[0] == "CONFIRMED" and args[1].isoformat().startswith("2026-10-14T18:00:00") and args[2] == 7
+
+
+def test_get_alerts_since_alone():
+    pool = FakePool(fetch_results=[[]])
+    _client(pool=pool).get("/alerts?since=2026-10-14T18:00:00Z")
+
+    query, args = pool.fetch_calls[0]
+    assert "WHERE last_updated > $1" in query and args[1] == 100

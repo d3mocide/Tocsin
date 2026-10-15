@@ -165,3 +165,12 @@ shells around them.
 uv sync
 uv run pytest
 ```
+
+
+## Channelizer size (`SDR_RX_NUM_BINS`)
+
+The channelizer has one bin per 25 kHz of sample rate. `SDR_RX_NUM_BINS=12` (compose default) runs the dongle at 300 kS/s
+and computes the seven weather channels plus five spare bins; `48` (the library default, and what the unit tests pin) runs
+1.2 MS/s and adds the 41-bin spectrum view. Per-channel audio is identical (50 kHz channel rate, 2x oversampled either way);
+12 uses about a fifth of the CPU (benchmark on the target host: 9% vs 43% of a core for the channelizer alone). Valid values
+must give a rate the RTL-SDR supports (225-300 kS/s or 0.9-3.2 MS/s) -- `channels.validate_num_bins` rejects the rest.

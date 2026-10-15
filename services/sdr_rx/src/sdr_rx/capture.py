@@ -13,9 +13,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .channels import LO_HZ
+from .channels import CHANNEL_SPACING_HZ, LO_HZ, NUM_BINS
 
-SAMPLE_RATE_HZ = 1_200_000.0
+# One channelizer bin per 25 kHz: 1.2 MS/s for the default 48 bins, 300 kS/s for the weather-only 12.
+SAMPLE_RATE_HZ = NUM_BINS * CHANNEL_SPACING_HZ
 DEFAULT_GAIN_DB = 30.0  # manual gain: AGC oscillates on a constant carrier (§3)
 DEFAULT_CHUNK_SIZE = 65536
 # IQ samples flow continuously at SAMPLE_RATE_HZ regardless of what's on

@@ -13,12 +13,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db, reference as reference_module, spectrum as spectrum_module, status as status_module, streams as streams_module
+from .auth import ApiKeyMiddleware
 from .config import ApiConfig
 from .sse import Broadcaster, format_sse
 
@@ -130,6 +133,9 @@ def create_app(
     # localhost/LAN. Set CORS_ALLOWED_ORIGINS once reachable from the
     # internet; see .env.example. `config` is only `None` in tests that
     # don't care about this, so falling back to `*` keeps them unchanged.
+    # Added before CORS so CORS stays outermost: a 401 still carries the CORS headers the browser needs to read it.
+    if config and config.api_keys:
+        app.add_middleware(ApiKeyMiddleware, keys=config.api_keys)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(config.cors_allowed_origins) if config else ["*"],
@@ -138,8 +144,10 @@ def create_app(
     )
 
     @app.get("/alerts")
-    async def get_alerts(limit: int = Query(100, ge=1, le=1000), state: str | None = None):
-        return await db.list_alerts(app.state.pool, limit=limit, state=state)
+    async def get_alerts(
+        limit: int = Query(100, ge=1, le=1000), state: str | None = None, since: datetime | None = None
+    ):
+        return await db.list_alerts(app.state.pool, limit=limit, state=state, since=since)
 
     @app.get("/health")
     async def get_health():
@@ -290,18 +298,20 @@ def create_app(
         return FileResponse(candidate, media_type="audio/wav")
 
     @app.get("/events")
-    async def stream_events():
+    async def stream_events(request: Request):
         """One SSE stream carrying every named event type (see `sse.py`) --
         alerts, health samples, transcripts, and dispatch outcomes. Clients
         use `addEventListener(name, ...)` rather than `onmessage`, which
         only fires for unnamed events."""
-        queue = app.state.broadcaster.subscribe()
+        last_id = request.headers.get("last-event-id", "")
+        queue = app.state.broadcaster.subscribe(int(last_id) if last_id.isdigit() else None)
 
         async def event_generator():
             try:
                 while True:
-                    event, item = await queue.get()
-                    yield format_sse(event, item)
+                    message = await queue.get()
+                    event, item = message
+                    yield format_sse(event, item, message.id)
             finally:
                 app.state.broadcaster.unsubscribe(queue)
 

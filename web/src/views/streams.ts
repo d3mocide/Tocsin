@@ -1,3 +1,4 @@
+import { withKey } from "../api";
 import { badge, el, reconcile, replaceChildren } from "../dom";
 import type { Store } from "../store";
 import type { StreamRow } from "../types";
@@ -114,7 +115,12 @@ export class StreamsView {
 
     const publicBase = system?.icecast_public_url ?? null;
     const icecastPort = system?.icecast_port ?? null;
-    const visible = streams.streams.map((row) => this.rowFor(row, playbackUrl(row, publicBase, icecastPort)));
+    // A same-origin mount goes through this server's /stream proxy, which wants the API key when one is set;
+    // a direct Icecast URL is not ours to sign.
+    const visible = streams.streams.map((row) => {
+      const url = playbackUrl(row, publicBase, icecastPort);
+      return this.rowFor(row, url.startsWith("/") ? withKey(url) : url);
+    });
     for (const mount of [...this.rows.keys()]) {
       if (!streams.streams.some((row) => row.mount === mount)) this.rows.delete(mount);
     }

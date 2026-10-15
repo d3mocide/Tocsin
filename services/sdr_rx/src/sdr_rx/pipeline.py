@@ -67,7 +67,7 @@ class DevicePipeline:
         self._dc_blocker = dc_blocker or DCBlocker()
         self._channelizer = channelizer or PolyphaseChannelizer()
         self._health = health or HealthTracker()
-        self._spectrum = spectrum or SpectrumTracker(site)
+        self._spectrum = spectrum or SpectrumTracker(site, num_bins=self._channelizer.num_bins)
         # `None` runs voice-filter/squelch/TOPIC_STT for every channel, same
         # as before this existed. A given value skips that work entirely for
         # a channel not in it -- safe to do because TOPIC_STT has exactly
