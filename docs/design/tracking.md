@@ -2891,3 +2891,18 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   synthetic forecast, in place of a tornado warning. With the air/fire cards now showing real
   data the Weather tab is shown in full. Live prod data was not used because the README is
   public and it would show the station's approximate location.
+
+### 2026-10-16 -- Alert areas on the map are real counties
+- Problem: the map drew alerts from UGC zone codes only. A few Portland-area forecast zones were
+  hand-drawn rough polygons (`zone_data.ts`) that were used in place of the real geometry (so
+  they looked like random blobs), and alerts with no UGC codes -- every radio-only alert,
+  including all of offgrid -- drew nothing at all.
+- Fix: `scripts/build-geo.sh` also emits `public/geo/us-county-shapes.json` (3,235 county
+  polygons keyed by GEOID, 1.1 MB / ~250 KB gzipped, loaded on first use). `county_shapes.ts`
+  resolves each alert's SAME codes (PSSCCC; part-of-county digit ignored, `000` county = whole
+  state) and `map.ts` fills those counties, Tier A on top, with the NWS storm polygon drawn over
+  them when the alert carries one. UGC zone geometry is only fetched for alerts with no county to
+  draw. `zone_data.ts` is deleted. The build script also now unzips with `python3 -m zipfile`
+  (the host has no `unzip`).
+- The dev mock's `/reference` counties were keyed by 6-digit SAME codes while the real API keys on
+  5-digit FIPS (`data/fips.csv`), which made radio-only alerts list raw codes in dev only; fixed.

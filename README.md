@@ -202,8 +202,10 @@ appears in a URL you type.
 three tabs, no client-side routing:
 
 - **Dashboard** -- live Icecast audio players, nearby NWR stations (sorted by distance once
-  `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` are set), a MapLibre map of active NWS alert zones and
-  nearby transmitters on a bundled basemap (optional NEXRAD radar overlay), the alert feed
+  `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` are set), a MapLibre map on a bundled basemap that fills
+  the counties each active alert was issued for (from its SAME codes, so radio-only alerts
+  show up offgrid too) with the exact NWS storm polygon on top when there is one, plus nearby
+  transmitters and an optional NEXRAD radar overlay, the alert feed
   (both provenance sources shown side by side, never merged), the spectrum waterfall,
   per-channel RF health, system health (the `RF_ONLY`/`API_ONLY` divergence rate), and
   dispatch outcomes.
