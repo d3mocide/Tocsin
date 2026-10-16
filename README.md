@@ -1,16 +1,91 @@
-# Tocsin
+<p align="center">
+  <img src="docs/assets/banner.webp" alt="Tocsin: NOAA Weather Radio, CAP alerts and Meshtastic egress, with no internet required" width="100%">
+</p>
 
-A dual-path NOAA Weather Radio All Hazards (NWR) alert monitor with mesh egress.
+<p align="center">
+  <b>NOAA Weather Radio, decoded on your own hardware.</b><br>
+  SAME headers, transcribed voice messages and the NWS CAP feed, fused into one alert stream you can read in a browser or relay over Meshtastic, with or without an internet connection.
+</p>
 
-Tocsin receives NWR broadcasts over SDR, decodes EAS/SAME alert headers, transcribes the
-voice message, independently polls the NWS CAP API, fuses both sources into a single
-provenance-preserving alert feed, and dispatches alerts over Meshtastic.
+<p align="center">
+  <img alt="Modes offgrid and hybrid" src="https://img.shields.io/badge/mode-offgrid%20%7C%20hybrid-5eead4?labelColor=0a0c1f">
+  <img alt="Receive only" src="https://img.shields.io/badge/radio-receive--only-fcd34d?labelColor=0a0c1f">
+  <img alt="Raspberry Pi 5 or x86" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi%205%20%7C%20x86-7dd3fc?labelColor=0a0c1f">
+  <img alt="Meshtastic egress" src="https://img.shields.io/badge/egress-Meshtastic-67e8f9?labelColor=0a0c1f">
+  <img alt="License GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-a78bfa?labelColor=0a0c1f">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/dashboard.webp" alt="Tocsin dashboard: live audio, alert map, local forecast, spectrum, RF channels and the alert feed under a dusk sky" width="100%">
+</p>
+
+## What it does
+
+- **Two independent paths, one feed.** An RTL-SDR receives NWR and decodes the SAME header; the NWS CAP API is polled separately. Fusion keeps both sources side by side and marks each alert `CONFIRMED`, `RF_ONLY`, `API_ONLY` or `TRANSCRIPT_ONLY`, so you can see when the two paths disagree instead of trusting one blindly.
+- **Fully functional with no internet.** SAME decode, local speech-to-text, dispatch and the web UI never need the network. Network-only parts (the NWS API, remote STT, forecasts) are gated behind `TOCSIN_MODE=hybrid` and drop out quietly offgrid.
+- **Hears the voice message too.** The clip after a SAME header is transcribed with local Whisper behind hallucination guards. Hybrid mode can race a remote provider against it.
+- **Mesh egress by severity.** Tiered dispatch over Meshtastic, by serial or TCP. A receive-only station skips the radio entirely and still logs what it would have sent.
+- **Live audio.** Each NWR channel streams through Icecast, so you can check tuning and gain by ear.
+- **A browser console.** Dashboard, Weather and Activity tabs, an alert map with bundled boundaries, a spectrum waterfall, per-channel RF health and service status. It installs to a phone's home screen and makes no CDN or webfont requests.
+- **A living sky.** The page background is an ASCII sky that follows your station's real sunrise and sunset, the moon's phase, the season and the current weather. See [The living sky](#the-living-sky).
 
 **The system must remain fully functional with no internet connection.** Network-dependent
 components add quality, never capability. See `docs/design/master-prompt.md` for the full design
 document -- this README summarizes it; the design doc is the source of truth for anything
 not covered here. For the phase-by-phase build plan and current status, see
 `docs/design/roadmap.md` and `docs/design/tracking.md`.
+
+## How it works
+
+```
+                     ┌─ live-audio ───────────────→ browser / phone
+                     │
+[dongle] ─ sdr-rx ───┼─ same-decoder ─┐
+          (ZMQ)      │                │
+                     ├─ segment-capture ─→ stt-worker ─┐
+                     │                                  ├→ fusion ─→ dispatcher ─→ Meshtastic
+                     └─ health / spectrum ──────────────┤
+                          nws-poller (hybrid) ──────────┘
+```
+
+One process owns the dongle; everything else subscribes to its output, so the decoder,
+streamer and transcriber restart independently without touching RF. `api` serves the web UI
+and a REST + SSE feed over the same data. Details are in `docs/design/master-prompt.md` §2.
+
+## Screenshots
+
+The images below use the dev server's bundled mock data (a made-up tornado warning and a
+synthetic forecast for Portland, OR), not a live station.
+
+<p align="center">
+  <img src="docs/screenshots/weather.webp" alt="Weather tab: surface observations, 24-hour meteogram and 7-day outlook" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/activity.webp" alt="Activity tab: SAME voice broadcast transcripts, service status and alert activity" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/mobile.webp" alt="Tocsin on a phone: current conditions, active alert and the alert feed" width="300">
+</p>
+
+### The living sky
+
+<p align="center">
+  <img src="docs/screenshots/sky.webp" alt="The ASCII sky at dawn, day, dusk and night, with an aurora, fog, cloud, rain, storm and snow" width="100%">
+</p>
+
+The backdrop is drawn from three inputs, none of which need the internet except the forecast:
+
+- **Time and place.** Sunrise, sunset, the moon's phase and position, and the season are computed in the browser from `TOCSIN_LATITUDE` / `TOCSIN_LONGITUDE` (a timezone-based guess if unset). The palette shifts through dawn, day, dusk and night, stars fade by day, and the moon shows its real phase.
+- **Weather.** The sky follows the local NWS forecast in hybrid mode: layered clouds, ground fog, rain with puddle ripples, darker storms, and snow that builds up and melts away.
+- **Alerts.** An active watch or warning tints the sky amber or rose, which works offgrid. The weather stays up during alerts; the small touches below stand down.
+
+Fair-weather extras turn up now and then: birds, planes with contrails, shooting stars, fireflies at dusk, a hot-air balloon at dawn, geese in spring and fall, and an aurora on about one clear winter night in four.
+
+The toggle at the top right of the page turns it off. It defaults to off on low-core devices, and it renders a still frame when the browser asks for reduced motion.
+
+To preview any scene without waiting for the weather, run the dev server (`cd web && npm install && npm run dev`). A dev-only panel scrubs time of day, season and moon phase, picks the sky and alert level, fires a one-off event, and hides the cards so only the sky shows. It is not part of the production build.
 
 ## Deployment modes
 
@@ -58,8 +133,8 @@ verification details.
    sudo udevadm control --reload-rules && sudo udevadm trigger
    sudo usermod -aG plugdev "$USER"   # log out/in or reboot
    ```
-3. **Set `POSTGRES_PASSWORD`** (required by `compose.yaml`, even though nothing writes to
-   Postgres yet) and build everything: `cp .env.example .env` and edit it, or
+3. **Set `POSTGRES_PASSWORD`** (required by `compose.yaml`; the API stores alert history,
+   transcripts and RF health in it) and build everything: `cp .env.example .env` and edit it, or
    `export POSTGRES_PASSWORD=...`. `.env.example`'s `COMPOSE_FILE` already lists
    `compose.sdr.yaml`, the overlay that maps the host USB bus into `sdr-rx` -- keep it.
    `make up-offgrid` and `make up-hybrid` add it back if it's missing, since a station with
@@ -124,13 +199,17 @@ appears in a URL you type.
 ## Web UI
 
 `api` serves a Vite/TypeScript single-page app at `/` (`web/`, see its own README) --
-two tabs, no client-side routing:
+three tabs, no client-side routing:
 
 - **Dashboard** -- live Icecast audio players, nearby NWR stations (sorted by distance once
-  `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` are set), a Leaflet map of active NWS alert zones and
-  nearby transmitters (optional NEXRAD radar overlay), the alert feed (both provenance
-  sources shown side by side, never merged), the spectrum waterfall, per-channel RF health,
-  system health (the `RF_ONLY`/`API_ONLY` divergence rate), and dispatch outcomes.
+  `TOCSIN_LATITUDE`/`TOCSIN_LONGITUDE` are set), a MapLibre map of active NWS alert zones and
+  nearby transmitters on a bundled basemap (optional NEXRAD radar overlay), the alert feed
+  (both provenance sources shown side by side, never merged), the spectrum waterfall,
+  per-channel RF health, system health (the `RF_ONLY`/`API_ONLY` divergence rate), and
+  dispatch outcomes.
+- **Weather** -- in hybrid mode with coordinates set: surface observations from nearby
+  stations, a 24-hour meteogram, the 7-day outlook, and sun and moon times. Offgrid it says
+  so instead of showing stale data.
 - **Activity** -- the merged transcript/dispatch log and per-service status. With
   `LIVE_TRANSCRIPTION_ENABLED=true`, a "Show N live" toggle in this panel's header reveals a
   rolling transcript of one channel's ordinary NWR narration, not just SAME-triggered voice
@@ -290,6 +369,8 @@ tocsin/
 │   ├── icecast/                  # icecast.xml, Dockerfile
 │   └── udev/                     # host-side RTL-SDR udev rule
 └── docs/
+    ├── assets/                  # README banner
+    ├── screenshots/             # README screenshots
     └── design/
         ├── master-prompt.md     # the original design spec -- source of truth
         ├── roadmap.md           # phase-by-phase build plan
@@ -337,6 +418,9 @@ uv run pytest
 `make test` runs the test suite for every service that has one (`sdr_rx`, `same_decoder`,
 `live_audio`, `segment_capture`, `stt_worker`, `nws_poller`, `fusion`, `dispatcher`, `api`)
 plus `web`'s type-check-and-build.
+
+The web UI has its own unit tests for the sun, moon and sky logic: `cd web && npm test`
+(Node 22.6 or newer; it uses the built-in test runner, so there is nothing extra to install).
 
 See `CLAUDE.md` / `AGENTS.md` for conventions agents (and humans) should follow when
 working in this repo.

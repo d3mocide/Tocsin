@@ -2860,3 +2860,20 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
 - Fixed while testing: a goose formation's trailing birds were dropped as off-screen the moment
   they spawned (`stepBirds` margin). Dev panel: season picker and Geese/Aurora/Snow pile buttons.
 - 37 web tests pass. Reviewed as still frames only. Not yet deployed.
+
+### 2026-10-16 -- README banner and screenshots
+- README rewritten at the top (banner, badges, "What it does", architecture diagram from design
+  doc §2, screenshots, "The living sky"); Web UI section corrected (three tabs, MapLibre not
+  Leaflet, Weather tab) and the stale "nothing writes to Postgres yet" note fixed. Assets live in
+  `docs/assets/` and `docs/screenshots/` (WebP). The images use the dev mock data plus Playwright
+  route fixtures for `api.weather.gov` (a synthetic Portland forecast), not a live station.
+- Mock `/system` now carries downtown-Portland coordinates so the forecast, map marker and sky
+  have a location in dev. Dev panel presets and readout now use the same location as the app
+  (they used a timezone guess, so Dawn/Dusk landed at the wrong sun phase once a real location
+  was present). Today's high on the 7-day card is rounded (it showed e.g. `51.08°`).
+- Open issue, deliberately not shown in the screenshots: the Weather tab's "Air Quality & Smoke
+  Index" card (`web/src/views/weather_dashboard.ts`, `renderAirQualityCard`) uses hard-coded
+  values -- AQI 38/74/118 chosen only by whether an air-quality alert is active, fixed PM2.5 and
+  ozone strings -- yet is badged "EPA AQI". The Fire Weather card reports "CRITICAL / RED FLAG"
+  for any alert whose name contains "air quality" or "smoke". Both should be removed or replaced
+  with data that is real.
