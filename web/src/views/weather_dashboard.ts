@@ -1075,7 +1075,7 @@ function groupDailyForecasts(periods: ExtendedPeriod[], currentHighFallback: num
       map.set(baseDay, {
         dayName: baseDay,
         isDaytime: p.isDaytime,
-        highTemp: p.isDaytime ? p.temperature : currentHighFallback,
+        highTemp: p.isDaytime ? p.temperature : Math.round(currentHighFallback),
         lowTemp: !p.isDaytime ? p.temperature : p.temperature - 15,
         tempUnit: p.temperatureUnit,
         popMax: p.probabilityOfPrecipitation?.value ?? 0,

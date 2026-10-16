@@ -2,7 +2,7 @@
 // alarm level to preview every backdrop without waiting for the weather.
 import { sunPosition } from "./daylight";
 import { pinAlarm, setScene, type Alarm, type Sky } from "./scene";
-import { refreshSky, setMoonPhaseOverride, setSeasonOverride, setTimeOverride } from "./sky_clock";
+import { refreshSky, setMoonPhaseOverride, setSeasonOverride, setTimeOverride, skyLocation } from "./sky_clock";
 import type { Season } from "./weather";
 
 const SKIES: Sky[] = ["clear", "cloudy", "fog", "rain", "snow", "storm", "wind"];
@@ -15,9 +15,9 @@ const clockText = (h: number) =>
 // they land correctly whatever timezone this browser is in.
 function presets(): [string, number][] {
   const now = new Date();
-  const lon = -now.getTimezoneOffset() / 4;
+  const { lat, lon } = skyLocation(now);
   const elev = (h: number) =>
-    sunPosition(new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(h), Math.round((h % 1) * 60)), 40, lon);
+    sunPosition(new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(h), Math.round((h % 1) * 60)), lat, lon);
   let rise = 6;
   let set = 18;
   let noon = 12;
@@ -84,7 +84,8 @@ export function mountDevPanel(): void {
     const when = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(h), Math.round((h % 1) * 60));
     setTimeOverride(when);
     refreshSky();
-    const sun = sunPosition(when, 40, -when.getTimezoneOffset() / 4);
+    const place = skyLocation(when);
+    const sun = sunPosition(when, place.lat, place.lon);
     readout.textContent = `sky time ${clockText(h)}  sun ${sun.elevation.toFixed(1)}° ${sun.morning ? "AM" : "PM"}`;
   };
   const live = () => {
@@ -132,7 +133,12 @@ export function mountDevPanel(): void {
   box.append(
     readout,
     slider,
-    row(...presets().map(([name, h]) => button(name, () => { slider.value = String(h); show(); })), button("Live", live)),
+    row(...["Night", "Dawn", "Day", "Dusk"].map((name) =>
+        button(name, () => {
+          slider.value = String(presets().find(([n]) => n === name)![1]);
+          show();
+        }),
+      ), button("Live", live)),
     row(
       button("Shooting star", () => backdrop()?.fire("star")),
       button("Plane", () => backdrop()?.fire("plane")),

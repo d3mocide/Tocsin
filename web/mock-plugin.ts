@@ -87,6 +87,9 @@ export function mockApiPlugin(): Plugin {
             icecast_public_url: null,
             icecast_port: 8000,
             captures_available: true,
+            // Downtown Portland, so the forecast, map marker and sky have a location to work with.
+            latitude: 45.5152,
+            longitude: -122.6784,
           }));
         }
 

@@ -31,12 +31,16 @@ export function refreshSky(): void {
   applySky(lastPlace);
 }
 
+/** The place the sky is computed for: the station's, else a guess from the browser timezone. */
+export function skyLocation(when: Date): { lat: number; lon: number } {
+  const guess = guessLocation(when);
+  return { lat: lastPlace?.latitude ?? guess.lat, lon: lastPlace?.longitude ?? guess.lon };
+}
+
 export function applySky(system: Place): void {
   lastPlace = system;
   const now = override ?? new Date();
-  const guess = guessLocation(now);
-  const lat = system?.latitude ?? guess.lat;
-  const lon = system?.longitude ?? guess.lon;
+  const { lat, lon } = skyLocation(now);
   const look = skyLook(sunPosition(now, lat, lon), SHADE[currentScene().sky] ?? 1);
   const style = document.documentElement.style;
   style.setProperty("--bg", look.bg);
