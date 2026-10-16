@@ -19,7 +19,7 @@ import sys
 from .app import create_app
 from .config import ApiConfig
 from .connect import PostgresStartupError, create_pool
-from .db import PoolLike, ensure_schema, prune_expired_alerts
+from .db import PoolLike, ensure_schema, prune_expired_alerts, prune_old_records
 from .ingest import Ingestor
 from .redis_bus import StreamConsumer
 from .sse import Broadcaster
@@ -85,6 +85,27 @@ async def _prune_alerts_forever(
             pass
 
 
+async def _prune_old_records_forever(pool: PoolLike, config: ApiConfig, stop_event: asyncio.Event) -> None:
+    """Sweeps transcripts, dispatches and RF health on `RETENTION_PRUNE_INTERVAL_SECONDS`
+    (see `db.prune_old_records`). Runs once at startup, like the alert sweep."""
+    while not stop_event.is_set():
+        try:
+            removed = await prune_old_records(
+                pool,
+                live_transcript_seconds=config.transcripts_live_retention_seconds,
+                alert_transcript_seconds=config.transcripts_alert_retention_seconds,
+                health_seconds=config.health_samples_retention_seconds,
+            )
+            if any(removed.values()):
+                print(f"api: retention removed {removed}", flush=True)
+        except Exception as exc:
+            print(f"api: retention sweep failed: {exc}", file=sys.stderr)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=config.retention_prune_interval_seconds)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def _run(config: ApiConfig) -> None:
     import redis.asyncio as redis_asyncio
     import uvicorn
@@ -115,6 +136,8 @@ async def _run(config: ApiConfig) -> None:
             )
         )
     )
+
+    background_tasks.append(asyncio.create_task(_prune_old_records_forever(pool, config, stop_event)))
 
     app = create_app(pool, redis_client, broadcaster, static_dir=config.static_dir, config=config)
     server = uvicorn.Server(uvicorn.Config(app, host=config.host, port=config.port, log_level="info"))

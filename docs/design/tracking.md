@@ -2906,3 +2906,17 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   (the host has no `unzip`).
 - The dev mock's `/reference` counties were keyed by 6-digit SAME codes while the real API keys on
   5-digit FIPS (`data/fips.csv`), which made radio-only alerts list raw codes in dev only; fixed.
+
+### 2026-10-16 -- Database retention
+- Nothing but `alerts` was ever aged out. Measured before the change: `health_samples` 31.3M rows /
+  4.9 GB over 69 days (~70 MB/day, only the last hour is ever read), `transcripts` 214k rows and
+  `dispatches` 214k rows over 65 days, of which 214,106 / 214,126 were `LIVE` background narration.
+- `db.prune_old_records`, swept hourly by the API (`RETENTION_PRUNE_INTERVAL_SECONDS`): `LIVE`
+  transcripts and their dispatch notes after 7 days (`TRANSCRIPTS_LIVE_RETENTION_SECONDS`), real
+  alert transcripts and dispatches after 30 days (`TRANSCRIPTS_ALERT_RETENTION_SECONDS`), health
+  samples after 24 hours (`HEALTH_SAMPLES_RETENTION_SECONDS`). Health uses `drop_chunks` plus a
+  boundary `DELETE`; the hypertable's chunk width is now 1 day (it was 7), applying to new chunks.
+- Validated against a real TimescaleDB in a throwaway container with seeded rows of known ages, for
+  both 7-day (prod-like) and 1-day chunks, in addition to the unit tests with `FakePool`.
+- `compose.yaml` never passed `ALERTS_PRUNE_GRACE_SECONDS` to the api, so that documented `.env`
+  setting had no effect; it and the new settings are passed through now.

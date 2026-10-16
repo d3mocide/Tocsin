@@ -315,6 +315,73 @@ async def prune_expired_alerts(pool: PoolLike, grace_seconds: float) -> int:
     return len(stale_ids)
 
 
+# stt_worker's LIVE_EVENT_CODE: continuous background narration, as opposed to the voice
+# message that follows a real SAME header. Duplicated here because services don't import
+# each other (CLAUDE.md).
+LIVE_EVENT_CODE = "LIVE"
+
+
+def _affected(command_tag: str) -> int:
+    """Row count from an asyncpg command tag such as `DELETE 12`."""
+    last = str(command_tag).rsplit(" ", 1)[-1]
+    return int(last) if last.isdigit() else 0
+
+
+async def prune_old_records(
+    pool: PoolLike,
+    *,
+    live_transcript_seconds: float,
+    alert_transcript_seconds: float,
+    health_seconds: float,
+) -> dict[str, int]:
+    """Ages out the tables that otherwise grow forever, returning rows removed per table.
+    For `health_samples`, `health_chunks` counts whole chunks dropped (their rows are not
+    counted) and `health_samples` the rows trimmed from the chunk the cutoff fell inside.
+
+    Background narration (event code LIVE) is by far the bulk of `transcripts` and
+    `dispatches` and is rarely worth reading back, so it gets the short window; real alert
+    transcripts and their dispatch records get the long one. `health_samples` is a
+    TimescaleDB hypertable: whole old chunks are dropped (fast, and returns the disk), then
+    a plain DELETE trims the rows of the one chunk the cutoff falls inside."""
+    now = datetime.now(timezone.utc)
+    live_cutoff = now - timedelta(seconds=live_transcript_seconds)
+    alert_cutoff = now - timedelta(seconds=alert_transcript_seconds)
+    health_cutoff = now - timedelta(seconds=health_seconds)
+
+    removed = {
+        "transcripts": _affected(
+            await pool.execute(
+                """
+                DELETE FROM transcripts
+                WHERE (event_code = $1 AND timestamp_ns < $2)
+                   OR (event_code <> $1 AND timestamp_ns < $3)
+                """,
+                LIVE_EVENT_CODE,
+                int(live_cutoff.timestamp() * 1_000_000_000),
+                int(alert_cutoff.timestamp() * 1_000_000_000),
+            )
+        ),
+        "dispatches": _affected(
+            await pool.execute(
+                """
+                DELETE FROM dispatches
+                WHERE (event_code = $1 AND dispatched_at < $2)
+                   OR (event_code <> $1 AND dispatched_at < $3)
+                """,
+                LIVE_EVENT_CODE,
+                live_cutoff,
+                alert_cutoff,
+            )
+        ),
+    }
+    dropped = await pool.fetch("SELECT drop_chunks('health_samples', older_than => $1::timestamptz)", health_cutoff)
+    removed["health_chunks"] = len(dropped)
+    removed["health_samples"] = _affected(
+        await pool.execute("DELETE FROM health_samples WHERE sampled_at < $1", health_cutoff)
+    )
+    return removed
+
+
 async def latest_health(pool: PoolLike) -> list[dict]:
     rows = await pool.fetch(
         """

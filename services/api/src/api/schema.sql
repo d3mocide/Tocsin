@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS health_samples (
 
 SELECT create_hypertable('health_samples', 'sampled_at', if_not_exists => TRUE);
 
+-- One-day chunks (affects new chunks only): retention drops whole chunks, so the default
+-- 7-day width would keep up to a week past the cutoff. See db.prune_old_records.
+SELECT set_chunk_time_interval('health_samples', INTERVAL '1 day');
+
 CREATE INDEX IF NOT EXISTS health_samples_site_channel_time_idx
     ON health_samples (site, channel, sampled_at DESC);
 

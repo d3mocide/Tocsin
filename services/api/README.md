@@ -96,6 +96,10 @@ doesn't grow forever.
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated browser origins allowed to read this API cross-origin. `*` is fine for localhost/LAN (this repo's posture so far, design doc §11); narrow it once reachable from the internet. Same-origin requests -- the normal case, since `api` serves the built SPA -- never need this at all. |
 | `ALERTS_PRUNE_GRACE_SECONDS` | `86400` (1 day) | How long past its computed expiry an alert stays in `alerts` before a background sweep deletes it. An alert with no computable expiry (rare -- see `db.alert_expiry`) is never pruned. |
 | `ALERTS_PRUNE_INTERVAL_SECONDS` | `3600` (1 hour) | How often the prune sweep runs. |
+| `TRANSCRIPTS_LIVE_RETENTION_SECONDS` | `604800` (7 days) | How long continuous background narration (event code `LIVE`) stays in `transcripts`, and its stage-2 skip notes in `dispatches`. |
+| `TRANSCRIPTS_ALERT_RETENTION_SECONDS` | `2592000` (30 days) | How long the transcripts and dispatch records of real SAME alerts stay. |
+| `HEALTH_SAMPLES_RETENTION_SECONDS` | `86400` (24 hours) | How long RF health samples stay. The UI only reads the last hour. Whole one-day chunks are dropped, then the boundary chunk is trimmed. |
+| `RETENTION_PRUNE_INTERVAL_SECONDS` | `3600` (1 hour) | How often the transcript/dispatch/health sweep runs (`db.prune_old_records`). |
 
 ## Startup and Postgres
 

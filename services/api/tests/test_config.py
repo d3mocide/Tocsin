@@ -143,3 +143,34 @@ def test_from_env_reads_alert_pruning_overrides(monkeypatch):
 
     assert config.alerts_prune_grace_seconds == 3600.0
     assert config.alerts_prune_interval_seconds == 300.0
+
+
+def test_from_env_defaults_retention_to_a_week_of_live_a_month_of_alerts_and_a_day_of_health(monkeypatch):
+    for name in (
+        "TRANSCRIPTS_LIVE_RETENTION_SECONDS",
+        "TRANSCRIPTS_ALERT_RETENTION_SECONDS",
+        "HEALTH_SAMPLES_RETENTION_SECONDS",
+        "RETENTION_PRUNE_INTERVAL_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = ApiConfig.from_env()
+
+    assert config.transcripts_live_retention_seconds == 7 * 86_400
+    assert config.transcripts_alert_retention_seconds == 30 * 86_400
+    assert config.health_samples_retention_seconds == 86_400
+    assert config.retention_prune_interval_seconds == 3_600
+
+
+def test_from_env_reads_retention_overrides(monkeypatch):
+    monkeypatch.setenv("TRANSCRIPTS_LIVE_RETENTION_SECONDS", "3600")
+    monkeypatch.setenv("TRANSCRIPTS_ALERT_RETENTION_SECONDS", "7200")
+    monkeypatch.setenv("HEALTH_SAMPLES_RETENTION_SECONDS", "600")
+    monkeypatch.setenv("RETENTION_PRUNE_INTERVAL_SECONDS", "60")
+
+    config = ApiConfig.from_env()
+
+    assert config.transcripts_live_retention_seconds == 3600.0
+    assert config.transcripts_alert_retention_seconds == 7200.0
+    assert config.health_samples_retention_seconds == 600.0
+    assert config.retention_prune_interval_seconds == 60.0

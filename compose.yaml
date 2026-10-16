@@ -249,6 +249,10 @@ services:
       API_KEY: ${API_KEY:-}
       # The bundled web page works without the key (browser-stamped same-origin requests); false = it asks for it.
       API_KEY_UI_OPEN: ${API_KEY_UI_OPEN:-true}
+      ALERTS_PRUNE_GRACE_SECONDS: ${ALERTS_PRUNE_GRACE_SECONDS:-86400}
+      TRANSCRIPTS_LIVE_RETENTION_SECONDS: ${TRANSCRIPTS_LIVE_RETENTION_SECONDS:-604800}
+      TRANSCRIPTS_ALERT_RETENTION_SECONDS: ${TRANSCRIPTS_ALERT_RETENTION_SECONDS:-2592000}
+      HEALTH_SAMPLES_RETENTION_SECONDS: ${HEALTH_SAMPLES_RETENTION_SECONDS:-86400}
       # Surfaced via GET /system so the UI can render offgrid vs. hybrid
       # correctly.
       TOCSIN_MODE: *mode

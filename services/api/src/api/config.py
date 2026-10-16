@@ -35,6 +35,10 @@ DEFAULT_CORS_ALLOWED_ORIGINS = "*"
 # day-long grace window -- see db.prune_expired_alerts.
 DEFAULT_ALERTS_PRUNE_GRACE_SECONDS = 86_400
 DEFAULT_ALERTS_PRUNE_INTERVAL_SECONDS = 3_600
+DEFAULT_TRANSCRIPTS_LIVE_RETENTION_SECONDS = 7 * 86_400
+DEFAULT_TRANSCRIPTS_ALERT_RETENTION_SECONDS = 30 * 86_400
+DEFAULT_HEALTH_SAMPLES_RETENTION_SECONDS = 86_400
+DEFAULT_RETENTION_PRUNE_INTERVAL_SECONDS = 3_600
 
 
 def _postgres_dsn_from_env() -> str | None:
@@ -105,6 +109,11 @@ class ApiConfig:
     api_keys: tuple[str, ...] = ()
     # Let the bundled web page through without the key (see auth.py for what that does and does not protect).
     api_key_ui_open: bool = True
+    # How long rows stay in Postgres before the retention sweep deletes them (db.prune_old_records).
+    transcripts_live_retention_seconds: float = DEFAULT_TRANSCRIPTS_LIVE_RETENTION_SECONDS
+    transcripts_alert_retention_seconds: float = DEFAULT_TRANSCRIPTS_ALERT_RETENTION_SECONDS
+    health_samples_retention_seconds: float = DEFAULT_HEALTH_SAMPLES_RETENTION_SECONDS
+    retention_prune_interval_seconds: float = DEFAULT_RETENTION_PRUNE_INTERVAL_SECONDS
 
     @classmethod
     def from_env(cls) -> "ApiConfig":
@@ -138,4 +147,16 @@ class ApiConfig:
             ),
             api_keys=tuple(k.strip() for k in os.environ.get("API_KEY", "").split(",") if k.strip()),
             api_key_ui_open=os.environ.get("API_KEY_UI_OPEN", "true").strip().lower() not in ("0", "false", "no", "off"),
+            transcripts_live_retention_seconds=float(
+                os.environ.get("TRANSCRIPTS_LIVE_RETENTION_SECONDS", DEFAULT_TRANSCRIPTS_LIVE_RETENTION_SECONDS)
+            ),
+            transcripts_alert_retention_seconds=float(
+                os.environ.get("TRANSCRIPTS_ALERT_RETENTION_SECONDS", DEFAULT_TRANSCRIPTS_ALERT_RETENTION_SECONDS)
+            ),
+            health_samples_retention_seconds=float(
+                os.environ.get("HEALTH_SAMPLES_RETENTION_SECONDS", DEFAULT_HEALTH_SAMPLES_RETENTION_SECONDS)
+            ),
+            retention_prune_interval_seconds=float(
+                os.environ.get("RETENTION_PRUNE_INTERVAL_SECONDS", DEFAULT_RETENTION_PRUNE_INTERVAL_SECONDS)
+            ),
         )

@@ -390,3 +390,73 @@ async def test_prune_expired_alerts_is_a_no_op_when_nothing_is_stale():
 
     assert pruned == 0
     assert pool.executed == []
+
+
+class _TaggedPool(FakePool):
+    """Like asyncpg, `execute` answers with a command tag naming the rows affected."""
+
+    def __init__(self, tags, fetch_results=None):
+        super().__init__(fetch_results=fetch_results)
+        self._tags = list(tags)
+
+    async def execute(self, query, *args):
+        await super().execute(query, *args)
+        return self._tags.pop(0)
+
+
+async def test_prune_old_records_gives_background_narration_the_short_window():
+    pool = FakePool()
+    before = datetime.now(timezone.utc)
+
+    await db.prune_old_records(
+        pool, live_transcript_seconds=7 * 86_400, alert_transcript_seconds=30 * 86_400, health_seconds=86_400
+    )
+
+    (transcripts_sql, transcripts_args), (dispatches_sql, dispatches_args) = pool.executed[0], pool.executed[1]
+    assert "DELETE FROM transcripts" in transcripts_sql
+    live_marker, live_cutoff_ns, alert_cutoff_ns = transcripts_args
+    assert live_marker == "LIVE"
+    # The live cutoff is the more recent one: it keeps less.
+    assert live_cutoff_ns > alert_cutoff_ns
+    assert abs(live_cutoff_ns / 1e9 - (before - timedelta(days=7)).timestamp()) < 5
+    assert abs(alert_cutoff_ns / 1e9 - (before - timedelta(days=30)).timestamp()) < 5
+
+    assert "DELETE FROM dispatches" in dispatches_sql
+    assert dispatches_args[0] == "LIVE"
+    assert dispatches_args[1] > dispatches_args[2]
+
+
+async def test_prune_old_records_drops_old_health_chunks_then_trims_the_boundary_chunk():
+    pool = FakePool()
+
+    await db.prune_old_records(
+        pool, live_transcript_seconds=1, alert_transcript_seconds=2, health_seconds=86_400
+    )
+
+    drop_sql, drop_args = pool.fetch_calls[0]
+    trim_sql, trim_args = pool.executed[2]
+    assert "drop_chunks('health_samples'" in drop_sql
+    assert "DELETE FROM health_samples" in trim_sql
+    assert drop_args == trim_args
+    assert abs((datetime.now(timezone.utc) - drop_args[0]).total_seconds() - 86_400) < 5
+
+
+async def test_prune_old_records_reports_rows_removed_per_table():
+    pool = _TaggedPool(
+        ["DELETE 200", "DELETE 190", "DELETE 4000"],
+        fetch_results=[[{"drop_chunks": "_hyper_1_1_chunk"}, {"drop_chunks": "_hyper_1_2_chunk"}]],
+    )
+
+    removed = await db.prune_old_records(
+        pool, live_transcript_seconds=1, alert_transcript_seconds=2, health_seconds=3
+    )
+
+    assert removed == {"transcripts": 200, "dispatches": 190, "health_chunks": 2, "health_samples": 4000}
+
+
+async def test_prune_old_records_tolerates_a_pool_that_returns_no_row_count():
+    removed = await db.prune_old_records(
+        FakePool(), live_transcript_seconds=1, alert_transcript_seconds=2, health_seconds=3
+    )
+
+    assert removed == {"transcripts": 0, "dispatches": 0, "health_chunks": 0, "health_samples": 0}
