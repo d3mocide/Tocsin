@@ -149,9 +149,9 @@ export function mockApiPlugin(): Plugin {
               RWT: { name: "Required Weekly Test", tier: "C" },
             },
             counties: {
-              "041051": { county: "Multnomah", state: "OR" },
-              "041005": { county: "Clackamas", state: "OR" },
-              "041067": { county: "Washington", state: "OR" },
+              "41051": { county: "Multnomah", state: "OR" },
+              "41005": { county: "Clackamas", state: "OR" },
+              "41067": { county: "Washington", state: "OR" },
               "053011": { county: "Clark", state: "WA" },
             },
             stations,
@@ -283,6 +283,11 @@ export function mockApiPlugin(): Plugin {
                     ends: minutesAhead(84),
                     same_codes: ["041051", "041005"],
                     ugc_codes: ["ORC005"],
+                    // Storm-based polygon over southeast Portland and northern Clackamas County.
+                    geometry: {
+                      type: "Polygon",
+                      coordinates: [[[-122.62, 45.33], [-122.36, 45.36], [-122.3, 45.52], [-122.55, 45.58], [-122.7, 45.46], [-122.62, 45.33]]],
+                    },
                     vtec: "/O.NEW.KPQR.FF.W.0007.261016T1725Z-261016T2030Z/",
                   },
                 },

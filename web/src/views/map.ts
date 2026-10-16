@@ -1,4 +1,4 @@
-import type { Feature, FeatureCollection, Polygon } from "geojson";
+import type { Feature, FeatureCollection } from "geojson";
 import {
   Map as MapLibreMap,
   Marker,
@@ -9,11 +9,11 @@ import {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
+import { alertCounties, parseCountyShapes, type CountyShapes } from "../county_shapes";
 import { el } from "../dom";
-import { apiSource, isActive, tierOf } from "../format";
+import { apiSource, countyName, isActive, tierOf } from "../format";
 import type { Store } from "../store";
 import type { Alert } from "../types";
-import { NWS_ZONES, type ZoneGeo } from "./zone_data";
 
 // maplibre-gl derives its worker script URL at runtime from its own bundled
 // chunk's import.meta.url + a hardcoded filename -- a pattern Vite's static
@@ -82,7 +82,12 @@ const ZONES_LINE_LAYER_ID = "tocsin-zones-line";
 const RADAR_LOCAL_ID = "tocsin-radar-local";
 const RADAR_WIDE_ID = "tocsin-radar-wide";
 
-// In-memory + persistent localStorage cache for NWS Zone GeoJSON geometry
+// County outlines for filling alert areas by SAME location code. Bundled, so this works
+// offgrid; loaded the first time an alert needs it.
+let countyShapes: CountyShapes | null = null;
+let countyShapesLoad: Promise<void> | null = null;
+
+// In-memory + persistent localStorage cache for NWS Zone GeoJSON geometry (alerts with no county codes)
 const ZONE_GEO_CACHE: Record<string, any> = {};
 const pendingZoneFetches = new Set<string>();
 
@@ -108,15 +113,6 @@ function saveZoneGeoToStorage(code: string, geometry: any): void {
   } catch {
     // Storage write failed
   }
-}
-
-// NWS_ZONES polygons are stored as [lat, lon] pairs (built for a
-// lat/lon-first mapping library); GeoJSON -- and MapLibre -- expect [lon, lat].
-function zonePolygonGeometry(geo: ZoneGeo): Polygon {
-  return {
-    type: "Polygon",
-    coordinates: [geo.polygon.map(([lat, lon]): [number, number] => [lon, lat])],
-  };
 }
 
 export function alertHazardStyle(
@@ -336,6 +332,20 @@ export class MapView {
     this.map.setLayoutProperty(RADAR_WIDE_ID, "visibility", useWide ? "visible" : "none");
   }
 
+  private ensureCountyShapes(): void {
+    if (countyShapes || countyShapesLoad) return;
+    countyShapesLoad = fetch(geoUrl("us-county-shapes"))
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((json) => {
+        countyShapes = parseCountyShapes(json as FeatureCollection);
+        this.updateLayers();
+      })
+      .catch(() => {
+        // Retry on the next render; the map is still usable without alert fills.
+        countyShapesLoad = null;
+      });
+  }
+
   private async fetchMissingZoneGeo(code: string): Promise<void> {
     if (ZONE_GEO_CACHE[code] || pendingZoneFetches.has(code)) return;
     pendingZoneFetches.add(code);
@@ -378,20 +388,31 @@ export class MapView {
     const zoneFeatures: Feature[] = [];
     this.activeAdvisoryCount = 0;
 
-    // 1. Draw Real NWS Alert Polygons with Authentic Color Palette
-    for (const alert of alerts) {
-      if (!isActive(alert)) continue;
+    // 1. Fill the counties each alert was issued for (its SAME location codes), with the exact
+    // storm-based NWS polygon on top when the alert carries one. Tier A is drawn last, on top.
+    const tierRank: Record<string, number> = { C: 0, B: 1, A: 2 };
+    const active = alerts
+      .filter((alert) => isActive(alert))
+      .sort((x, y) => (tierRank[tierOf(x, reference) ?? "C"] ?? 0) - (tierRank[tierOf(y, reference) ?? "C"] ?? 0));
+    const countyLabel = (geoid: string): string => countyName(geoid, reference);
+
+    for (const alert of active) {
       this.activeAdvisoryCount++;
 
       const tier = tierOf(alert, reference) ?? "C";
       const cap = apiSource(alert);
       const style = alertHazardStyle(alert.event_name, tier);
 
+      if (!countyShapes && alert.fips_codes.length > 0) this.ensureCountyShapes();
+      const counties = countyShapes ? alertCounties(alert.fips_codes, countyShapes) : [];
+      const hasPolygon = Boolean(cap?.geometry && cap.geometry.coordinates);
+      const areas = cap?.area_desc ?? (counties.length > 0 ? counties.map(countyLabel).join("; ") : "Monitored Region");
+
       const popupHtml = `
         <div class="map-popup">
           <div class="map-popup-title">${alert.event_name}</div>
           <div class="map-popup-sub">
-            <b>Area:</b> ${cap?.area_desc ?? "Monitored Region"}<br/>
+            <b>Area:</b> ${areas}<br/>
             <b>Severity:</b> <span class="badge badge-tier-${tier.toLowerCase()}">Tier ${tier}</span>
             ${cap?.expires ? `<br/><b>Expires:</b> ${new Date(cap.expires).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}
           </div>
@@ -406,36 +427,41 @@ export class MapView {
         popupHtml,
       };
 
-      // Case A: Alert contains exact GeoJSON geometry from NWS
-      if (cap?.geometry && cap.geometry.coordinates) {
+      for (const geoid of counties) {
         zoneFeatures.push({
           type: "Feature",
-          geometry: cap.geometry,
-          properties: { ...properties, tooltipText: alert.event_name },
+          geometry: countyShapes!.get(geoid)!,
+          // Lighter when an exact polygon is drawn over it, so the two do not stack into a dark mass.
+          properties: {
+            ...properties,
+            fillOpacity: hasPolygon ? style.fillOpacity * 0.5 : style.fillOpacity,
+            tooltipText: `${alert.event_name} (${countyLabel(geoid)})`,
+          },
         });
-        continue;
       }
 
-      // Case B: Render UGC / SAME zones
-      const ugcCodes = cap?.ugc_codes ?? [];
-      for (const ugc of ugcCodes) {
-        const cachedGeo = loadZoneGeoFromStorage(ugc);
-        if (cachedGeo) {
-          zoneFeatures.push({
-            type: "Feature",
-            geometry: cachedGeo,
-            properties: { ...properties, tooltipText: `${alert.event_name} (${ugc})` },
-          });
-        } else if (NWS_ZONES[ugc]) {
-          const geo = NWS_ZONES[ugc];
-          zoneFeatures.push({
-            type: "Feature",
-            geometry: zonePolygonGeometry(geo),
-            properties: { ...properties, tooltipText: `${alert.event_name} (${geo.name})` },
-          });
-        } else {
-          // Fetch real NWS polygon geometry asynchronously for this zone
-          void this.fetchMissingZoneGeo(ugc);
+      if (hasPolygon) {
+        zoneFeatures.push({
+          type: "Feature",
+          geometry: cap!.geometry,
+          properties: { ...properties, tooltipText: alert.event_name },
+        });
+      }
+
+      // No county to draw (for example a marine zone): use the NWS zone geometry instead. Wait for
+      // the county file first, or every alert would trigger a pointless zone fetch while it loads.
+      if (counties.length === 0 && !hasPolygon && (countyShapes !== null || alert.fips_codes.length === 0)) {
+        for (const ugc of cap?.ugc_codes ?? []) {
+          const cachedGeo = loadZoneGeoFromStorage(ugc);
+          if (cachedGeo) {
+            zoneFeatures.push({
+              type: "Feature",
+              geometry: cachedGeo,
+              properties: { ...properties, tooltipText: `${alert.event_name} (${ugc})` },
+            });
+          } else {
+            void this.fetchMissingZoneGeo(ugc);
+          }
         }
       }
     }
