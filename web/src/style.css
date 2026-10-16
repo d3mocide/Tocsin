@@ -2884,104 +2884,11 @@ footer {
   background: color-mix(in srgb, currentColor 15%, transparent);
 }
 
-/* Air Quality Index (AQI) */
+/* Air quality and smoke (NWS alerts + observed visibility) */
 .air-quality-body {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
-}
-
-.aqi-hero-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.6rem 0.75rem;
-  background: var(--panel-deep);
-  border-radius: 6px;
-  border: 1px solid var(--border);
-}
-
-.aqi-hero-score-group {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-}
-
-.aqi-hero-number {
-  font-size: 2.2rem;
-  font-weight: 900;
-  line-height: 1;
-  font-family: ui-monospace, monospace;
-}
-
-.aqi-hero-label-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.aqi-hero-tag {
-  font-size: 0.64rem;
-  font-weight: 700;
-  color: var(--text-dim);
-  letter-spacing: 0.05em;
-}
-
-.aqi-hero-cat-badge {
-  font-size: 0.72rem;
-  font-weight: 800;
-  padding: 0.2rem 0.55rem;
-  border-radius: 4px;
-  border: 1px solid;
-  width: fit-content;
-  letter-spacing: 0.03em;
-}
-
-.aqi-hero-alert-banner {
-  font-size: 0.74rem;
-  font-weight: 600;
-  color: #f97316;
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-top: 0.15rem;
-  line-height: 1.35;
-}
-
-.aqi-hero-normal-desc {
-  font-size: 0.74rem;
-  color: var(--text-dim);
-  line-height: 1.35;
-}
-
-.aqi-meter-strip {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 0.3rem;
-}
-
-.aqi-segment {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.35rem 0.15rem;
-  border-radius: 5px;
-  border: 1px solid;
-  text-align: center;
-  font-size: 0.62rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  transition: all 0.2s ease;
-}
-
-.aqi-segment.is-active {
-  font-weight: 800;
-  color: #ffffff;
-}
-
-.aqi-segment:not(.is-active) .aqi-segment-label {
-  opacity: 0.6;
-  color: var(--text-dim);
 }
 
 @media (max-width: 1100px) {

@@ -2877,3 +2877,11 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   ozone strings -- yet is badged "EPA AQI". The Fire Weather card reports "CRITICAL / RED FLAG"
   for any alert whose name contains "air quality" or "smoke". Both should be removed or replaced
   with data that is real.
+- Resolved the AQI issue above: the Weather tab's air card is now "Air Quality & Smoke" (badge
+  NWS ALERTS) and shows only real data -- active NWS air quality / smoke / dust / ashfall /
+  stagnation products with their expiry, observed visibility and present weather, and says
+  plainly that Tocsin has no AQI sensor. The Fire Weather card (now badged FROM OBSERVATIONS,
+  with a note that it is not the NFDRS) escalates to Red Flag only for Red Flag / Fire Weather /
+  Extreme Fire Danger products, no longer for air quality or smoke alerts. With no observation,
+  both cards show "No data" instead of substituting 50% RH / 70F / 5 mph. Logic is in
+  `web/src/weather_risk.ts` with tests; 92 lines of dead `.aqi-*` CSS removed.

@@ -1,6 +1,7 @@
 import { el, replaceChildren } from "../dom";
-import { isActive } from "../format";
+import { expiresAt, isActive, relativeTime } from "../format";
 import type { Store } from "../store";
+import { AIR_ALERT, FIRE_ALERT, FIRE_ESCALATING, fireDanger, hazyWeather } from "../weather_risk";
 
 export interface HourlyPeriod {
   number: number;
@@ -625,76 +626,34 @@ export class WeatherDashboardView {
     const head = el(
       "div",
       { class: "panel-head" },
-      el("h3", { text: "Fire Weather & Red Flag Index" }),
-      el("span", { class: "badge badge-status-synced", text: "NFDRS" }),
+      el("h3", { text: "Fire Weather" }),
+      el("span", { class: "badge badge-status-synced", text: "FROM OBSERVATIONS" }),
     );
 
-    // Check active fire weather / red flag / air quality alerts in store
-    const alerts = Array.from(this.store.state.alerts.values());
-    const activeFireAlerts = alerts.filter(
-      (a) =>
-        isActive(a) &&
-        (a.event_name.toLowerCase().includes("fire") ||
-          a.event_name.toLowerCase().includes("red flag") ||
-          a.event_name.toLowerCase().includes("smoke") ||
-          a.event_name.toLowerCase().includes("air quality")),
-    );
+    const fireAlerts = Array.from(this.store.state.alerts.values()).filter((a) => isActive(a) && FIRE_ALERT.test(a.event_name));
+    const alertNames = Array.from(new Set(fireAlerts.map((a) => a.event_name)));
+    const redFlag = fireAlerts.some((a) => FIRE_ESCALATING.test(a.event_name));
 
-    // Deduplicate alert event names
-    const alertNames = Array.from(new Set(activeFireAlerts.map((a) => a.event_name)));
-
-    // Evaluate fire danger metrics: RH (40% weight), Wind (35% weight), Temp (25% weight)
-    const rh = obs?.relativeHumidity ?? 50;
-    const tempF = obs?.temperatureF ?? 70;
-    const wind = obs?.windSpeedMph ?? 5;
+    const rh = obs?.relativeHumidity ?? null;
+    const tempF = obs?.temperatureF ?? null;
+    const wind = obs?.windSpeedMph ?? null;
     const gust = obs?.windGustMph ?? wind;
+    const danger = fireDanger({ rh, tempF, wind }, redFlag);
 
-    let dangerIndex = 0; // 0 (Low) to 4 (Extreme)
-    let riskLevel = "LOW";
-    let riskColor = "#22c55e";
-    let explanation = "High surface humidity and light winds keep ignition risk minimal.";
-
-    if (alertNames.length > 0 || (rh <= 18 && wind >= 15 && tempF >= 82)) {
-      dangerIndex = 4;
-      riskLevel = "CRITICAL / RED FLAG";
-      riskColor = "#e11d48";
-      explanation = "Severe fire weather conditions: Very low humidity, elevated heat, and dangerous spread winds.";
-    } else if (rh <= 22 && (wind >= 12 || tempF >= 88)) {
-      dangerIndex = 3;
-      riskLevel = "VERY HIGH";
-      riskColor = "#f97316";
-      explanation = "Dry vegetation and active surface breezes support rapid fire spread upon ignition.";
-    } else if (rh <= 28 && (wind >= 8 || tempF >= 80)) {
-      dangerIndex = 2;
-      riskLevel = "HIGH";
-      riskColor = "#eab308";
-      explanation = "Moderately low humidity; afternoon gusts can dry fine fuels quickly.";
-    } else if (rh <= 38) {
-      dangerIndex = 1;
-      riskLevel = "MODERATE";
-      riskColor = "#38bdf8";
-      explanation = "Seasonal drying with manageable wind speeds and moderate daytime recovery.";
-    }
-
-    // Active Alert Banner (Cleanly deduplicated)
     const alertBanner =
       alertNames.length > 0
         ? el(
             "div",
             { class: "fire-alert-callout" },
-            el("div", { class: "fire-alert-callout-title", text: "ACTIVE NWS ADVISORY IN EFFECT" }),
-            el("div", {
-              class: "fire-alert-callout-body",
-              text: alertNames.join(" · "),
-            }),
+            el("div", { class: "fire-alert-callout-title", text: "ACTIVE NWS FIRE PRODUCT" }),
+            el("div", { class: "fire-alert-callout-body", text: alertNames.join(" · ") }),
           )
         : null;
 
-    // 5-segment NFDRS gauge bar
     const segmentLabels = ["Low", "Moderate", "High", "Very High", "Extreme"];
     const segmentColors = ["#22c55e", "#38bdf8", "#eab308", "#f97316", "#e11d48"];
     const segments = segmentLabels.map((lbl, idx) => {
-      const isCurrent = idx === dangerIndex;
+      const isCurrent = danger !== null && idx === danger.index;
       return el(
         "div",
         {
@@ -706,49 +665,67 @@ export class WeatherDashboardView {
         el("span", { class: "nfdrs-segment-label", text: lbl }),
       );
     });
-
     const meter = el("div", { class: "nfdrs-meter-strip" }, ...segments);
 
-    // Threat Factor Rows with mini progress bars
-    const rhPercentClamped = Math.min(Math.max(rh, 0), 100);
-    const rhColor = rh <= 20 ? "#e11d48" : rh <= 30 ? "#f97316" : rh <= 40 ? "#eab308" : "#22c55e";
-    const rhStatus = rh <= 20 ? "Critical (<20%)" : rh <= 30 ? "Dry (20-30%)" : "Safe (>30%)";
+    const noData = (label: string) => renderFactorRow(label, "\u2014", "No data", 0, "#64748b");
+    const rhRow =
+      rh === null
+        ? noData("Relative Humidity")
+        : renderFactorRow(
+            "Relative Humidity",
+            `${Math.round(rh)}%`,
+            rh <= 20 ? "Critical (<20%)" : rh <= 30 ? "Dry (20-30%)" : "Safe (>30%)",
+            Math.min(Math.max(rh, 0), 100),
+            rh <= 20 ? "#e11d48" : rh <= 30 ? "#f97316" : rh <= 40 ? "#eab308" : "#22c55e",
+          );
+    const windRow =
+      wind === null || gust === null
+        ? noData("Surface Winds")
+        : renderFactorRow(
+            "Surface Winds",
+            `${Math.round(wind)} mph (gusts ${Math.round(gust)})`,
+            gust >= 20 ? "Strong Gusts" : gust >= 12 ? "Moderate" : "Light (<10 mph)",
+            Math.min((gust / 35) * 100, 100),
+            gust >= 20 ? "#e11d48" : gust >= 12 ? "#f97316" : "#22c55e",
+          );
+    const tempRow =
+      tempF === null
+        ? noData("Air Temperature")
+        : renderFactorRow(
+            "Air Temperature",
+            `${Math.round(tempF)}\u00b0F`,
+            tempF >= 90 ? "High Evaporation" : tempF >= 80 ? "Warm" : "Moderate",
+            Math.min(Math.max(((tempF - 40) / 65) * 100, 0), 100),
+            tempF >= 90 ? "#e11d48" : tempF >= 80 ? "#f97316" : "#22c55e",
+          );
 
-    const windPercentClamped = Math.min((gust / 35) * 100, 100);
-    const windColor = gust >= 20 ? "#e11d48" : gust >= 12 ? "#f97316" : "#22c55e";
-    const windStatus = gust >= 20 ? "Strong Gusts" : gust >= 12 ? "Moderate" : "Light (<10 mph)";
-
-    const tempPercentClamped = Math.min(Math.max(((tempF - 40) / 65) * 100, 0), 100);
-    const tempColor = tempF >= 90 ? "#e11d48" : tempF >= 80 ? "#f97316" : "#22c55e";
-    const tempStatus = tempF >= 90 ? "High Evaporation" : tempF >= 80 ? "Warm" : "Moderate";
-
-    const factorRows = el(
-      "div",
-      { class: "fire-factors-container" },
-      renderFactorRow("Relative Humidity", `${Math.round(rh)}%`, rhStatus, rhPercentClamped, rhColor),
-      renderFactorRow("Surface Winds", `${Math.round(wind)} mph (gusts ${Math.round(gust)})`, windStatus, windPercentClamped, windColor),
-      renderFactorRow("Air Temperature", `${Math.round(tempF)}°F`, tempStatus, tempPercentClamped, tempColor),
-    );
+    const badgeRow = danger
+      ? el(
+          "div",
+          { class: "fire-risk-badge-row" },
+          el(
+            "div",
+            {
+              class: "fire-risk-badge",
+              style: `background: color-mix(in srgb, ${danger.color} 18%, transparent); color: ${danger.color}; border-color: ${danger.color};`,
+            },
+            danger.label,
+          ),
+          el("div", { class: "fire-risk-desc", text: danger.explanation }),
+        )
+      : el("div", { class: "fire-risk-desc", text: "No surface observation is available, so there is no fire-weather estimate." });
 
     const body = el(
       "div",
       { class: "fire-risk-body" },
       alertBanner,
-      el(
-        "div",
-        { class: "fire-risk-badge-row" },
-        el(
-          "div",
-          {
-            class: "fire-risk-badge",
-            style: `background: color-mix(in srgb, ${riskColor} 18%, transparent); color: ${riskColor}; border-color: ${riskColor};`,
-          },
-          riskLevel,
-        ),
-        el("div", { class: "fire-risk-desc", text: explanation }),
-      ),
+      badgeRow,
       meter,
-      factorRows,
+      el("div", { class: "fire-factors-container" }, rhRow, windRow, tempRow),
+      el("div", {
+        class: "fire-risk-desc",
+        text: "A rough estimate from the latest surface observation, not the National Fire Danger Rating System.",
+      }),
     );
 
     card.append(head, body);
@@ -962,102 +939,54 @@ export class WeatherDashboardView {
     const head = el(
       "div",
       { class: "panel-head" },
-      el("h3", { text: "Air Quality & Smoke Index" }),
-      el("span", { class: "badge badge-status-synced", text: "EPA AQI" }),
+      el("h3", { text: "Air Quality & Smoke" }),
+      el("span", { class: "badge badge-status-synced", text: "NWS ALERTS" }),
     );
 
-    // Check active alerts for air quality / smoke
-    const alerts = Array.from(this.store.state.alerts.values());
-    const activeAqiAlerts = alerts.filter(
-      (a) =>
-        isActive(a) &&
-        (a.event_name.toLowerCase().includes("air quality") ||
-          a.event_name.toLowerCase().includes("smoke") ||
-          a.event_name.toLowerCase().includes("dust")),
+    const airAlerts = Array.from(this.store.state.alerts.values()).filter((a) => isActive(a) && AIR_ALERT.test(a.event_name));
+
+    const alertBlock =
+      airAlerts.length > 0
+        ? el(
+            "div",
+            { class: "fire-alert-callout" },
+            el("div", { class: "fire-alert-callout-title", text: "ACTIVE NWS AIR QUALITY PRODUCT" }),
+            ...airAlerts.map((a) => {
+              const expiry = expiresAt(a);
+              return el("div", {
+                class: "fire-alert-callout-body",
+                text: expiry ? `${a.event_name} \u00b7 expires ${relativeTime(expiry.toISOString())}` : a.event_name,
+              });
+            }),
+          )
+        : el("div", {
+            class: "empty",
+            text: "No active air quality, smoke or dust alerts. Tocsin has no air quality sensor, so this is not an AQI reading; see airnow.gov for measured values.",
+          });
+
+    const vis = obs?.visibilityMiles != null ? Math.round(obs.visibilityMiles * 10) / 10 : null;
+    const present = obs?.textDescription ?? null;
+    const hazy = hazyWeather(present);
+
+    const visRow =
+      vis === null
+        ? renderFactorRow("Visibility", "\u2014", "No data", 0, "#64748b")
+        : renderFactorRow(
+            "Visibility",
+            `${vis.toFixed(1)} mi`,
+            vis >= 10 ? "Clear / Unrestricted" : vis >= 5 ? "Reduced" : "Poor",
+            Math.min((vis / 10) * 100, 100),
+            vis >= 10 ? "#22c55e" : vis >= 5 ? "#eab308" : "#ef4444",
+          );
+    const presentRow = renderFactorRow(
+      "Reported weather",
+      present ?? "\u2014",
+      present === null ? "No data" : hazy ? "Smoke / haze / dust" : "No smoke or haze reported",
+      present === null ? 0 : 100,
+      present === null ? "#64748b" : hazy ? "#eab308" : "#22c55e",
     );
 
-    // Calculate AQI category
-    let aqiScore = 38;
-    let aqiCategory = "GOOD";
-    let aqiColor = "#22c55e";
-    let aqiIndex = 0; // 0 to 5
-    let healthGuidance = "Air quality is satisfactory with clean atmospheric conditions.";
-
-    const vis = obs?.visibilityMiles ?? 10;
-    const isSmoky = (obs?.textDescription || "").toLowerCase().includes("smoke") || (obs?.textDescription || "").toLowerCase().includes("haze");
-
-    if (activeAqiAlerts.length > 0) {
-      aqiScore = 118;
-      aqiCategory = "UNHEALTHY FOR SENSITIVE GROUPS";
-      aqiColor = "#f97316";
-      aqiIndex = 2;
-      healthGuidance = "Wildfire Smoke Advisory: Sensitive individuals should reduce prolonged outdoor exertion.";
-    } else if (isSmoky || vis < 6) {
-      aqiScore = 74;
-      aqiCategory = "MODERATE";
-      aqiColor = "#eab308";
-      aqiIndex = 1;
-      healthGuidance = "Acceptable air quality; patchy wildfire smoke or dust may affect unusually sensitive persons.";
-    }
-
-    // Hero Top Banner with Large AQI number
-    const heroRow = el(
-      "div",
-      { class: "aqi-hero-card" },
-      el(
-        "div",
-        { class: "aqi-hero-score-group" },
-        el("div", { class: "aqi-hero-number", style: `color: ${aqiColor};`, text: String(aqiScore) }),
-        el("div", { class: "aqi-hero-label-group" }, el("div", { class: "aqi-hero-tag", text: "AQI SCORE" }), el("div", { class: "aqi-hero-cat-badge", style: `background: color-mix(in srgb, ${aqiColor} 20%, transparent); color: ${aqiColor}; border-color: ${aqiColor};`, text: aqiCategory })),
-      ),
-      activeAqiAlerts.length > 0
-        ? el("div", { class: "aqi-hero-alert-banner" }, el("span", { class: "aqi-alert-icon", text: "⚠️" }), el("span", { text: healthGuidance }))
-        : el("div", { class: "aqi-hero-normal-desc", text: healthGuidance }),
-    );
-
-    // 6-segment EPA AQI Meter
-    const aqiLabels = ["Good", "Moderate", "USG", "Unhealthy", "V.Unhealthy", "Hazardous"];
-    const aqiColors = ["#22c55e", "#eab308", "#f97316", "#ef4444", "#a855f7", "#881337"];
-
-    const aqiSegments = aqiLabels.map((lbl, idx) => {
-      const isCurrent = idx === aqiIndex;
-      return el(
-        "div",
-        {
-          class: `aqi-segment${isCurrent ? " is-active" : ""}`,
-          style: isCurrent
-            ? `background: ${aqiColors[idx]}; box-shadow: 0 0 10px ${aqiColors[idx]}88; border-color: ${aqiColors[idx]};`
-            : `background: color-mix(in srgb, ${aqiColors[idx]} 20%, var(--panel-deep)); border-color: ${aqiColors[idx]}44;`,
-        },
-        el("span", { class: "aqi-segment-label", text: lbl }),
-      );
-    });
-
-    const meter = el("div", { class: "aqi-meter-strip" }, ...aqiSegments);
-
-    // Pollutant breakdown rows
-    const pm25Val = aqiScore > 100 ? "42.5 µg/m³" : aqiScore > 50 ? "18.2 µg/m³" : "7.4 µg/m³";
-    const pm25Percent = Math.min((aqiScore / 200) * 100, 100);
-
-    const ozoneVal = "0.042 ppm";
-    const ozonePercent = 35;
-
-    const clarityVal = `${vis.toFixed(1)} mi`;
-    const clarityPercent = Math.min((vis / 10) * 100, 100);
-    const clarityStatus = vis >= 10 ? "Clear / Unrestricted" : vis >= 5 ? "Hazy / Moderate" : "Dense Smoke";
-    const clarityColor = vis >= 10 ? "#22c55e" : vis >= 5 ? "#eab308" : "#ef4444";
-
-    const pollutantRows = el(
-      "div",
-      { class: "fire-factors-container" },
-      renderFactorRow("PM2.5 Wildfire Smoke", pm25Val, aqiCategory, pm25Percent, aqiColor),
-      renderFactorRow("Ground Ozone (O3)", ozoneVal, "Good (0.04 ppm)", ozonePercent, "#22c55e"),
-      renderFactorRow("Visual Clarity", clarityVal, clarityStatus, clarityPercent, clarityColor),
-    );
-
-    const body = el("div", { class: "air-quality-body" }, heroRow, meter, pollutantRows);
-
-    card.append(head, body);
+    card.append(head, el("div", { class: "air-quality-body" }, alertBlock, el("div", { class: "fire-factors-container" }, visRow, presentRow)));
     return card;
   }
 }
