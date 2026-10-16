@@ -98,6 +98,9 @@ class LoggingKeywordEventSink:
         print(json.dumps(asdict(event)), flush=True)
 
 
+STALE_TRIMMED_SECONDS = 3600
+
+
 class TranscriptionWorker:
     """`remote_run`, when given, implements design doc §6's "race, don't
     chain" selection: `STT_CHAIN=local` (offgrid) leaves it `None` and
@@ -158,6 +161,17 @@ class TranscriptionWorker:
         # produces a KeywordEvent.
         self._keyword_matcher = keyword_matcher
         self._keyword_sink = keyword_sink or LoggingKeywordEventSink()
+        self._sweep_stale_trimmed()
+
+    def _sweep_stale_trimmed(self) -> None:
+        # Leftovers from a worker killed mid-capture; handle_capture unlinks its own.
+        cutoff = time.time() - STALE_TRIMMED_SECONDS
+        for stale in self._work_dir.glob("trimmed-*.wav"):
+            try:
+                if stale.stat().st_mtime < cutoff:
+                    stale.unlink()
+            except OSError:
+                pass
 
     def handle_capture(self, payload: dict) -> None:
         capture_kind = payload.get("capture_kind", "alert")
@@ -166,64 +180,67 @@ class TranscriptionWorker:
 
         wav_path = Path(payload["wav_path"])
         trimmed_path = self._work_dir / f"trimmed-{wav_path.name}"
-        trim_wav(wav_path, trimmed_path, payload.get("voice_start_sample"))
+        try:
+            trim_wav(wav_path, trimmed_path, payload.get("voice_start_sample"))
 
-        if capture_kind == "live":
-            if self._local_enabled:
-                transcript = self._run_local(trimmed_path)
+            if capture_kind == "live":
+                if self._local_enabled:
+                    transcript = self._run_local(trimmed_path)
+                else:
+                    assert self._remote_run is not None
+                    transcript = self._remote_run(trimmed_path)
             else:
-                assert self._remote_run is not None
-                transcript = self._remote_run(trimmed_path)
-        else:
-            transcript = self._transcribe(trimmed_path, payload.get("tier"))
-        result = check_transcript(transcript)
-        text = transcript.text if result.passed else ""
+                transcript = self._transcribe(trimmed_path, payload.get("tier"))
+            result = check_transcript(transcript)
+            text = transcript.text if result.passed else ""
 
-        guarded = GuardedTranscript(
-            site=payload["site"],
-            channel=payload["channel"],
-            event_code=payload.get("event_code") or LIVE_EVENT_CODE,
-            tier=payload.get("tier") or LIVE_TIER,
-            fips_codes=tuple(payload.get("fips_codes", ())),
-            raw_header=payload.get("raw_header") or f"live:{payload['site']}:{payload['channel']}",
-            text=text,
-            passed_guard=result.passed,
-            guard_reason=result.reason,
-            timestamp_ns=time.time_ns(),
-            wav_path=str(wav_path),
-            capture_kind=capture_kind,
-        )
-        self._sink.record(guarded)
-
-        if capture_kind == "live":
-            # The transcript itself, on stderr. With a Redis sink configured
-            # (every compose deployment) a live transcript otherwise reaches
-            # only Postgres and the UI, so `docker compose logs -f
-            # stt-worker` showed nothing at all while continuous
-            # transcription was working perfectly -- indistinguishable from
-            # broken. This is the feature's proof of life.
-            detail = text if result.passed else f"<withheld: {result.reason}>"
-            print(
-                f"stt-worker: live {guarded.site}/{guarded.channel}: {detail}",
-                file=sys.stderr,
-                flush=True,
+            guarded = GuardedTranscript(
+                site=payload["site"],
+                channel=payload["channel"],
+                event_code=payload.get("event_code") or LIVE_EVENT_CODE,
+                tier=payload.get("tier") or LIVE_TIER,
+                fips_codes=tuple(payload.get("fips_codes", ())),
+                raw_header=payload.get("raw_header") or f"live:{payload['site']}:{payload['channel']}",
+                text=text,
+                passed_guard=result.passed,
+                guard_reason=result.reason,
+                timestamp_ns=time.time_ns(),
+                wav_path=str(wav_path),
+                capture_kind=capture_kind,
             )
+            self._sink.record(guarded)
 
-        if capture_kind == "live" and result.passed and text and self._keyword_matcher is not None:
-            match = self._keyword_matcher.match(text)
-            if match is not None:
-                self._keyword_sink.record(
-                    KeywordEvent(
-                        site=guarded.site,
-                        channel=guarded.channel,
-                        event_code=match.event_code,
-                        event_name=match.event_name,
-                        tier=match.tier,
-                        matched_phrase=match.matched_phrase,
-                        transcript_text=text,
-                        timestamp_ns=guarded.timestamp_ns,
-                    )
+            if capture_kind == "live":
+                # The transcript itself, on stderr. With a Redis sink configured
+                # (every compose deployment) a live transcript otherwise reaches
+                # only Postgres and the UI, so `docker compose logs -f
+                # stt-worker` showed nothing at all while continuous
+                # transcription was working perfectly -- indistinguishable from
+                # broken. This is the feature's proof of life.
+                detail = text if result.passed else f"<withheld: {result.reason}>"
+                print(
+                    f"stt-worker: live {guarded.site}/{guarded.channel}: {detail}",
+                    file=sys.stderr,
+                    flush=True,
                 )
+
+            if capture_kind == "live" and result.passed and text and self._keyword_matcher is not None:
+                match = self._keyword_matcher.match(text)
+                if match is not None:
+                    self._keyword_sink.record(
+                        KeywordEvent(
+                            site=guarded.site,
+                            channel=guarded.channel,
+                            event_code=match.event_code,
+                            event_name=match.event_name,
+                            tier=match.tier,
+                            matched_phrase=match.matched_phrase,
+                            transcript_text=text,
+                            timestamp_ns=guarded.timestamp_ns,
+                        )
+                    )
+        finally:
+            trimmed_path.unlink(missing_ok=True)
 
     def _run_local(self, trimmed_path: Path) -> Transcript:
         return self._whisper_run(
