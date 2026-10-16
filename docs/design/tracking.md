@@ -2885,3 +2885,9 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   Extreme Fire Danger products, no longer for air quality or smoke alerts. With no observation,
   both cards show "No data" instead of substituting 50% RH / 70F / 5 mph. Logic is in
   `web/src/weather_risk.ts` with tests; 92 lines of dead `.aqi-*` CSS removed.
+- README screenshots redone around a scenario that happens in Oregon: the dev mock
+  (`web/mock-plugin.ts`) now serves an atmospheric-river storm (Flash Flood Warning confirmed on
+  both paths, a High Wind Warning heard only on RF, a Flood Watch only from the API) and a rainy
+  synthetic forecast, in place of a tornado warning. With the air/fire cards now showing real
+  data the Weather tab is shown in full. Live prod data was not used because the README is
+  public and it would show the station's approximate location.

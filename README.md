@@ -54,11 +54,11 @@ and a REST + SSE feed over the same data. Details are in `docs/design/master-pro
 
 ## Screenshots
 
-The images below use the dev server's bundled mock data (a made-up tornado warning and a
-synthetic forecast for Portland, OR), not a live station.
+The images below use the dev server's bundled mock data (a made-up atmospheric-river storm
+with a flash flood warning, and a synthetic forecast for Portland, OR), not a live station.
 
 <p align="center">
-  <img src="docs/screenshots/weather.webp" alt="Weather tab: surface observations, 24-hour meteogram and 7-day outlook" width="100%">
+  <img src="docs/screenshots/weather.webp" alt="Weather tab: surface observations, 24-hour meteogram, 7-day outlook, fire weather, sun and moon, and air quality alerts" width="100%">
 </p>
 
 <p align="center">
