@@ -2,6 +2,8 @@
  * (from the NWS forecast, hybrid mode only) and the alarm level (from live
  * alerts, works offgrid). */
 
+import type { Rgb } from "./daylight";
+
 export type Sky = "clear" | "cloudy" | "fog" | "rain" | "snow" | "storm" | "wind";
 export type Alarm = "calm" | "watch" | "warning";
 
@@ -56,3 +58,7 @@ export function getWeatherNow(): WeatherNow | null {
 export function setWeatherNow(next: WeatherNow): void {
   weatherNow = next;
 }
+
+/** Time-of-day inputs the backdrop reads each frame; changing them never
+ * reseeds particles, so they live outside `Scene`. */
+export const daylight: { calmTint: Rgb; starlight: number } = { calmTint: [103, 232, 249], starlight: 1 };

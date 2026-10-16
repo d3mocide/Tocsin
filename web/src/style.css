@@ -8,6 +8,8 @@
   --bg: #04050b;
   --bg-1: #0a0c1f;
   --bg-2: #1a1033;
+  --glow-a: rgb(56 189 248 / 11%);
+  --glow-b: rgb(139 92 246 / 14%);
   --panel: rgb(10 12 26 / 50%);
   --panel-deep: rgb(3 4 10 / 45%);
   --panel-raised: rgb(255 255 255 / 6%);
@@ -46,8 +48,8 @@ h1, h2, h3, h4, h5, h6 {
 html {
   min-height: 100%;
   background:
-    radial-gradient(1100px 700px at 12% -10%, rgb(56 189 248 / 11%), transparent 60%),
-    radial-gradient(900px 700px at 100% 8%, rgb(139 92 246 / 14%), transparent 60%),
+    radial-gradient(1100px 700px at 12% -10%, var(--glow-a), transparent 60%),
+    radial-gradient(900px 700px at 100% 8%, var(--glow-b), transparent 60%),
     linear-gradient(180deg, var(--bg-1), var(--bg) 70%);
   background-attachment: fixed;
   background-color: var(--bg);

@@ -2818,3 +2818,16 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   animation was only reviewed as still frames. Deployed by rebuilding the `api` image (the
   previous one is tagged `tocsin-api:pre-makeover`). Branch `ui/ghost-makeover`, not yet merged.
 
+
+### 2026-10-16 -- Time-of-day page background
+- `web/src/daylight.ts`: NOAA solar position, so sunrise/sunset are the -0.833° crossing and need
+  no network. Elevation (plus a morning/evening flag) maps to separate dawn and dusk palettes
+  driving `--bg`, `--bg-1`, `--glow-a/b` and the calm backdrop tint; stars fade out by day.
+  Alert tints (watch/warning) are unchanged. `sky_clock.ts` applies it on the 15s clock tick,
+  using `/system` lat/lon, else a UTC-offset guess when `TOCSIN_LATITUDE/LONGITUDE` are unset.
+- Tests: `npm test` in `web/` (`node --test`, no new dependencies, needs Node >= 22.6). Portland
+  sunrise/sunset are checked against `astral` to within 2 minutes.
+- `npm run dev` shows a dev-only panel (`dev_panel.ts`, absent from `vite build`): time-of-day
+  slider with Dawn/Day/Dusk/Night presets, sky and alarm selectors.
+- Reviewed as still frames at night/dawn/day/dusk in headless Chromium; `tsc --noEmit` and
+  `vite build` pass. Palettes are a first pass and worth tuning by eye.

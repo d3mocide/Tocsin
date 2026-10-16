@@ -1,12 +1,11 @@
-import { currentScene, onScene, type Alarm, type Sky } from "./scene";
+import { currentScene, daylight, onScene, type Alarm, type Sky } from "./scene";
 
 const CELL_W = 11;
 const CELL_H = 18;
 const FRAME_MS = 1000 / 15;
 const STORE_KEY = "tocsin_backdrop";
 
-const TINT: Record<Alarm, [number, number, number]> = {
-  calm: [103, 232, 249],
+const TINT: Record<Exclude<Alarm, "calm">, [number, number, number]> = {
   watch: [252, 211, 77],
   warning: [251, 113, 133],
 };
@@ -151,7 +150,7 @@ export class Backdrop {
     const { sky, alarm } = currentScene();
     const ctx = this.ctx;
     const t = now / 1000;
-    const rgb = TINT[alarm];
+    const rgb = alarm === "calm" ? daylight.calmTint : TINT[alarm];
     const pulse = alarm === "warning" ? 0.75 + 0.25 * Math.sin(t * 2.4) : 1;
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     ctx.font = `${CELL_H - 4}px "JetBrains Mono", ui-monospace, monospace`;
@@ -180,9 +179,9 @@ export class Backdrop {
         if (banks) {
           const v = field(c, r * 1.6, t);
           if (v > 1 - banks * 0.9) this.text(v > 0.9 ? "▒" : "░", c, r, Math.min(0.5, (v - (1 - banks * 0.9)) * 0.7) * pulse, rgb);
-        } else if (n % 47 === 0) {
+        } else if (n % 47 === 0 && daylight.starlight > 0) {
           const twinkle = 0.5 + 0.5 * Math.sin(t * 1.5 + (n % 97));
-          this.text(n % 5 === 0 ? ":" : ".", c, r, (0.25 + 0.5 * twinkle) * pulse, rgb);
+          this.text(n % 5 === 0 ? ":" : ".", c, r, (0.25 + 0.5 * twinkle) * pulse * daylight.starlight, rgb);
         }
       }
     }

@@ -21,6 +21,7 @@ import {
 import { Backdrop } from "./backdrop";
 import { byId, el, replaceChildren } from "./dom";
 import { setScene, type Alarm } from "./scene";
+import { applySky } from "./sky_clock";
 import { isActive, tierOf } from "./format";
 import { ALL_TOPICS, healthKey, Store, type Topic } from "./store";
 import { renderActivity } from "./views/activity";
@@ -118,6 +119,7 @@ function initBackdrop(): void {
 async function main(): Promise<void> {
   initPanelCollapsing();
   initBackdrop();
+  if (import.meta.env.DEV) void import("./dev_panel").then((m) => m.mountDevPanel());
 
   const alertsView = new AlertFeedView(byId("alerts"), store);
   const waterfall = new WaterfallView(byId<HTMLCanvasElement>("spectrum-canvas"));
@@ -158,6 +160,7 @@ async function main(): Promise<void> {
       setScene({ alarm: alarmLevel() });
       document.body.classList.toggle("alerts-active", Array.from(store.state.alerts.values()).some((alert) => isActive(alert)));
     }
+    if (touched("clock", "system")) applySky(store.state.system);
     if (touched("alerts", "clock")) updateDocumentTitle();
   };
   const renderAll = () => render(new Set(ALL_TOPICS));
