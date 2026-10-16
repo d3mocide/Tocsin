@@ -65,3 +65,34 @@ test("fallback location follows the UTC offset", () => {
   const { lon } = guessLocation(new Date());
   assert.ok(lon >= -180 && lon <= 180);
 });
+
+import { moonPhase, moonPosition } from "../src/daylight.ts";
+
+test("moon phase matches known dates", () => {
+  // New moon 2026-02-17 12:01 UTC, full moon 2026-03-03 11:38 UTC.
+  const near = (a: number, b: number) => Math.min(Math.abs(a - b), 1 - Math.abs(a - b)) < 0.03;
+  assert.ok(near(moonPhase(new Date("2026-02-17T12:00:00Z")), 0));
+  assert.ok(near(moonPhase(new Date("2026-03-03T12:00:00Z")), 0.5));
+});
+
+test("a full moon is up at midnight and a new moon at noon", () => {
+  const full = moonPosition(new Date("2026-03-04T08:00:00Z"), 45.5, -122.7);
+  assert.ok(full.elevation > 20, `full moon elevation ${full.elevation}`);
+  const fresh = moonPosition(new Date("2026-02-17T20:00:00Z"), 45.5, -122.7);
+  assert.ok(fresh.elevation > 10, `new moon elevation ${fresh.elevation}`);
+});
+
+test("a waxing crescent hangs in the western evening sky", () => {
+  // 2026-02-20 ~ 3 days after new; PST sunset ~17:40 = 01:40Z next day.
+  const m = moonPosition(new Date("2026-02-21T02:15:00Z"), 45.5, -122.7);
+  assert.ok(m.elevation > 0, `elevation ${m.elevation}`);
+  assert.ok(m.across > 0.6, `across ${m.across}`);
+});
+
+test("dawn and dusk strength peak at the horizon", () => {
+  assert.ok(skyLook({ elevation: -1, morning: true }).dawn > 0.95);
+  assert.equal(skyLook({ elevation: -1, morning: true }).dusk, 0);
+  assert.ok(skyLook({ elevation: -1, morning: false }).dusk > 0.95);
+  assert.equal(skyLook({ elevation: 40, morning: false }).dusk, 0);
+  assert.equal(skyLook({ elevation: -40, morning: false }).dusk, 0);
+});

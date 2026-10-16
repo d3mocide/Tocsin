@@ -2831,3 +2831,20 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   slider with Dawn/Day/Dusk/Night presets, sky and alarm selectors.
 - Reviewed as still frames at night/dawn/day/dusk in headless Chromium; `tsc --noEmit` and
   `vite build` pass. Palettes are a first pass and worth tuning by eye.
+- Follow-up, same day: daytime birds (`web/src/birds.ts`), night shooting stars and a day/dusk
+  plane with a fading contrail (`web/src/sky_events.ts`). Logic is pure and covered by
+  `web/tests/`; `backdrop.ts` only draws. All are skipped for rain/snow/fog/storm and whenever
+  a watch or warning is active. Events are skipped under reduced-motion (birds still draw as a
+  still frame). The dev panel can fire a star or plane on demand and pin the alarm level
+  (the mock data carries a tornado warning, which otherwise hides them). Not yet deployed.
+- Scenery pass: real-phase moon placed by elongation from the sun (decorative accuracy, ignores
+  inclination/parallax), drifting daytime clouds on clear skies, dusk fireflies, and a rare dawn
+  hot-air balloon (`web/src/scenery.ts`, moon math in `daylight.ts`). Same fair-weather/no-alert
+  gating as the other sky events. Dev panel gained Hide cards (also `h`), a Balloon button and a
+  moon-phase slider. 27 tests pass; reviewed as still frames only. Not yet deployed.
+- Cloudy and fog no longer share the full-screen `░▒` bank: cloudy is layered lumpy clouds
+  (`spawnCloudBank`, no stars), fog is ground mist thickening downward (`fogDensity`). Rain/storm
+  keep the shared bank. 29 tests pass. Not yet deployed.
+- Fix: cloudy (and the moon, clear-day clouds) vanished during watches/warnings because the
+  scenery layer was gated on a calm alarm. Weather/celestial layers now persist under alerts and
+  take the alert tint; only birds, planes, shooting stars, fireflies and the balloon stand down.

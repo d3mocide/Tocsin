@@ -1,11 +1,17 @@
-import { guessLocation, skyLook, sunPosition } from "./daylight";
+import { guessLocation, moonPosition, skyLook, sunPosition } from "./daylight";
 import { daylight } from "./scene";
 
 let override: Date | null = null;
+let moonPhaseOverride: number | undefined;
 
 /** Dev panel hook: pin the clock to a fixed instant, or `null` to follow real time. */
 export function setTimeOverride(when: Date | null): void {
   override = when;
+}
+
+/** Dev panel hook: force the moon phase (0 new .. 0.5 full), or `undefined` for the real one. */
+export function setMoonPhaseOverride(phase: number | undefined): void {
+  moonPhaseOverride = phase;
 }
 
 type Place = { latitude?: number | null; longitude?: number | null } | null;
@@ -29,4 +35,7 @@ export function applySky(system: Place): void {
   style.setProperty("--glow-b", look.glowB);
   daylight.calmTint = look.calmTint;
   daylight.starlight = look.starlight;
+  daylight.dawn = look.dawn;
+  daylight.dusk = look.dusk;
+  daylight.moon = moonPosition(now, lat, lon, moonPhaseOverride);
 }

@@ -1,3 +1,36 @@
+import { birdBob, birdGlyph, birdTarget, spawnFlock, stepBirds, type Bird } from "./birds";
+import {
+  nextPlaneDelay,
+  nextShootingStarDelay,
+  planeCells,
+  planeEligible,
+  shootingStarCells,
+  shootingStarEligible,
+  spawnPlane,
+  spawnShootingStar,
+  stepPlane,
+  stepShootingStar,
+  type Cell,
+  type Plane,
+  type ShootingStar,
+} from "./sky_events";
+import {
+  balloonCells,
+  cloudCells,
+  fogDensity,
+  fireflyCells,
+  moonCells,
+  nextBalloonDelay,
+  spawnBalloon,
+  spawnCloudBank,
+  spawnClouds,
+  spawnFireflies,
+  stepBalloon,
+  stepClouds,
+  type Balloon,
+  type Cloud,
+  type Firefly,
+} from "./scenery";
 import { currentScene, daylight, onScene, type Alarm, type Sky } from "./scene";
 
 const CELL_W = 11;
@@ -33,6 +66,16 @@ export class Backdrop {
   private cols = 0;
   private rows = 0;
   private drops: Drop[] = [];
+  private birds: Bird[] = [];
+  private shooter: ShootingStar | null = null;
+  private plane: Plane | null = null;
+  private clouds: Cloud[] = [];
+  private overcast: Cloud[] = [];
+  private flies: Firefly[] = [];
+  private balloon: Balloon | null = null;
+  private nextBalloon = 0;
+  private nextShooter = 0;
+  private nextPlane = 0;
   private flash = 0;
   private nextBolt = 0;
   private raf = 0;
@@ -48,6 +91,13 @@ export class Backdrop {
     document.addEventListener("visibilitychange", () => this.sync());
     window.matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => this.sync());
     this.resize();
+  }
+
+  /** Dev panel hook: trigger an event now instead of waiting for the timer. */
+  fire(kind: "star" | "plane" | "balloon"): void {
+    if (kind === "star") this.shooter = spawnShootingStar(this.cols, this.rows);
+    else if (kind === "plane") this.plane = spawnPlane(this.cols, this.rows);
+    else this.balloon = spawnBalloon(this.cols, this.rows);
   }
 
   get isOn(): boolean {
@@ -95,6 +145,9 @@ export class Backdrop {
   private seed(): void {
     const { sky, alarm } = currentScene();
     const area = this.cols * this.rows;
+    this.clouds = spawnClouds(this.cols, this.rows);
+    this.overcast = spawnCloudBank(this.cols, this.rows);
+    this.flies = spawnFireflies(this.cols, this.rows);
     const density: Record<Sky, number> = {
       clear: 0,
       cloudy: 0,
@@ -157,6 +210,9 @@ export class Backdrop {
     ctx.textBaseline = "top";
 
     this.ambient(t, rgb, pulse, sky);
+    this.flyBirds(t, dt, still, rgb, sky, alarm);
+    this.scenery(t, dt, still, rgb, sky, alarm);
+    if (!still) this.skyEvents(t, dt, rgb, sky, alarm);
 
     for (const d of this.drops) {
       if (!still) {
@@ -172,7 +228,13 @@ export class Backdrop {
 
   // Low-contrast base layer: stars for clear skies, fog banks for the rest.
   private ambient(t: number, rgb: [number, number, number], pulse: number, sky: Sky): void {
-    const banks = sky === "fog" ? 0.34 : sky === "cloudy" || sky === "storm" || sky === "rain" ? 0.5 : 0;
+    // Cloudy and fog have their own looks (scenery clouds / ground mist); only rain and storm use the shared bank.
+    if (sky === "cloudy") return;
+    if (sky === "fog") {
+      this.groundFog(t, rgb, pulse);
+      return;
+    }
+    const banks = sky === "storm" || sky === "rain" ? 0.5 : 0;
     for (let r = 0; r < this.rows; r += 1) {
       for (let c = 0; c < this.cols; c += 1) {
         const n = (c * 374761393 + r * 668265263) >>> 0;
@@ -183,6 +245,116 @@ export class Backdrop {
           const twinkle = 0.5 + 0.5 * Math.sin(t * 1.5 + (n % 97));
           this.text(n % 5 === 0 ? ":" : ".", c, r, (0.25 + 0.5 * twinkle) * pulse * daylight.starlight, rgb);
         }
+      }
+    }
+  }
+
+  private flyBirds(t: number, dt: number, still: boolean, rgb: [number, number, number], sky: Sky, alarm: Alarm): void {
+    const dayness = 1 - daylight.starlight;
+    const target = birdTarget(this.cols, dayness, sky, alarm);
+    if (target === 0) {
+      this.birds = [];
+      return;
+    }
+    if (!still) this.birds = stepBirds(this.birds, dt, this.cols);
+    // Seed a populated sky at once; afterwards new flocks wander in from the edges.
+    if (this.birds.length < target && (this.birds.length === 0 || (!still && Math.random() < dt * 0.4))) {
+      this.birds.push(...spawnFlock(this.cols, this.rows, this.birds.length === 0));
+    }
+    const alpha = 0.85 * Math.min(1, dayness * 2);
+    for (const b of this.birds) this.text(birdGlyph(b, still ? 0 : t), b.x, b.y + birdBob(b, t), alpha, rgb);
+  }
+
+  // Rare night/day extras; both wait a random while after each one finishes.
+  private skyEvents(t: number, dt: number, rgb: [number, number, number], sky: Sky, alarm: Alarm): void {
+    if (shootingStarEligible(daylight.starlight, sky, alarm)) {
+      if (!this.nextShooter) this.nextShooter = t + nextShootingStarDelay();
+      if (!this.shooter && t >= this.nextShooter) this.shooter = spawnShootingStar(this.cols, this.rows);
+    } else {
+      this.shooter = null;
+      this.nextShooter = 0;
+    }
+    if (this.shooter) {
+      this.drawCells(shootingStarCells(this.shooter), rgb);
+      if (!stepShootingStar(this.shooter, dt)) {
+        this.shooter = null;
+        this.nextShooter = t + nextShootingStarDelay();
+      }
+    }
+
+    if (planeEligible(daylight.starlight, sky, alarm)) {
+      if (!this.nextPlane) this.nextPlane = t + nextPlaneDelay();
+      if (!this.plane && t >= this.nextPlane) this.plane = spawnPlane(this.cols, this.rows);
+    } else {
+      this.plane = null;
+      this.nextPlane = 0;
+    }
+    if (this.plane) {
+      this.drawCells(planeCells(this.plane), rgb);
+      if (!stepPlane(this.plane, dt, this.cols)) {
+        this.plane = null;
+        this.nextPlane = t + nextPlaneDelay();
+      }
+    }
+  }
+
+  // Moon and clouds are weather, so they stay up during alerts; fireflies and the balloon stand down.
+  private scenery(t: number, dt: number, still: boolean, rgb: [number, number, number], sky: Sky, alarm: Alarm): void {
+    if (sky !== "clear" && sky !== "cloudy") {
+      this.balloon = null;
+      this.nextBalloon = 0;
+      return;
+    }
+    const dayness = 1 - daylight.starlight;
+    if (daylight.moon) this.drawCells(moonCells(daylight.moon, this.cols, this.rows, daylight.starlight), rgb);
+
+    if (sky === "cloudy") {
+      if (!still) stepClouds(this.overcast, dt, this.cols);
+      for (const c of this.overcast) this.drawCells(cloudCells(c, Math.max(dayness, 0.6), 0.32), rgb);
+    }
+
+    if (sky === "clear" && dayness > 0.15) {
+      if (!still) stepClouds(this.clouds, dt, this.cols);
+      for (const c of this.clouds) this.drawCells(cloudCells(c, dayness), rgb);
+    }
+
+    if (alarm !== "calm") {
+      this.balloon = null;
+      this.nextBalloon = 0;
+      return;
+    }
+
+    if (daylight.dusk > 0.05) this.drawCells(fireflyCells(this.flies, t, daylight.dusk), [200, 255, 120]);
+
+    if (still) return;
+    if (daylight.dawn > 0.3) {
+      if (!this.nextBalloon) this.nextBalloon = t + nextBalloonDelay();
+      if (!this.balloon && t >= this.nextBalloon) this.balloon = spawnBalloon(this.cols, this.rows);
+    }
+    if (this.balloon) {
+      this.drawCells(balloonCells(this.balloon), rgb);
+      if (!stepBalloon(this.balloon, dt, this.cols)) {
+        this.balloon = null;
+        this.nextBalloon = t + nextBalloonDelay();
+      }
+    }
+  }
+
+  private drawCells(cells: Cell[], rgb: [number, number, number]): void {
+    for (const c of cells) {
+      if (c.x >= -1 && c.x < this.cols && c.y >= 0 && c.y < this.rows) this.text(c.glyph, c.x, c.y, c.alpha, rgb);
+    }
+  }
+
+  // Long horizontal streaks (field is stretched along x), densest at the bottom.
+  private groundFog(t: number, rgb: [number, number, number], pulse: number): void {
+    for (let r = 0; r < this.rows; r += 1) {
+      const density = fogDensity(r, this.rows);
+      for (let c = 0; c < this.cols; c += 1) {
+        const v = field(c * 0.3 + t * 0.4, r * 2.6, t * 0.5);
+        const cut = 1 - density * 0.85;
+        if (v <= cut) continue;
+        this.text(density > 0.65 && v > cut + 0.12 ? "▒" : "░", c, r, Math.min(0.45, (0.06 + 0.3 * density) * (1 + (v - cut) * 2)) * pulse, rgb);
       }
     }
   }

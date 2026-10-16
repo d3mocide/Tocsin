@@ -20,7 +20,7 @@ import {
 } from "./api";
 import { Backdrop } from "./backdrop";
 import { byId, el, replaceChildren } from "./dom";
-import { setScene, type Alarm } from "./scene";
+import { pinnedAlarm, setScene, type Alarm } from "./scene";
 import { applySky } from "./sky_clock";
 import { isActive, tierOf } from "./format";
 import { ALL_TOPICS, healthKey, Store, type Topic } from "./store";
@@ -104,6 +104,7 @@ function alarmLevel(): Alarm {
 function initBackdrop(): void {
   if (import.meta.env.DEV) (window as unknown as { __setScene: typeof setScene }).__setScene = setScene;
   const backdrop = new Backdrop(byId<HTMLCanvasElement>("backdrop"));
+  if (import.meta.env.DEV) (window as unknown as { __backdrop: Backdrop }).__backdrop = backdrop;
   const button = byId("backdrop-toggle");
   const paint = () => {
     button.setAttribute("aria-pressed", String(backdrop.isOn));
@@ -157,7 +158,7 @@ async function main(): Promise<void> {
     if (touched("alerts")) refreshFilterSites();
     if (touched("system", "alerts", "health", "stats", "clock")) renderHero(byId("hero"), store);
     if (touched("alerts", "clock", "system")) {
-      setScene({ alarm: alarmLevel() });
+      setScene({ alarm: pinnedAlarm() ?? alarmLevel() });
       document.body.classList.toggle("alerts-active", Array.from(store.state.alerts.values()).some((alert) => isActive(alert)));
     }
     if (touched("clock", "system")) applySky(store.state.system);

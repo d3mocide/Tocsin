@@ -1,8 +1,8 @@
 // Dev-only (imported behind import.meta.env.DEV): scrub time of day, sky and
 // alarm level to preview every backdrop without waiting for the weather.
 import { sunPosition } from "./daylight";
-import { setScene, type Alarm, type Sky } from "./scene";
-import { refreshSky, setTimeOverride } from "./sky_clock";
+import { pinAlarm, setScene, type Alarm, type Sky } from "./scene";
+import { refreshSky, setMoonPhaseOverride, setTimeOverride } from "./sky_clock";
 
 const SKIES: Sky[] = ["clear", "cloudy", "fog", "rain", "snow", "storm", "wind"];
 const ALARMS: Alarm[] = ["calm", "watch", "warning"];
@@ -34,6 +34,13 @@ function presets(): [string, number][] {
   return [["Night", (noon + 12) % 24], ["Dawn", rise], ["Day", noon], ["Dusk", set]];
 }
 
+type EventKind = "star" | "plane" | "balloon";
+const backdrop = () => (window as unknown as { __backdrop?: { fire(kind: EventKind): void } }).__backdrop;
+
+// Hides the page chrome (not the canvas or this panel) so only the sky shows.
+const BARE_CSS =
+  "body.dev-bare > *:not(#backdrop):not(.dev-panel):not(style):not(script) { opacity: 0 !important; pointer-events: none !important; }";
+
 export function mountDevPanel(): void {
   const box = document.createElement("div");
   box.style.cssText =
@@ -61,6 +68,7 @@ export function mountDevPanel(): void {
     return s;
   };
 
+  box.className = "dev-panel";
   const readout = document.createElement("div");
   const slider = document.createElement("input");
   slider.type = "range";
@@ -87,12 +95,46 @@ export function mountDevPanel(): void {
   };
   slider.addEventListener("input", show);
 
+  const moonSlider = document.createElement("input");
+  moonSlider.type = "range";
+  moonSlider.min = "0";
+  moonSlider.max = "1";
+  moonSlider.step = "0.02";
+  moonSlider.value = "0.5";
+  moonSlider.style.width = "110px";
+  moonSlider.addEventListener("input", () => {
+    setMoonPhaseOverride(Number(moonSlider.value));
+    refreshSky();
+  });
+  const moonAuto = button("real", () => {
+    setMoonPhaseOverride(undefined);
+    refreshSky();
+  });
+
+  const bare = document.createElement("style");
+  bare.textContent = BARE_CSS;
+  document.head.append(bare);
+  const hideBtn = button("Hide cards", () => {
+    const on = document.body.classList.toggle("dev-bare");
+    hideBtn.textContent = on ? "Show cards" : "Hide cards";
+  });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "h" && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)) hideBtn.click();
+  });
+
   const skyPick = select(SKIES, (v) => setScene({ sky: v as Sky }));
-  const alarmPick = select(ALARMS, (v) => setScene({ alarm: v as Alarm }));
+  const alarmPick = select(["auto", ...ALARMS], (v) => pinAlarm(v === "auto" ? null : (v as Alarm)));
   box.append(
     readout,
     slider,
     row(...presets().map(([name, h]) => button(name, () => { slider.value = String(h); show(); })), button("Live", live)),
+    row(
+      button("Shooting star", () => backdrop()?.fire("star")),
+      button("Plane", () => backdrop()?.fire("plane")),
+      button("Balloon", () => backdrop()?.fire("balloon")),
+    ),
+    row(document.createTextNode("moon"), moonSlider, moonAuto),
+    row(hideBtn),
     row(document.createTextNode("sky"), skyPick, document.createTextNode("alarm"), alarmPick),
   );
   document.body.append(box);

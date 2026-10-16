@@ -21,11 +21,23 @@ export interface SkyLook {
   calmTint: Rgb;
   /** 1 in full night, 0 once the sun is near the horizon; fades the stars. */
   starlight: number;
+  /** 0..1 strength of morning / evening twilight, peaking at sunrise / sunset. */
+  dawn: number;
+  dusk: number;
 }
 
 const RAD = Math.PI / 180;
 
-export function sunPosition(when: Date, lat: number, lon: number): SunPosition {
+interface SolarCore {
+  /** Radians. */
+  decl: number;
+  /** Degrees, sun's ecliptic longitude. */
+  lambda: number;
+  /** Degrees; negative before solar noon. */
+  hourAngle: number;
+}
+
+function solarCore(when: Date, lon: number): SolarCore {
   const jd = when.getTime() / 86_400_000 + 2440587.5;
   const T = (jd - 2451545) / 36525;
   const L0 = (280.46646 + T * (36000.76983 + T * 0.0003032)) % 360;
@@ -55,11 +67,48 @@ export function sunPosition(when: Date, lat: number, lon: number): SunPosition {
 
   const utcMinutes = when.getUTCHours() * 60 + when.getUTCMinutes() + when.getUTCSeconds() / 60;
   const solarMinutes = (((utcMinutes + eqTime + 4 * lon) % 1440) + 1440) % 1440;
-  const hourAngle = solarMinutes / 4 - 180;
+  return { decl, lambda, hourAngle: solarMinutes / 4 - 180 };
+}
 
-  const sinElev =
-    Math.sin(lat * RAD) * Math.sin(decl) + Math.cos(lat * RAD) * Math.cos(decl) * Math.cos(hourAngle * RAD);
-  return { elevation: Math.asin(sinElev) / RAD, morning: hourAngle < 0 };
+const elevationOf = (latDeg: number, decl: number, hourAngleDeg: number): number =>
+  Math.asin(
+    Math.sin(latDeg * RAD) * Math.sin(decl) + Math.cos(latDeg * RAD) * Math.cos(decl) * Math.cos(hourAngleDeg * RAD),
+  ) / RAD;
+
+export function sunPosition(when: Date, lat: number, lon: number): SunPosition {
+  const { decl, hourAngle } = solarCore(when, lon);
+  return { elevation: elevationOf(lat, decl, hourAngle), morning: hourAngle < 0 };
+}
+
+export interface MoonPosition {
+  /** 0 new, 0.5 full, back to 1 new. */
+  phase: number;
+  elevation: number;
+  /** 0 = east horizon, 1 = west horizon, along the sky as seen from the northern hemisphere. */
+  across: number;
+}
+
+const SYNODIC_DAYS = 29.530588;
+// A new moon: 2000-01-06 18:14 UTC.
+const NEW_MOON_MS = Date.UTC(2000, 0, 6, 18, 14);
+
+export const moonPhase = (when: Date): number =>
+  ((((when.getTime() - NEW_MOON_MS) / 86_400_000 / SYNODIC_DAYS) % 1) + 1) % 1;
+
+/** Decorative accuracy: the moon is placed by its elongation from the sun
+ * along the ecliptic, ignoring orbital inclination and parallax (a few degrees). */
+export function moonPosition(when: Date, lat: number, lon: number, phaseOverride?: number): MoonPosition {
+  const phase = phaseOverride ?? moonPhase(when);
+  const elongation = phase * 360;
+  const sun = solarCore(when, lon);
+  const decl = Math.asin(Math.sin(23.44 * RAD) * Math.sin((sun.lambda + elongation) * RAD));
+  const hourAngle = sun.hourAngle - elongation;
+  const wrapped = ((((hourAngle + 180) % 360) + 360) % 360) - 180;
+  return {
+    phase,
+    elevation: elevationOf(lat, decl, wrapped),
+    across: Math.min(Math.max(0.5 + wrapped / 180, 0), 1),
+  };
 }
 
 // Stops are [elevation, bg, bg1, glowA, glowB, calm tint]. Night matches the
@@ -89,7 +138,7 @@ const css = ([r, g, b, a]: number[]): string =>
 const hex = ([r, g, b]: number[]): string =>
   `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
 
-export function skyLook(sun: SunPosition): SkyLook {
+export function skyLook(sun: Pick<SunPosition, "elevation" | "morning">): SkyLook {
   const stops = sun.morning ? DAWN : DUSK;
   const elev = Math.min(Math.max(sun.elevation, stops[0][0]), stops[stops.length - 1][0]);
   let hi = stops.findIndex((s) => s[0] >= elev);
@@ -97,6 +146,7 @@ export function skyLook(sun: SunPosition): SkyLook {
   const lo = stops[hi - 1];
   const up = stops[hi];
   const k = (elev - lo[0]) / (up[0] - lo[0]);
+  const twilight = Math.min(Math.max(1 - Math.abs(sun.elevation + 1) / 9, 0), 1);
   return {
     bg: hex(mix(lo[1], up[1], k)),
     bg1: hex(mix(lo[2], up[2], k)),
@@ -104,6 +154,8 @@ export function skyLook(sun: SunPosition): SkyLook {
     glowB: css(mix(lo[4], up[4], k)),
     calmTint: mix(lo[5], up[5], k).map(Math.round) as Rgb,
     starlight: Math.min(Math.max((2 - sun.elevation) / 8, 0), 1),
+    dawn: sun.morning ? twilight : 0,
+    dusk: sun.morning ? 0 : twilight,
   };
 }
 
