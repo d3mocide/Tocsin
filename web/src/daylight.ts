@@ -133,12 +133,14 @@ const DUSK: Stop[] = [
 ];
 
 const mix = (a: number[], b: number[], k: number): number[] => a.map((v, i) => v + (b[i] - v) * k);
+const dim = ([r, g, b, a]: number[], shade: number): number[] => [r * shade, g * shade, b * shade, a * shade];
 const css = ([r, g, b, a]: number[]): string =>
   `rgb(${Math.round(r)} ${Math.round(g)} ${Math.round(b)} / ${(a * 100).toFixed(1)}%)`;
 const hex = ([r, g, b]: number[]): string =>
   `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
 
-export function skyLook(sun: Pick<SunPosition, "elevation" | "morning">): SkyLook {
+/** `shade` < 1 darkens the page for heavy weather. */
+export function skyLook(sun: Pick<SunPosition, "elevation" | "morning">, shade = 1): SkyLook {
   const stops = sun.morning ? DAWN : DUSK;
   const elev = Math.min(Math.max(sun.elevation, stops[0][0]), stops[stops.length - 1][0]);
   let hi = stops.findIndex((s) => s[0] >= elev);
@@ -148,10 +150,10 @@ export function skyLook(sun: Pick<SunPosition, "elevation" | "morning">): SkyLoo
   const k = (elev - lo[0]) / (up[0] - lo[0]);
   const twilight = Math.min(Math.max(1 - Math.abs(sun.elevation + 1) / 9, 0), 1);
   return {
-    bg: hex(mix(lo[1], up[1], k)),
-    bg1: hex(mix(lo[2], up[2], k)),
-    glowA: css(mix(lo[3], up[3], k)),
-    glowB: css(mix(lo[4], up[4], k)),
+    bg: hex(dim(mix(lo[1], up[1], k), shade)),
+    bg1: hex(dim(mix(lo[2], up[2], k), shade)),
+    glowA: css(dim(mix(lo[3], up[3], k), shade)),
+    glowB: css(dim(mix(lo[4], up[4], k), shade)),
     calmTint: mix(lo[5], up[5], k).map(Math.round) as Rgb,
     starlight: Math.min(Math.max((2 - sun.elevation) / 8, 0), 1),
     dawn: sun.morning ? twilight : 0,

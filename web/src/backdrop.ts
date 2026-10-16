@@ -31,6 +31,19 @@ import {
   type Cloud,
   type Firefly,
 } from "./scenery";
+import {
+  auroraCells,
+  auroraSwell,
+  growSnow,
+  nextGeeseDelay,
+  rippleCells,
+  settleSnow,
+  snowCells,
+  spawnGeese,
+  spawnRipple,
+  stepRipples,
+  type Ripple,
+} from "./weather";
 import { currentScene, daylight, onScene, type Alarm, type Sky } from "./scene";
 
 const CELL_W = 11;
@@ -71,6 +84,11 @@ export class Backdrop {
   private plane: Plane | null = null;
   private clouds: Cloud[] = [];
   private overcast: Cloud[] = [];
+  private ripples: Ripple[] = [];
+  private pile: number[] = [];
+  private geese: Bird[] = [];
+  private nextGeese = 0;
+  private auroraForced = false;
   private flies: Firefly[] = [];
   private balloon: Balloon | null = null;
   private nextBalloon = 0;
@@ -94,10 +112,13 @@ export class Backdrop {
   }
 
   /** Dev panel hook: trigger an event now instead of waiting for the timer. */
-  fire(kind: "star" | "plane" | "balloon"): void {
+  fire(kind: "star" | "plane" | "balloon" | "geese" | "aurora" | "snow"): void {
     if (kind === "star") this.shooter = spawnShootingStar(this.cols, this.rows);
     else if (kind === "plane") this.plane = spawnPlane(this.cols, this.rows);
-    else this.balloon = spawnBalloon(this.cols, this.rows);
+    else if (kind === "balloon") this.balloon = spawnBalloon(this.cols, this.rows);
+    else if (kind === "geese") this.geese = spawnGeese(this.cols, this.rows);
+    else if (kind === "aurora") this.auroraForced = !this.auroraForced;
+    else this.pile = new Array(this.cols).fill(2);
   }
 
   get isOn(): boolean {
@@ -217,13 +238,38 @@ export class Backdrop {
     for (const d of this.drops) {
       if (!still) {
         d.y += sky === "wind" ? 0 : d.speed * dt;
-        d.x += sky === "wind" ? d.speed * dt : sky === "snow" ? Math.sin(t + d.phase) * 2 * dt : -d.speed * 0.15 * dt;
-        if (d.y > this.rows || d.x > this.cols + 2 || d.x < -4) Object.assign(d, this.drop(sky, false));
+        const slant = sky === "storm" ? 0.4 : 0.15;
+        d.x += sky === "wind" ? d.speed * dt : sky === "snow" ? Math.sin(t + d.phase) * 2 * dt : -d.speed * slant * dt;
+        if (d.y > this.rows || d.x > this.cols + 2 || d.x < -4) {
+          if (d.y > this.rows) this.landed(d.x, sky);
+          Object.assign(d, this.drop(sky, false));
+        }
       }
       this.text(d.glyph, d.x, d.y, (sky === "snow" ? 0.8 : 0.6) * pulse, rgb);
     }
 
+    this.ground(dt, still, rgb, sky);
+
     if (sky === "storm" && !still) this.lightning(t, rgb);
+  }
+
+  private landed(x: number, sky: Sky): void {
+    if ((sky === "rain" || sky === "storm") && this.ripples.length < 70 && Math.random() < 0.3) {
+      this.ripples.push(spawnRipple(x, this.rows));
+    } else if (sky === "snow" && this.pile.length) {
+      growSnow(this.pile, x);
+    }
+  }
+
+  // Puddle ripples under rain and storm; snow that builds up while it falls and melts after.
+  private ground(dt: number, still: boolean, rgb: [number, number, number], sky: Sky): void {
+    if (this.pile.length !== this.cols) this.pile = new Array(this.cols).fill(0);
+    if (!still) {
+      this.ripples = sky === "rain" || sky === "storm" ? stepRipples(this.ripples, dt) : [];
+      settleSnow(this.pile, dt, sky === "snow");
+    }
+    this.drawCells(rippleCells(this.ripples), rgb);
+    this.drawCells(snowCells(this.pile, this.rows), rgb);
   }
 
   // Low-contrast base layer: stars for clear skies, fog banks for the rest.
@@ -303,6 +349,7 @@ export class Backdrop {
     if (sky !== "clear" && sky !== "cloudy") {
       this.balloon = null;
       this.nextBalloon = 0;
+      this.geese = [];
       return;
     }
     const dayness = 1 - daylight.starlight;
@@ -321,10 +368,27 @@ export class Backdrop {
     if (alarm !== "calm") {
       this.balloon = null;
       this.nextBalloon = 0;
+      this.geese = [];
       return;
     }
 
-    if (daylight.dusk > 0.05) this.drawCells(fireflyCells(this.flies, t, daylight.dusk), [200, 255, 120]);
+    if (sky === "clear") {
+      const night = Math.min(Math.max((daylight.starlight - 0.9) * 10, 0), 1);
+      const natural = daylight.auroraNight && daylight.season === "winter" ? auroraSwell(t) * night : 0;
+      this.drawCells(auroraCells(this.cols, this.rows, t, this.auroraForced ? 1 : natural), rgb);
+    }
+
+    if (!still && (daylight.season === "spring" || daylight.season === "fall") && planeEligible(daylight.starlight, sky, alarm)) {
+      if (!this.nextGeese) this.nextGeese = t + nextGeeseDelay();
+      if (!this.geese.length && t >= this.nextGeese) this.geese = spawnGeese(this.cols, this.rows);
+    }
+    if (this.geese.length) {
+      if (!still) this.geese = stepBirds(this.geese, dt, this.cols, 60);
+      for (const g of this.geese) this.text(birdGlyph(g, t), g.x, g.y + birdBob(g, t), 0.85, rgb);
+      if (!this.geese.length) this.nextGeese = t + nextGeeseDelay();
+    }
+
+    if (daylight.season !== "winter" && daylight.dusk > 0.05) this.drawCells(fireflyCells(this.flies, t, daylight.dusk), [200, 255, 120]);
 
     if (still) return;
     if (daylight.dawn > 0.3) {
@@ -342,7 +406,7 @@ export class Backdrop {
 
   private drawCells(cells: Cell[], rgb: [number, number, number]): void {
     for (const c of cells) {
-      if (c.x >= -1 && c.x < this.cols && c.y >= 0 && c.y < this.rows) this.text(c.glyph, c.x, c.y, c.alpha, rgb);
+      if (c.x >= -1 && c.x < this.cols && c.y >= 0 && c.y < this.rows) this.text(c.glyph, c.x, c.y, c.alpha, c.rgb ?? rgb);
     }
   }
 

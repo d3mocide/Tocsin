@@ -1,8 +1,18 @@
 import { guessLocation, moonPosition, skyLook, sunPosition } from "./daylight";
-import { daylight } from "./scene";
+import { currentScene, daylight, onScene, type Sky } from "./scene";
+import { auroraNight, seasonOf, type Season } from "./weather";
 
 let override: Date | null = null;
 let moonPhaseOverride: number | undefined;
+let seasonOverride: Season | null = null;
+
+/** Heavy weather darkens the whole page. */
+const SHADE: Partial<Record<Sky, number>> = { storm: 0.5, rain: 0.72, cloudy: 0.85 };
+
+/** Dev panel hook: force a season, or `null` for the real one. */
+export function setSeasonOverride(season: Season | null): void {
+  seasonOverride = season;
+}
 
 /** Dev panel hook: pin the clock to a fixed instant, or `null` to follow real time. */
 export function setTimeOverride(when: Date | null): void {
@@ -27,7 +37,7 @@ export function applySky(system: Place): void {
   const guess = guessLocation(now);
   const lat = system?.latitude ?? guess.lat;
   const lon = system?.longitude ?? guess.lon;
-  const look = skyLook(sunPosition(now, lat, lon));
+  const look = skyLook(sunPosition(now, lat, lon), SHADE[currentScene().sky] ?? 1);
   const style = document.documentElement.style;
   style.setProperty("--bg", look.bg);
   style.setProperty("--bg-1", look.bg1);
@@ -38,4 +48,8 @@ export function applySky(system: Place): void {
   daylight.dawn = look.dawn;
   daylight.dusk = look.dusk;
   daylight.moon = moonPosition(now, lat, lon, moonPhaseOverride);
+  daylight.season = seasonOverride ?? seasonOf(now, lat);
+  daylight.auroraNight = auroraNight(now);
 }
+
+onScene(() => refreshSky());

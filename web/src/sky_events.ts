@@ -5,6 +5,8 @@ export interface Cell {
   y: number;
   glyph: string;
   alpha: number;
+  /** Overrides the scene tint (aurora, snow). */
+  rgb?: [number, number, number];
 }
 
 const calmFair = (sky: Sky, alarm: Alarm) => alarm === "calm" && (sky === "clear" || sky === "cloudy");

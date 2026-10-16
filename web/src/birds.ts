@@ -32,9 +32,10 @@ export function spawnFlock(cols: number, rows: number, anywhere: boolean, rand: 
   }));
 }
 
-export function stepBirds(birds: Bird[], dt: number, cols: number): Bird[] {
+/** `margin` is how far off-screen a bird may be before it is dropped; a long formation needs more. */
+export function stepBirds(birds: Bird[], dt: number, cols: number, margin = 12): Bird[] {
   for (const b of birds) b.x += b.dir * b.speed * dt;
-  return birds.filter((b) => b.x > -12 && b.x < cols + 12);
+  return birds.filter((b) => b.x > -margin && b.x < cols + margin);
 }
 
 export function birdGlyph(b: Bird, t: number): string {

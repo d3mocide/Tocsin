@@ -2,7 +2,8 @@
 // alarm level to preview every backdrop without waiting for the weather.
 import { sunPosition } from "./daylight";
 import { pinAlarm, setScene, type Alarm, type Sky } from "./scene";
-import { refreshSky, setMoonPhaseOverride, setTimeOverride } from "./sky_clock";
+import { refreshSky, setMoonPhaseOverride, setSeasonOverride, setTimeOverride } from "./sky_clock";
+import type { Season } from "./weather";
 
 const SKIES: Sky[] = ["clear", "cloudy", "fog", "rain", "snow", "storm", "wind"];
 const ALARMS: Alarm[] = ["calm", "watch", "warning"];
@@ -34,7 +35,7 @@ function presets(): [string, number][] {
   return [["Night", (noon + 12) % 24], ["Dawn", rise], ["Day", noon], ["Dusk", set]];
 }
 
-type EventKind = "star" | "plane" | "balloon";
+type EventKind = "star" | "plane" | "balloon" | "geese" | "aurora" | "snow";
 const backdrop = () => (window as unknown as { __backdrop?: { fire(kind: EventKind): void } }).__backdrop;
 
 // Hides the page chrome (not the canvas or this panel) so only the sky shows.
@@ -122,6 +123,10 @@ export function mountDevPanel(): void {
     if (e.key === "h" && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)) hideBtn.click();
   });
 
+  const seasonPick = select(["auto", "winter", "spring", "summer", "fall"], (v) => {
+    setSeasonOverride(v === "auto" ? null : (v as Season));
+    refreshSky();
+  });
   const skyPick = select(SKIES, (v) => setScene({ sky: v as Sky }));
   const alarmPick = select(["auto", ...ALARMS], (v) => pinAlarm(v === "auto" ? null : (v as Alarm)));
   box.append(
@@ -132,7 +137,11 @@ export function mountDevPanel(): void {
       button("Shooting star", () => backdrop()?.fire("star")),
       button("Plane", () => backdrop()?.fire("plane")),
       button("Balloon", () => backdrop()?.fire("balloon")),
+      button("Geese", () => backdrop()?.fire("geese")),
+      button("Aurora", () => backdrop()?.fire("aurora")),
+      button("Snow pile", () => backdrop()?.fire("snow")),
     ),
+    row(document.createTextNode("season"), seasonPick),
     row(document.createTextNode("moon"), moonSlider, moonAuto),
     row(hideBtn),
     row(document.createTextNode("sky"), skyPick, document.createTextNode("alarm"), alarmPick),

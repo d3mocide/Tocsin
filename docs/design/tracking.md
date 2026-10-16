@@ -2848,3 +2848,15 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
 - Fix: cloudy (and the moon, clear-day clouds) vanished during watches/warnings because the
   scenery layer was gated on a calm alarm. Weather/celestial layers now persist under alerts and
   take the alert tint; only birds, planes, shooting stars, fireflies and the balloon stand down.
+
+### 2026-10-16 -- Weather and seasons pass
+- Rain/storm: page darkens by weather (`SHADE` in `sky_clock.ts`: storm 0.5, rain 0.72, cloudy
+  0.85), puddle ripples at the ground, storm drops slant harder. Snow: a pile builds along the
+  bottom edge while it falls and melts slowly after (`weather.ts`).
+- Seasons (month-based, flipped by hemisphere): geese in a V in spring/fall, an aurora on about
+  one winter night in four (stable per evening, swells in and out, clear skies only), and no
+  fireflies in winter. The station coordinates were already set in `.env` and `/system` serves
+  them, so sunrise/sunset/moon use the real location.
+- Fixed while testing: a goose formation's trailing birds were dropped as off-screen the moment
+  they spawned (`stepBirds` margin). Dev panel: season picker and Geese/Aurora/Snow pile buttons.
+- 37 web tests pass. Reviewed as still frames only. Not yet deployed.

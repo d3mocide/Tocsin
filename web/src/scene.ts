@@ -3,6 +3,7 @@
  * alerts, works offgrid). */
 
 import type { MoonPosition, Rgb } from "./daylight";
+import type { Season } from "./weather";
 
 export type Sky = "clear" | "cloudy" | "fog" | "rain" | "snow" | "storm" | "wind";
 export type Alarm = "calm" | "watch" | "warning";
@@ -73,10 +74,20 @@ export function setWeatherNow(next: WeatherNow): void {
 
 /** Time-of-day inputs the backdrop reads each frame; changing them never
  * reseeds particles, so they live outside `Scene`. */
-export const daylight: { calmTint: Rgb; starlight: number; dawn: number; dusk: number; moon: MoonPosition | null } = {
+export const daylight: {
+  calmTint: Rgb;
+  starlight: number;
+  dawn: number;
+  dusk: number;
+  moon: MoonPosition | null;
+  season: Season;
+  auroraNight: boolean;
+} = {
   calmTint: [103, 232, 249],
   starlight: 1,
   dawn: 0,
   dusk: 0,
   moon: null,
+  season: "summer",
+  auroraNight: false,
 };

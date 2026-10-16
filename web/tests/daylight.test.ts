@@ -96,3 +96,10 @@ test("dawn and dusk strength peak at the horizon", () => {
   assert.equal(skyLook({ elevation: 40, morning: false }).dusk, 0);
   assert.equal(skyLook({ elevation: -40, morning: false }).dusk, 0);
 });
+
+test("shade darkens the page for heavy weather without touching the default", () => {
+  const sun = { elevation: 40, morning: false };
+  assert.equal(skyLook(sun, 1).bg1, skyLook(sun).bg1);
+  const dark = skyLook(sun, 0.5);
+  assert.ok(parseInt(dark.bg1.slice(5, 7), 16) < parseInt(skyLook(sun).bg1.slice(5, 7), 16));
+});
