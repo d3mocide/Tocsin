@@ -4,6 +4,9 @@
 
 x-mode: &mode ${TOCSIN_MODE:-offgrid}
 
+# Prebuilt images from CI (.github/workflows/images.yml). `docker compose pull`
+# fetches them; `up --build` still builds locally under the same names.
+
 services:
   redis:
     image: redis:7-alpine
@@ -32,6 +35,7 @@ services:
     profiles: [offgrid, hybrid]
 
   sdr-rx:
+    image: ${TOCSIN_IMAGE_PREFIX:-ghcr.io/d3mocide/tocsin}-sdr-rx:${TOCSIN_VERSION:-latest}
     # Also builds same_decoder, live_audio, and segment_capture into this
     # image -- see entrypoint.sh.
     build:
@@ -112,6 +116,7 @@ services:
     profiles: [offgrid, hybrid]
 
   icecast:
+    image: ${TOCSIN_IMAGE_PREFIX:-ghcr.io/d3mocide/tocsin}-icecast:${TOCSIN_VERSION:-latest}
     build: ./deploy/icecast
     restart: unless-stopped
     environment:
@@ -130,6 +135,7 @@ services:
     profiles: [offgrid, hybrid]
 
   stt-worker:
+    image: ${TOCSIN_IMAGE_PREFIX:-ghcr.io/d3mocide/tocsin}-stt-worker:${TOCSIN_VERSION:-latest}
     build: ./services/stt_worker
     # A missing model file waits instead of failing -- see await_model.
     restart: on-failure
@@ -162,6 +168,7 @@ services:
     profiles: [offgrid, hybrid]
 
   fusion:
+    image: ${TOCSIN_IMAGE_PREFIX:-ghcr.io/d3mocide/tocsin}-fusion:${TOCSIN_VERSION:-latest}
     # Also builds nws_poller as a second, independent venv -- see entrypoint.sh.
     build:
       context: .
@@ -191,6 +198,7 @@ services:
     profiles: [offgrid, hybrid]
 
   dispatcher:
+    image: ${TOCSIN_IMAGE_PREFIX:-ghcr.io/d3mocide/tocsin}-dispatcher:${TOCSIN_VERSION:-latest}
     build: ./services/dispatcher
     # on-failure: a missing/unattached Meshtastic node is retriable.
     restart: on-failure
@@ -227,6 +235,7 @@ services:
     profiles: [offgrid, hybrid]
 
   api:
+    image: ${TOCSIN_IMAGE_PREFIX:-ghcr.io/d3mocide/tocsin}-api:${TOCSIN_VERSION:-latest}
     # Dockerfile also builds web/ into static/ (first stage).
     build:
       context: .

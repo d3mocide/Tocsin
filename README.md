@@ -140,6 +140,10 @@ verification details.
    `make up-offgrid` and `make up-hybrid` add it back if it's missing, since a station with
    no SDR receives nothing; `make dev-stack` is the one command that deliberately runs
    without it (and without the mesh overlay), for a laptop with no hardware attached.
+   **Prebuilt images:** CI publishes multi-arch (amd64/arm64) images to
+   `ghcr.io/d3mocide/tocsin-*`. `make deploy-offgrid` / `make deploy-hybrid` pull them and start
+   without compiling anything (the first-time `--build` is slow on a Pi); pin `TOCSIN_VERSION` in
+   `.env` to a release tag for production. Upgrade with `git pull && make deploy-offgrid`.
 4. **Bring the stack up without a dongle first** to confirm the software side is healthy:
    `make up-offgrid`. This works with nothing plugged in -- `/dev/bus/usb` exists on any
    Linux host with a USB subsystem, dongle or not. If no Meshtastic node is attached yet

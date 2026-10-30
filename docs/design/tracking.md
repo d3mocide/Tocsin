@@ -2920,3 +2920,14 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   both 7-day (prod-like) and 1-day chunks, in addition to the unit tests with `FakePool`.
 - `compose.yaml` never passed `ALERTS_PRUNE_GRACE_SECONDS` to the api, so that documented `.env`
   setting had no effect; it and the new settings are passed through now.
+
+### 2026-10-29 -- CI-built images and pull-based deploy
+
+- `.github/workflows/images.yml` builds the six custom images (sdr-rx, fusion, api, stt-worker,
+  dispatcher, icecast) on native amd64 and arm64 runners (no QEMU: whisper.cpp and the RTL-SDR Blog
+  driver compile from source) and publishes multi-arch tags to `ghcr.io/d3mocide/tocsin-*`.
+  Tags: `latest` (main), `sha-<short>`, and `X.Y.Z` / `X.Y` on `v*` tags. PRs build without pushing.
+- `compose.yaml` gives each built service an `image:` name (`TOCSIN_VERSION`, default `latest`), so
+  `up --build` still builds locally. New `make pull`, `make deploy-offgrid`, `make deploy-hybrid`.
+- Not yet verified: the workflow has not run. First push must be checked in the Actions tab, and the
+  GHCR packages set to public (new user-owned packages default private) for unauthenticated pulls.

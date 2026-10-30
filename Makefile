@@ -1,4 +1,4 @@
-.PHONY: help up-offgrid up-hybrid dev dev-ui dev-stack down bench-channelizer sdr-devices fetch-models test test-stt-remote db-clear-alerts
+.PHONY: help pull deploy-offgrid deploy-hybrid up-offgrid up-hybrid dev dev-ui dev-stack down bench-channelizer sdr-devices fetch-models test test-stt-remote db-clear-alerts
 
 .DEFAULT_GOAL := help
 
@@ -10,6 +10,9 @@ help:
 	@echo ""
 	@printf "  %-17s %s\n" "dev-ui" "Start frontend UI dev server with rich mock data (no Docker required)"
 	@printf "  %-17s %s\n" "dev-stack" "Start full hybrid Docker stack for local dev (no SDR/mesh hardware required)"
+	@printf "  %-17s %s\n" "deploy-offgrid" "Pull prebuilt images from GHCR and start offgrid (no local build)"
+	@printf "  %-17s %s\n" "deploy-hybrid" "Pull prebuilt images from GHCR and start hybrid (no local build)"
+	@printf "  %-17s %s\n" "pull" "Pull the prebuilt images without restarting"
 	@printf "  %-17s %s\n" "up-offgrid" "Start the stack in offgrid mode (no network dependency)"
 	@printf "  %-17s %s\n" "up-hybrid" "Start the stack in hybrid mode (adds network-only components)"
 	@printf "  %-17s %s\n" "down" "Stop the stack"
@@ -48,6 +51,18 @@ up-offgrid:
 
 up-hybrid:
 	TOCSIN_MODE=hybrid COMPOSE_FILE=$(SDR_COMPOSE_FILE) docker compose --profile hybrid up --build
+
+# Production path: images are built by CI (.github/workflows/images.yml) and
+# pulled here, so the host never compiles anything. Pin TOCSIN_VERSION in .env
+# to a release tag (or sha-<short>) instead of the moving `latest`.
+pull:
+	COMPOSE_FILE=$(SDR_COMPOSE_FILE) docker compose --profile offgrid --profile hybrid pull
+
+deploy-offgrid: pull
+	TOCSIN_MODE=offgrid COMPOSE_FILE=$(SDR_COMPOSE_FILE) docker compose --profile offgrid up -d --pull never
+
+deploy-hybrid: pull
+	TOCSIN_MODE=hybrid COMPOSE_FILE=$(SDR_COMPOSE_FILE) docker compose --profile hybrid up -d --pull never
 
 # Frontend-only dev server with realistic mock data & live SSE events (starts in < 1s)
 dev-ui:
