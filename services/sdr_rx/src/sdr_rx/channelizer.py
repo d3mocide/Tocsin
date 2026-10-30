@@ -64,8 +64,14 @@ length-`D` *block* of the input, so viewing the input as `(n_blocks, D)`
 turns the whole fold into `R * taps_per_bin` shifted block-slices scaled
 by one row of the prototype each and summed in place. Same arithmetic in
 the same summation order (bit-identical output, not merely close), same
-`h`, no 24x temporary, and each accumulation step is a `(n_frames, 24)`
-slab that stays in cache.
+`h`, no 24x temporary, and the accumulation steps are in-place slab updates.
+
+The slabs are laid out frame-major-last, `(D, n_frames)`: the input blocks are
+transposed once per chunk so every multiply-accumulate runs along a long
+contiguous frame axis. Written `(n_frames, D)`, NumPy's inner loop is only D
+elements wide (6 at 12 bins) and the stage runs ~2x slower -- tiling to fit
+cache does not help, the row width is the problem. Output is bit-identical
+either way.
 
 ## Sample precision
 
@@ -100,10 +106,10 @@ DECIMATION = NUM_BINS // 2  # 24 at 48 bins; 2x oversampled, so 50 kHz per chann
 class _Workspace:
     """Everything `process()` needs at one working dtype, built once.
 
-    `accumulator`/`scratch` are the blocked fold's running sums, reused
-    across calls rather than reallocated per chunk: a steady capture hands
-    over a constant chunk size, so after the first call these are already
-    the right shape.
+    `accumulator`/`scratch` are the blocked fold's running sums, shaped
+    `(decimation, n_frames)`, reused across calls rather than reallocated per
+    chunk: a steady capture hands over a constant chunk size, so after the
+    first call these are already the right shape.
     """
 
     branch_taps: np.ndarray
@@ -180,13 +186,12 @@ class PolyphaseChannelizer:
         if ws is None:
             real = np.zeros(0, dtype=dtype).real.dtype
             ws = _Workspace(
-                # (taps_per_bin, R, decimation): one prototype row per
-                # (tap, sub-block), indexed exactly as the blocked fold
-                # steps through it.
-                branch_taps=self.h.astype(real).reshape(self.taps_per_bin, self._sub_blocks, self.decimation),
+                # (taps_per_bin, R, decimation, 1): one prototype column per
+                # (tap, sub-block), broadcast along the frame axis.
+                branch_taps=self.h.astype(real).reshape(self.taps_per_bin, self._sub_blocks, self.decimation, 1),
                 ramp_lut=self._ramp_lut.astype(dtype),
-                accumulator=np.zeros((0, self.decimation), dtype=dtype),
-                scratch=np.zeros((0, self.decimation), dtype=dtype),
+                accumulator=np.zeros((self.decimation, 0), dtype=dtype),
+                scratch=np.zeros((self.decimation, 0), dtype=dtype),
             )
             self._workspaces[dtype] = ws
         return ws
@@ -205,22 +210,22 @@ class PolyphaseChannelizer:
         return samples * ramp
 
     def _fold(self, x: np.ndarray, n_frames: int, ws: _Workspace) -> np.ndarray:
-        """Polyphase-fold `x` into `(n_frames, num_bins)`; see "Blocked fold"."""
-        d, m, r = self.decimation, self.num_bins, self._sub_blocks
-        blocks = x[: (len(x) // d) * d].reshape(-1, d)
-        if ws.accumulator.shape[0] != n_frames:
-            ws.accumulator = np.empty((n_frames, d), dtype=ws.accumulator.dtype)
-            ws.scratch = np.empty((n_frames, d), dtype=ws.scratch.dtype)
+        """Polyphase-fold `x` into `(num_bins, n_frames)`; see "Blocked fold"."""
+        d, r = self.decimation, self._sub_blocks
+        blocks = np.ascontiguousarray(x[: (len(x) // d) * d].reshape(-1, d).T)  # (d, n_blocks)
+        if ws.accumulator.shape[1] != n_frames:
+            ws.accumulator = np.empty((d, n_frames), dtype=ws.accumulator.dtype)
+            ws.scratch = np.empty((d, n_frames), dtype=ws.scratch.dtype)
         acc, scratch = ws.accumulator, ws.scratch
 
-        folded = np.empty((n_frames, m), dtype=x.dtype)
+        folded = np.empty((self.num_bins, n_frames), dtype=x.dtype)
         for q in range(r):
-            np.multiply(blocks[q : q + n_frames], ws.branch_taps[0, q], out=acc)
+            np.multiply(blocks[:, q : q + n_frames], ws.branch_taps[0, q], out=acc)
             for t in range(1, self.taps_per_bin):
                 offset = t * r + q
-                np.multiply(blocks[offset : offset + n_frames], ws.branch_taps[t, q], out=scratch)
+                np.multiply(blocks[:, offset : offset + n_frames], ws.branch_taps[t, q], out=scratch)
                 acc += scratch
-            folded[:, q * d : (q + 1) * d] = acc
+            folded[q * d : (q + 1) * d] = acc
         return folded
 
     def process(self, samples: np.ndarray) -> np.ndarray:
@@ -244,7 +249,7 @@ class PolyphaseChannelizer:
 
         n_frames = (len(x) - n_taps) // d + 1
 
-        spectrum = scipy.fft.fft(self._fold(x, n_frames, ws), axis=1, overwrite_x=True)
+        spectrum = scipy.fft.fft(self._fold(x, n_frames, ws), axis=0, overwrite_x=True)
 
         # Rows needing the correction are those where (frame_parity + f) is
         # odd, i.e. every other row starting at `first_odd` -- a strided
@@ -252,9 +257,9 @@ class PolyphaseChannelizer:
         # index array and a gather/scatter round trip to say the same thing.
         first_odd = 1 - self._frame_parity
         if first_odd < n_frames:
-            spectrum[first_odd::2] *= self._odd_frame_correction
+            spectrum[:, first_odd::2] *= self._odd_frame_correction[:, None]
 
         self._frame_parity = (self._frame_parity + n_frames) % 2
         consumed = n_frames * d
         self._history = x[consumed:]
-        return spectrum
+        return spectrum.T  # (n_frames, num_bins) view; each bin's frames stay contiguous

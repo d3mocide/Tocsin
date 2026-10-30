@@ -114,7 +114,7 @@ def test_blocked_fold_matches_the_direct_windowed_formulation(dtype):
     frames = np.lib.stride_tricks.sliding_window_view(x, NUM_TAPS)[:: ch.decimation][:n_frames]
     expected = (frames * ws.branch_taps.reshape(-1)).reshape(n_frames, ch.taps_per_bin, NUM_BINS).sum(axis=1)
 
-    np.testing.assert_array_equal(ch._fold(x, n_frames, ws), expected)
+    np.testing.assert_array_equal(ch._fold(x, n_frames, ws).T, expected)  # _fold is (num_bins, n_frames)
 
 
 def test_rejects_decimation_that_does_not_divide_num_bins():

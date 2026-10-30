@@ -2931,3 +2931,21 @@ verified). Phase 2's real-SAME-decode gap (the last thing this note used to flag
   `up --build` still builds locally. New `make pull`, `make deploy-offgrid`, `make deploy-hybrid`.
 - Not yet verified: the workflow has not run. First push must be checked in the Actions tab, and the
   GHCR packages set to public (new user-owned packages default private) for unauthenticated pulls.
+
+### 2026-10-30 -- sdr-rx CPU: frame-contiguous fold
+
+- Live `sdr-rx` ran at ~14% of one core (steady, flat over 11.5 h), all in the one DSP thread.
+  Profiled `DevicePipeline.process()` at the production `SDR_RX_NUM_BINS=12` on the Pi: `_fold`
+  ~28%, `np.angle` + discriminator ~15%, `resample_poly` ~10%, per-channel ring-buffer meta writes ~6%.
+- At 12 bins the fold's slabs were `(n_frames, 6)`, so NumPy's inner loop ran over 6 elements.
+  `_fold` now works on `(decimation, n_frames)` slabs (blocks transposed once per chunk), FFTs along
+  axis 0, and `process()` returns the same `(n_frames, num_bins)` as a transposed view. Output is
+  bit-identical; fold ~7.6 -> ~3.7 ms/chunk, whole pipeline ~12.0% -> ~10.6% of a core (noisy host).
+  Tiling the old layout over frames was tried first and did not help.
+- `test_blocked_fold_...` compares `_fold(...).T`; its bit-equality assertion is unchanged.
+- Not done: a numba/C kernel (est. only 2-3 more points of a core for a large image-size cost), merging
+  the duplicate per-channel `multimon-ng` in `same-decoder`/`segment-capture` (~1.2% of a core, but a
+  deliberate restart-independence choice, §2), throttling ring-buffer meta writes (~1.5%, readers poll it).
+- `tests/test_channelizer.py` hardcodes 48 bins; 10 tests fail under `SDR_RX_NUM_BINS=12` (before and
+  after this change), so the production plan has no channelizer test coverage.
+- Prod still runs the old image; this takes effect on the next image build/deploy.
